@@ -74,7 +74,7 @@ async function reloadMaster(t) {
 }
 
 /* ── 네비게이션 ─────────────────────── */
-const TITLES = { dash: "대시보드", prod: "생산 현황", ship: "출고 현황", entry: "일일 입력", lot: "LOT 관리", items: "기준정보 관리", ana: "분석", lookup: "기록 조회" };
+const TITLES = { dash: "대시보드", prod: "생산 현황", ship: "출고 현황", entry: "일일 입력", lot: "LOT 관리", items: "기준정보 관리", ana: "분석", lookup: "기록 조회", staff: "인원 관리" };
 /* 표 검색(필터)은 화면·탭을 옮기면 초기화한다.
    남아 있으면 다른 화면에서 '등록된 항목이 없습니다'만 보여 데이터가 없는 것처럼 오해하게 된다.
    ※ 행 추가용 검색(qaProd 등)은 필터가 아니라 입력칸이므로 대상 아님. */
@@ -86,6 +86,7 @@ function resetSearches() {
    ["shipHistFilter", () => { LOT.shipQ = ""; }],
    ["dispHistFilter", () => { LOT.dispQ = ""; }],
    ["shipFilter", () => { SHIP.q = ""; }],
+   ["staffFilter", () => { STAFF.q = ""; }],
    ["prodFilter", null], ["anaRotFilter", null],
   ].forEach(([id, clear]) => {
     const el = $(id);
@@ -99,7 +100,7 @@ $("nav").addEventListener("click", e => {
   document.querySelectorAll(".screen").forEach(s => s.classList.toggle("on", s.id === "scr-" + b.dataset.scr));
   $("scrTitle").textContent = TITLES[b.dataset.scr];
   resetSearches();
-  const fn = { dash: loadDash, prod: loadProd, ship: loadShip, entry: openEntry, lot: loadLot, items: renderMasters, ana: loadAna, lookup: () => lkCal.render() }[b.dataset.scr];
+  const fn = { dash: loadDash, prod: loadProd, ship: loadShip, entry: openEntry, lot: loadLot, items: renderMasters, ana: loadAna, lookup: () => lkCal.render(), staff: loadStaff }[b.dataset.scr];
   if (fn) fn();
 });
 // 화면 내 버튼(예: 대시보드 배너)에서 다른 화면으로 이동
@@ -1950,7 +1951,8 @@ function renderLotSplitRows() {
     <td><input class="mini-input datepick" type="text" readonly data-sf="expiry" value="${esc(s.expiry || "")}" placeholder="📅 소비기한" style="width:150px"></td>
     <td class="auto" style="font-size:11px; white-space:nowrap;"
       title="같은 소비기한의 기존 재고 — 이 구간을 저장하면 합쳐서 관리됩니다"><span data-lsex="${i}">${lsExistTxt(s.expiry)}</span></td>
-    <td><button class="btn ghost sm" data-sdel>삭제</button></td></tr>`).join("");
+    <td style="white-space:nowrap;"><button class="btn ghost sm" data-sall title="남은 수량을 이 구간에 모두 지정">전량</button>
+      <button class="btn ghost sm" data-sdel style="margin-left:4px;">삭제</button></td></tr>`).join("");
   updateLotSplitSum();
 }
 function updateLotSplitSum() {
@@ -1993,6 +1995,17 @@ $("lotSplitBody").addEventListener("input", e => {
   }
 });
 $("lotSplitBody").addEventListener("click", e => {
+  const all = e.target.closest("[data-sall]");
+  if (all) {   // 전량: 남은 수량(생산 − 다른 구간 합)을 이 구간에 채움
+    const i = +all.closest("tr[data-si]").dataset.si;
+    const prod = Number(E.prod[LSP.idx]?.prod_qty) || 0;
+    const others = LSP.rows.reduce((a, s, j) => j === i ? a : a + (Number(s.qty) || 0), 0);
+    const rest = Math.max(0, prod - others);
+    if (rest <= 0) { toast("남은 수량이 없습니다"); return; }
+    LSP.rows[i].qty = String(rest);
+    renderLotSplitRows();
+    return;
+  }
   const d = e.target.closest("[data-sdel]"); if (!d) return;
   LSP.rows.splice(+d.closest("tr[data-si]").dataset.si, 1);
   if (!LSP.rows.length) LSP.rows.push({ qty: "", expiry: "", pack_mid: null });
@@ -5085,6 +5098,80 @@ document.addEventListener("click", e => {
   if (!e.target.closest("#shipCalPop") && !e.target.closest("#shipLbl")) hideShipCal();
 });
 
+/* ══ 인원 관리 (사람별 근무시간·노무비 — admin 전용) ═════════════ */
+const STAFF = { mode: "m", date: "", q: "", data: null };
+async function loadStaff() {
+  const d = await api(`/api/staffhours?mode=${STAFF.mode}&date=${STAFF.date}`);
+  STAFF.data = d; STAFF.date = d.date;
+  const [a, b] = d.range;
+  $("staffLbl").textContent = STAFF.mode === "d" ? `${d.date} (${dowOf(d.date)})`
+    : STAFF.mode === "y" ? d.date.slice(0, 4) + "년"
+    : STAFF.mode === "m" ? d.date.slice(0, 7).replace("-", "년 ") + "월"
+    : `${a} ~ ${b}`;
+  renderStaff();
+}
+function renderStaff() {
+  const d = STAFF.data; if (!d) return;
+  const money = canM("labor");            // 노무비·시급 열람 (admin은 항상 true)
+  const h1 = n => NF(Math.round((n || 0) * 10) / 10);
+  const q = STAFF.q.toLowerCase();
+  const mem = d.members.filter(r => !q || r.name.toLowerCase().includes(q));
+  $("staffKpis").innerHTML = [
+    ["정직원", d.members.length + "명"],
+    ["총 근무시간", h1(d.total_hours) + "h"],
+    ...(money ? [["총 노무비", NF(Math.round(d.total_labor)) + "원"]] : []),
+    ...(d.agency.length ? [["용역 시간", h1(d.agency_hours) + "h"]] : []),
+    ...(money && d.agency.length ? [["용역 노무비", NF(Math.round(d.agency_labor)) + "원"]] : []),
+  ].map(([t, v]) => `<span class="pchip num">${t} <b style="margin-left:4px">${v}</b></span>`).join("");
+  const laborCol = money ? '<th class="r">시급</th><th class="r">노무비(원)</th>' : "";
+  const memberTbl = `<div class="tbl-wrap"><table id="staffTbl">
+    <thead><tr><th>이름</th><th class="r">근무시간(h)</th><th class="r">근무일수</th><th class="r">일평균(h)</th>${laborCol}</tr></thead>
+    <tbody class="num">${mem.map(r => `<tr>
+      <td><b>${esc(r.name)}</b></td>
+      <td class="r" style="font-weight:700">${h1(r.hours)}</td>
+      <td class="r">${r.days}일</td>
+      <td class="r auto">${h1(r.avg)}</td>
+      ${money ? `<td class="r auto">${r.wage ? NF(r.wage) : "—"}</td><td class="r">${r.labor ? NF(Math.round(r.labor)) : "—"}</td>` : ""}</tr>`).join("")
+      || `<tr><td colspan="${money ? 6 : 4}" class="auto">이 기간 근무 기록이 없습니다 — 일일 입력 &gt; 인원·가동에서 기록하면 여기 집계됩니다</td></tr>`}
+      ${mem.length ? `<tr style="font-weight:800; background:var(--bg);">
+        <td>합계 (${mem.length}명)</td>
+        <td class="r">${h1(mem.reduce((s, r) => s + (r.hours || 0), 0))}</td><td></td><td></td>
+        ${money ? `<td></td><td class="r">${NF(Math.round(mem.reduce((s, r) => s + (r.labor || 0), 0)))}</td>` : ""}</tr>` : ""}
+    </tbody></table></div>`;
+  const agTbl = d.agency.length ? `<div class="tbl-wrap"><table>
+    <thead><tr><th>용역 업체</th><th class="r">연인원</th><th class="r">근무일수</th><th class="r">시간(h)</th>${money ? '<th class="r">노무비(원)</th>' : ""}</tr></thead>
+    <tbody class="num">${d.agency.map(r => `<tr>
+      <td><b>${esc(r.partner)}</b></td>
+      <td class="r">${NF(r.persondays)}명</td>
+      <td class="r">${r.days}일</td>
+      <td class="r" style="font-weight:700">${h1(r.hours)}</td>
+      ${money ? `<td class="r">${NF(Math.round(r.labor))}</td>` : ""}</tr>`).join("")}
+    </tbody></table></div>` : "";
+  $("staffBody").innerHTML =
+    `<div style="font-size:12.5px; font-weight:700; color:var(--muted); margin:2px 0 6px;">정직원</div>` + memberTbl +
+    (d.agency.length ? `<div style="font-size:12.5px; font-weight:700; color:var(--muted); margin:16px 0 6px;">용역 <span class="auto" style="font-weight:400">— 이름 없이 업체별 합계 (연인원 = 투입 건수)</span></div>` + agTbl : "");
+}
+$("staffTabs").addEventListener("click", e => {
+  const b = e.target.closest("button[data-sh]"); if (!b) return;
+  document.querySelectorAll("#staffTabs button").forEach(x => x.classList.toggle("on", x === b));
+  STAFF.mode = b.dataset.sh; loadStaff();
+});
+function staffStep(dir) {
+  const dd = new Date((STAFF.date || todayISO()) + "T00:00:00");
+  if (STAFF.mode === "d") dd.setDate(dd.getDate() + dir);
+  else if (STAFF.mode === "w") dd.setDate(dd.getDate() + dir * 7);
+  else if (STAFF.mode === "m") dd.setMonth(dd.getMonth() + dir);
+  else dd.setFullYear(dd.getFullYear() + dir);
+  STAFF.date = fmtISO(dd); loadStaff();
+}
+$("staffPrev").onclick = () => staffStep(-1);
+$("staffNext").onclick = () => staffStep(1);
+$("staffFilter").addEventListener("input", e => { STAFF.q = e.target.value.trim(); renderStaff(); });
+$("staffCsv").onclick = () => {
+  const t = $("staffTbl"); if (!t) return;
+  tableToCsv(t.tHead, t.tBodies[0], csvName("인원관리", $("staffLbl").textContent));
+};
+
 /* ══ LOT 관리 ═════════════════════════ */
 const LOT = { data: null, filter: "all", q: "", shipQ: "", openMap: {},   // openMap: 제품별 펼침 상태 (세션 유지)
   lotLimit: 100, shipFrom: "", shipTo: "", shipLimit: 50,
@@ -5683,6 +5770,7 @@ async function startApp(me) {
     $("tabUsers").style.display = "";
     $("tabAudit").style.display = "";
     $("btnAdmin").style.display = "";
+    $("navStaff").style.display = "";   // 인원 관리 탭 — admin만
   }
   // 담당별 일일 입력: 자기 탭이 기본 + 담당 아닌 탭 저장 버튼 비활성 (서버도 403으로 강제)
   const canProd = ROLE === "admin" || PROD_DUTIES.some(k => MYDUTY.has(k));

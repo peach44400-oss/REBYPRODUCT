@@ -40,7 +40,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.3.0"     # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.4.0"     # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -2363,6 +2363,66 @@ def prodreport(request: Request, mode: str = "d", date: str = ""):
         return {"range": [a, b], "materials": materials, "staffing": staffing,
                 "agency_report": agency_report,
                 "stock": stock, "memos": memos}
+    finally:
+        con.close()
+
+
+# ── 인원 관리 (사람별 근무시간 집계 — admin 전용) ─────────────
+@app.get("/api/staffhours")
+def staffhours(request: Request, mode: str = "m", date: str = ""):
+    """사람별 근무시간·근무일수·노무비를 일/주/월/년 기간으로 집계. admin 전용.
+    개인 투입시간(sm.hours) 미입력 시 라인 실가동(st.work_hours)으로 폴백 — prodreport와 동일 규칙."""
+    require_admin(request)
+    con = connect()
+    try:
+        if not date:
+            date = con.execute("SELECT MAX(date) d FROM staffing").fetchone()["d"] \
+                or dt.date.today().isoformat()
+        a, b = period_range(mode, date)
+        HRS = "CASE WHEN sm.hours>0 THEN sm.hours ELSE st.work_hours END"
+        members = rows(con.execute(f"""
+            SELECT s.id, s.name, s.wage,
+                   SUM({HRS}) hours,
+                   COUNT(DISTINCT st.date) days,
+                   SUM({HRS} * s.wage) labor
+            FROM staffing_member sm
+            JOIN staffing st ON st.id=sm.staffing_id
+            JOIN staff s ON s.id=sm.staff_id
+            WHERE st.date BETWEEN ? AND ?
+            GROUP BY s.id, s.name, s.wage
+            ORDER BY hours DESC, s.name""", (a, b)))
+        for r in members:
+            r["avg"] = (r["hours"] / r["days"]) if r["days"] else 0
+        # 용역 — 이름이 없어 개인 집계 불가 → 업체별 별도 합계 (person-days = 투입 건수)
+        agency = rows(con.execute("""
+            SELECT COALESCE(pa.name,'업체 미지정') partner,
+                   COUNT(*) persondays, COUNT(DISTINCT st.date) days,
+                   SUM(sa.hours) hours, SUM(sa.hours * sa.wage) labor
+            FROM staffing_agency sa
+            JOIN staffing st ON st.id=sa.staffing_id
+            LEFT JOIN partner pa ON pa.id=sa.partner_id
+            WHERE st.date BETWEEN ? AND ?
+            GROUP BY COALESCE(pa.name,'업체 미지정')
+            ORDER BY hours DESC""", (a, b)))
+        # 구(舊) 방식 용역 집계(개인 상세행 없이 staffing에 합계만 있는 경우) 폴백
+        legacy = con.execute("""
+            SELECT COALESCE(SUM(st.agency_hours),0) hours,
+                   COALESCE(SUM(st.agency_hours * st.agency_wage),0) labor,
+                   COUNT(DISTINCT st.date) days,
+                   COALESCE(SUM(st.agency_count),0) persondays
+            FROM staffing st
+            WHERE st.date BETWEEN ? AND ? AND st.agency_hours>0
+              AND NOT EXISTS(SELECT 1 FROM staffing_agency sa WHERE sa.staffing_id=st.id)
+            """, (a, b)).fetchone()
+        if legacy and (legacy["hours"] or 0) > 0:
+            agency.append({"partner": "용역(구 입력)", "persondays": legacy["persondays"],
+                           "days": legacy["days"], "hours": legacy["hours"], "labor": legacy["labor"]})
+        return {"date": date, "mode": mode, "range": [a, b],
+                "members": members, "agency": agency,
+                "total_hours": sum(r["hours"] or 0 for r in members),
+                "total_labor": sum(r["labor"] or 0 for r in members),
+                "agency_hours": sum(r["hours"] or 0 for r in agency),
+                "agency_labor": sum(r["labor"] or 0 for r in agency)}
     finally:
         con.close()
 
