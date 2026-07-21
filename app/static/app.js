@@ -533,13 +533,17 @@ async function loadProd() {
       <th class="r">달성률</th><th class="r">불량</th><th class="r">양품</th><th class="r">출고</th><th class="r">생산금액(원)</th></tr>`;
     let tp = 0, tq = 0, td = 0, ts = 0, ta = 0;
     $("prodBody").innerHTML = d.rows.map(r => {
-      const good = r.prod_qty - r.defect_qty, amt = good * (r.price || 0);
+      const good = r.prod_qty - r.defect_qty;
+      const amt = r.amount || 0;   // 거래처 분배 반영 생산금액 (서버 계산)
       tp += r.plan_qty; tq += r.prod_qty; td += r.defect_qty; ts += r.ship; ta += amt;
-      return `<tr><td><b>${esc(r.name)}</b></td><td class="r">${r.plan_qty ? NF(r.plan_qty) : "—"}</td>
+      const nameCell = r.product_id
+        ? `<button class="uselink" data-pstat-pid="${r.product_id}" title="LOT·소비기한·거래처 상세 보기"><b>${esc(r.name)}</b></button>`
+        : `<b>${esc(r.name)}</b>`;
+      return `<tr><td>${nameCell}</td><td class="r">${r.plan_qty ? NF(r.plan_qty) : "—"}</td>
         <td class="r">${NF(r.prod_qty)}</td><td class="r">${PCT(r.prod_qty, r.plan_qty)}</td>
         <td class="r">${NF(r.defect_qty)}${r.defect_reason ? `<div class="auto" style="font-size:10.5px; color:#98670F;">🏷 ${esc(r.defect_reason)}</div>` : ""}</td>
         <td class="r">${NF(good)}</td>
-        <td class="r">${NF(r.ship)}</td><td class="r">${r.price ? NF(amt) : '<span class="auto">단가 미설정</span>'}</td></tr>`;
+        <td class="r">${NF(r.ship)}</td><td class="r">${r.priced ? NF(amt) : '<span class="auto">단가 미설정</span>'}</td></tr>`;
     }).join("") + (d.rows.length ? `<tr style="font-weight:700"><td>합계</td><td class="r">${tp ? NF(tp) : "—"}</td>
       <td class="r">${NF(tq)}</td><td class="r">${PCT(tq, tp)}</td><td class="r">${NF(td)}</td>
       <td class="r">${NF(tq - td)}</td><td class="r">${NF(ts)}</td><td class="r">${ta ? NF(ta) : "—"}</td></tr>`
@@ -687,6 +691,11 @@ function tableToCsv(headEl, bodyEl, filename) {
 }
 const csvName = (prefix, label) => `${prefix}_${label.replace(/[\\/:*?"<>| ]/g, "_")}.csv`;
 $("prodCsv").onclick = () => tableToCsv($("prodHead"), $("prodBody"), csvName("생산현황", $("prodLbl").textContent));
+// 생산실적(섹션1) 제품명 클릭 → 재고현황과 동일한 LOT 상세 팝업
+$("prodBody").addEventListener("click", e => {
+  const b = e.target.closest("[data-pstat-pid]");
+  if (b) { e.preventDefault(); openStockLotByPid(+b.dataset.pstatPid); }
+});
 
 /* 생산 현황 보고서 섹션 2~5 (원부자재/인원·가동/완제품 재고/특이사항) */
 function psec(no, title, sub, bodyHtml, empty) {
@@ -814,19 +823,21 @@ async function loadProdReport() {
       <tbody class="num">` + d.stock.map((r, i) => {
         const disp = r.disp || 0;
         const close = r.open + r.prod - r.ship - disp;
-        const amt = close * (r.unit_price || 0);
+        const amt = r.amount || 0;   // 거래처별 단가 반영 재고금액 (서버 계산)
         tO += r.open; tP += r.prod; tS += r.ship; tD += disp; tC += close; tAmt += amt;
         const hasLots = (r.lots || []).length > 0;
         const nameCell = hasLots
-          ? `<button class="uselink" data-plot="${i}" title="LOT·소비기한 상세 보기"><b>${esc(r.name)}</b></button>`
+          ? `<button class="uselink" data-plot="${i}" title="LOT·소비기한·금액 상세 보기"><b>${esc(r.name)}</b></button>`
           : `<b>${esc(r.name)}</b>`;
+        // 거래처별 단가가 섞여 기본단가×수량과 다르면 금액 옆에 * 표시(제품 클릭 시 상세)
+        const mixed = r.amount != null && r.unit_price && Math.abs(amt - close * r.unit_price) > 1;
         return `<tr><td>${nameCell}</td><td class="r">${NF(r.open)}</td>
           <td class="r">${NF(r.prod)}</td><td class="r">${NF(r.ship)}</td>
           <td class="r" ${disp > 0 ? 'style="color:var(--crit)"' : ""}>${disp ? NF(disp) : "—"}</td>
           <td class="r" style="font-weight:700; ${close < 0 ? "color:var(--crit)" : ""}">${NF(close)}</td>
           <td class="auto" style="font-weight:400">${close > 0 ? stockExpCell(r) : "—"}</td>
           <td class="r">${r.unit_price ? NF(r.unit_price) : "—"}</td>
-          <td class="r">${r.unit_price ? NF(Math.round(amt)) : "—"}</td></tr>`;
+          <td class="r" ${mixed ? 'title="거래처별 단가가 반영된 금액 — 제품명 클릭 시 LOT별 상세"' : ""}>${r.amount != null ? NF(amt) + (mixed ? " *" : "") : "—"}</td></tr>`;
       }).join("") + `<tr style="font-weight:700"><td>합계</td><td class="r">${NF(tO)}</td>
         <td class="r">${NF(tP)}</td><td class="r">${NF(tS)}</td><td class="r">${tD ? NF(tD) : "—"}</td><td class="r">${NF(tC)}</td>
         <td></td><td></td><td class="r">${tAmt ? NF(Math.round(tAmt)) : "—"}</td></tr></tbody></table></div>`;
@@ -886,15 +897,16 @@ $("prodSections").addEventListener("click", e => {
   if (h) h.closest(".psec").classList.toggle("closed");
 });
 
-/* 완제품 재고현황 제품 클릭 → 현재 LOT(생산일·소비기한·거래처·D-day) 상세 팝업 (anaOverlay 재사용) */
+/* 완제품 재고현황 제품 클릭 → 현재 LOT(생산일·소비기한·거래처·금액·D-day) 상세 팝업 (anaOverlay 재사용) */
 function openStockLot(idx) {
   const r = PR_STOCK[idx]; if (!r) return;
   const lots = r.lots || [];
   const close = r.open + r.prod - r.ship - (r.disp || 0);
+  const admin = r.amount != null;   // 금액 열람 권한이면 amount가 채워져 있음
   $("anaPTitle").textContent = r.name;
   $("anaPHint").textContent =
     `기말재고 ${NF(close)}개 · LOT ${lots.length}건` +
-    (r.unit_price ? ` · 재고금액 ${NF(Math.round(close * r.unit_price))}원` : "");
+    (admin ? ` · 재고금액 ${NF(r.amount || 0)}원` : "");
   const packCell = l => {
     if (l.pack_count && l.boxes != null)
       return `${NF(l.pack_count)}개입 <b>${NF(l.boxes)}박스</b>`;
@@ -902,17 +914,24 @@ function openStockLot(idx) {
     return '<span class="auto">—</span>';
   };
   $("anaPBody").innerHTML = lots.length ? `<div class="tbl-wrap"><table>
-    <thead><tr><th>생산일</th><th class="r">수량</th><th>포장(박스)</th><th>소비기한</th><th>거래처</th></tr></thead>
+    <thead><tr><th>생산일</th><th class="r">수량</th><th>포장(박스)</th><th>소비기한</th><th>거래처</th>${admin ? '<th class="r">단가</th><th class="r">금액(원)</th>' : ""}</tr></thead>
     <tbody class="num">${lots.map(l => `<tr>
       <td>${l.made || '<span class="auto">미상</span>'}${l.no ? ` <span class="chip cat">#${l.no}</span>` : ""}</td>
       <td class="r" style="font-weight:700">${NF(l.qty)}</td>
       <td>${packCell(l)}</td>
       <td>${ddaySpan(l.expiry)}</td>
-      <td>${l.partner ? esc(l.partner) : '<span class="auto">미지정</span>'}</td></tr>`).join("")}
+      <td>${l.partner ? esc(l.partner) : '<span class="auto">미지정</span>'}</td>
+      ${admin ? `<td class="r">${l.price ? NF(l.price) : "—"}</td><td class="r">${l.amount != null ? NF(l.amount) : "—"}</td>` : ""}</tr>`).join("")}
     </tbody></table></div>
-    <div class="auto" style="margin-top:8px">소비기한이 임박(D-14 이하)한 LOT은 주황·빨강으로 표시됩니다. 개입수는 소비기한 설정에서 지정한 포장 기준입니다. 생산일별 소비기한은 LOT 관리 화면에서 조정할 수 있습니다.</div>`
+    <div class="auto" style="margin-top:8px">${admin ? "금액은 거래처별 단가를 반영합니다(거래처 미지정 LOT은 기본 단가). " : ""}소비기한이 임박(D-14 이하)한 LOT은 주황·빨강으로 표시됩니다. 생산일별 소비기한은 LOT 관리 화면에서 조정할 수 있습니다.</div>`
     : '<div class="auto">현재 재고 LOT이 없습니다</div>';
   $("anaOverlay").classList.add("on");
+}
+/* 생산실적(섹션1) 제품 클릭 → 같은 LOT 팝업. PR_STOCK(재고현황)에서 제품으로 찾는다 */
+function openStockLotByPid(pid) {
+  const idx = (PR_STOCK || []).findIndex(r => r.id === pid);
+  if (idx < 0) { toast("이 제품은 현재 재고 LOT이 없어 상세를 표시할 수 없습니다"); return; }
+  openStockLot(idx);
 }
 
 function renderDailyBars(rows) {

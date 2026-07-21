@@ -40,7 +40,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.0.0"     # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.1.0"     # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -2009,6 +2009,40 @@ def dashboard(request: Request):
 
 
 # ── 생산 현황 ────────────────────────────────
+def price_maps(con):
+    """기본단가·거래처별단가 조회용. (base{pid:price}, pp{(pid,partner):price}, haspp{pid})"""
+    base = {r["id"]: (r["unit_price"] or 0) for r in con.execute("SELECT id, unit_price FROM product")}
+    pp = {}
+    for r in con.execute("SELECT product_id, partner_id, price FROM product_price WHERE price>0"):
+        pp[(r["product_id"], r["partner_id"])] = r["price"]
+    haspp = {pid for (pid, _) in pp}
+    return base, pp, haspp
+
+
+def prod_amounts(con, a, b):
+    """(date, product_id) → (생산금액, priced).
+    거래처 분배(prod_split) 수량 × 그 거래처 단가(없으면 기본단가), 미분배분은 기본단가.
+    → 거래처별 판매가가 다르면 생산금액도 거래처 구성대로 달라진다."""
+    base, pp, haspp = price_maps(con)
+    prods = {}
+    for r in con.execute("SELECT date, product_id, prod_qty, unit_price FROM production "
+                         "WHERE date BETWEEN ? AND ?", (a, b)):
+        prods[(r["date"], r["product_id"])] = [float(r["prod_qty"] or 0), float(r["unit_price"] or 0)]
+    dist = {}
+    for r in con.execute("SELECT date, product_id, partner_id, qty FROM prod_split "
+                         "WHERE date BETWEEN ? AND ? AND qty>0", (a, b)):
+        dist.setdefault((r["date"], r["product_id"]), []).append((r["partner_id"], float(r["qty"])))
+    out = {}
+    for (d, pid), (qty, snap) in prods.items():
+        bp = snap if snap > 0 else base.get(pid, 0)     # 미분배·기본은 저장 시점 단가(스냅샷) 우선
+        amt, used = 0.0, 0.0
+        for partner_id, sq in dist.get((d, pid), []):
+            amt += sq * pp.get((pid, partner_id), bp)   # 거래처 단가(현재값) > 기본
+            used += sq
+        if qty - used > 1e-9:
+            amt += (qty - used) * bp
+        out[(d, pid)] = (round(amt), (bp > 0) or (pid in haspp))
+    return out
 
 
 @app.get("/api/prodstatus")
@@ -2021,18 +2055,19 @@ def prodstatus(request: Request, mode: str = "d", date: str = ""):
                 or dt.date.today().isoformat()   # 기록이 없으면 오늘 (빈 현황)
         if mode == "d":
             data = rows(con.execute("""
-                SELECT p.name, pr.plan_qty, pr.prod_qty, pr.defect_qty, pr.defect_reason, pr.line_id,
-                       l.name line, COALESCE(s.q,0) ship,
-                       CASE WHEN pr.unit_price>0 THEN pr.unit_price ELSE p.unit_price END price
+                SELECT p.id product_id, p.name, pr.plan_qty, pr.prod_qty, pr.defect_qty,
+                       pr.defect_reason, pr.line_id, l.name line, COALESCE(s.q,0) ship
                 FROM production pr
                 JOIN product p ON p.id=pr.product_id
                 LEFT JOIN line l ON l.id=pr.line_id
                 LEFT JOIN (SELECT product_id, SUM(qty) q FROM shipment WHERE date=?
                            GROUP BY product_id) s ON s.product_id=pr.product_id
                 WHERE pr.date=? ORDER BY pr.prod_qty DESC""", (date, date)))
-            if not admin:            # 단가·금액은 admin 전용
-                for r in data:
-                    r["price"] = None
+            amounts = prod_amounts(con, date, date)   # 거래처 분배 반영 생산금액
+            for r in data:
+                amt, priced = amounts.get((date, r["product_id"]), (0, False))
+                r["amount"] = amt if admin else None
+                r["priced"] = priced
             dates = [r["date"] for r in con.execute(
                 "SELECT DISTINCT date FROM production ORDER BY date")]
             return {"date": date, "rows": data, "dates": dates}
@@ -2049,35 +2084,33 @@ def prodstatus(request: Request, mode: str = "d", date: str = ""):
         if mode == "m":
             ym = date[:7]
             data = rows(con.execute("""
-                SELECT pr.date, SUM(pr.prod_qty) prod, SUM(pr.defect_qty) defect,
-                       SUM(pr.plan_qty) plan,
-                       SUM(pr.prod_qty * CASE WHEN pr.unit_price>0 THEN pr.unit_price
-                                              ELSE p.unit_price END) amount
-                FROM production pr JOIN product p ON p.id=pr.product_id
-                WHERE substr(pr.date,1,7)=? GROUP BY pr.date ORDER BY pr.date""", (ym,)))
+                SELECT pr.date, SUM(pr.prod_qty) prod, SUM(pr.defect_qty) defect, SUM(pr.plan_qty) plan
+                FROM production pr WHERE substr(pr.date,1,7)=? GROUP BY pr.date ORDER BY pr.date""", (ym,)))
+            # 거래처 분배 반영 금액을 날짜별로 합산
+            amt_by_date = {}
+            for (d, _pid), (amt, _p) in prod_amounts(con, ym + "-01", ym + "-31").items():
+                amt_by_date[d] = amt_by_date.get(d, 0) + amt
             ship = {r["date"]: r["q"] for r in con.execute(
                 "SELECT date, SUM(qty) q FROM shipment WHERE substr(date,1,7)=? GROUP BY date",
                 (ym,))}
             for r in data:
                 r["ship"] = ship.get(r["date"], 0)
-                if not admin:
-                    r["amount"] = None
+                r["amount"] = amt_by_date.get(r["date"], 0) if admin else None
             return {"month": ym, "rows": data}
         if mode == "y":
             yr = date[:4]
             data = rows(con.execute("""
-                SELECT substr(pr.date,1,7) ym, SUM(pr.prod_qty) prod, SUM(pr.defect_qty) defect,
-                       SUM(pr.prod_qty * CASE WHEN pr.unit_price>0 THEN pr.unit_price
-                                              ELSE p.unit_price END) amount
-                FROM production pr JOIN product p ON p.id=pr.product_id
-                WHERE substr(pr.date,1,4)=? GROUP BY ym ORDER BY ym""", (yr,)))
+                SELECT substr(pr.date,1,7) ym, SUM(pr.prod_qty) prod, SUM(pr.defect_qty) defect
+                FROM production pr WHERE substr(pr.date,1,4)=? GROUP BY ym ORDER BY ym""", (yr,)))
+            amt_by_ym = {}
+            for (d, _pid), (amt, _p) in prod_amounts(con, yr + "-01-01", yr + "-12-31").items():
+                amt_by_ym[d[:7]] = amt_by_ym.get(d[:7], 0) + amt
             ship = {r["ym"]: r["q"] for r in con.execute(
                 "SELECT substr(date,1,7) ym, SUM(qty) q FROM shipment WHERE substr(date,1,4)=? GROUP BY ym",
                 (yr,))}
             for r in data:
                 r["ship"] = ship.get(r["ym"], 0)
-                if not admin:
-                    r["amount"] = None
+                r["amount"] = amt_by_ym.get(r["ym"], 0) if admin else None
             return {"year": yr, "rows": data}
         raise HTTPException(400, "mode must be d/w/m/y")
     finally:
@@ -2237,14 +2270,22 @@ def prodreport(request: Request, mode: str = "d", date: str = ""):
         # 포장 자재 개입수(pack_count) — LOT 박스 수 계산용
         packmap = {row["id"]: (row["name"], row["pack_count"])
                    for row in con.execute("SELECT id, name, pack_count FROM material")}
+        base_price, part_price, _ = price_maps(con)   # 거래처별 재고금액 계산용
         today_iso = dt.date.today().isoformat()
         for r in stock:
             close_qty = (r["open"] or 0) + (r["prod"] or 0) - (r["ship"] or 0) - (r["disp"] or 0)
             r["close"] = close_qty
+            bp = base_price.get(r["id"], 0) or (r["unit_price"] or 0)
+            r["amount"] = 0                            # 재고금액 = Σ LOT수량 × 그 거래처 단가
             if close_qty > 0.5:
                 cl = current_lots(con, r["id"], b)
                 for l in cl["lots"]:
                     l["partner"] = pmap.get(l.get("partner_id"))
+                    # LOT 거래처 단가(없으면 기본) × 수량 = 이 LOT 금액
+                    lp = part_price.get((r["id"], l.get("partner_id")), bp)
+                    l["price"] = lp
+                    l["amount"] = round(l["qty"] * lp)
+                    r["amount"] += l["amount"]
                     # D-day: 소비기한까지 남은 일수 (오늘 기준)
                     try:
                         l["dday"] = (dt.date.fromisoformat(l["expiry"]) -
@@ -2293,6 +2334,10 @@ def prodreport(request: Request, mode: str = "d", date: str = ""):
         if not mcan(request, "prod"):
             for r in stock:
                 r["unit_price"] = None
+                r["amount"] = None
+                for l in r.get("lots") or []:
+                    l["price"] = None
+                    l["amount"] = None
         return {"range": [a, b], "materials": materials, "staffing": staffing,
                 "agency_report": agency_report,
                 "stock": stock, "memos": memos}
