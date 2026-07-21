@@ -40,7 +40,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.5.1"     # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.6.0"     # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -2544,8 +2544,11 @@ def day_get(date: str, request: Request):
                                                         'brk', sm.break_min))
                      FROM staffing_member sm WHERE sm.staffing_id=st.id) members,
                    (SELECT json_group_array(json_object('h', sa.hours, 'w', sa.wage,
-                                                        'g', sa.gender, 'pid', sa.partner_id))
-                     FROM (SELECT hours, wage, gender, partner_id FROM staffing_agency
+                                                        'g', sa.gender, 'pid', sa.partner_id,
+                                                        'start', sa.start_time, 'end', sa.end_time,
+                                                        'brk', sa.break_min))
+                     FROM (SELECT hours, wage, gender, partner_id, start_time, end_time, break_min
+                           FROM staffing_agency
                            WHERE staffing_id=st.id ORDER BY seq) sa) agency
             FROM staffing st LEFT JOIN line l ON l.id=st.line_id
             LEFT JOIN line pl ON pl.id=l.parent_id
@@ -2850,13 +2853,21 @@ def day_save(request: Request, date: str, body: dict):
                 # (agency_wage = 가중평균 → 구버전 산식 agency_hours×agency_wage 도 같은 노무비)
                 agency = r.get("agency")
                 if isinstance(agency, list):
-                    ags = [(float(a.get("h") or 0), float(a.get("w") or 0),
-                            (a.get("g") or "")[:2], a.get("pid") or None) for a in agency]
-                    if any(h < 0 or w < 0 for h, w, _, _ in ags):
+                    ags = []
+                    for a in agency:
+                        astart = (a.get("start") or "").strip()
+                        aend = (a.get("end") or "").strip()
+                        abrk = float(a.get("brk") or 0)
+                        # 출근·퇴근이 모두 있으면 근무시간을 서버가 확정 계산 (정직원과 동일 규칙)
+                        calc = calc_work_hours(astart, aend, abrk)
+                        h = calc if calc is not None else float(a.get("h") or 0)
+                        ags.append((h, float(a.get("w") or 0), (a.get("g") or "")[:2],
+                                    a.get("pid") or None, astart, aend, abrk))
+                    if any(h < 0 or w < 0 for h, w, *_ in ags):
                         raise HTTPException(400, "용역 시간·시급에 음수는 저장할 수 없습니다")
                     ag_cnt = len(ags)
-                    ag_hours = sum(h for h, _, _, _ in ags)
-                    labor = sum(h * w for h, w, _, _ in ags)
+                    ag_hours = sum(a[0] for a in ags)
+                    labor = sum(a[0] * a[1] for a in ags)
                     ag_wage = (labor / ag_hours) if ag_hours > 0 else (ags[0][1] if ags else 0)
                 else:   # 구버전 클라이언트: 집계값만
                     ags = None
@@ -2871,9 +2882,11 @@ def day_save(request: Request, date: str, body: dict):
                                    float(r.get("target_hours") or 0),
                                    float(r.get("work_hours") or 0), r.get("stop_reason", "")))
                 if ags:
-                    for i, (h, w, g, pid) in enumerate(ags):
-                        con.execute("INSERT INTO staffing_agency(staffing_id, seq, hours, wage, gender, partner_id)"
-                                    " VALUES(?,?,?,?,?,?)", (cur.lastrowid, i, h, w, g, pid))
+                    for i, (h, w, g, pid, astart, aend, abrk) in enumerate(ags):
+                        con.execute("INSERT INTO staffing_agency"
+                                    "(staffing_id, seq, hours, wage, gender, partner_id, start_time, end_time, break_min)"
+                                    " VALUES(?,?,?,?,?,?,?,?,?)",
+                                    (cur.lastrowid, i, h, w, g, pid, astart, aend, abrk))
                 members = r.get("members")
                 if members is None:   # 구버전 클라이언트 호환
                     members = [{"id": sid, "h": 0} for sid in r.get("member_ids", [])]

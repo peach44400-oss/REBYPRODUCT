@@ -538,6 +538,13 @@ def init_db() -> None:
         con.execute("ALTER TABLE staffing_agency ADD COLUMN gender TEXT DEFAULT ''")
     if "partner_id" not in sacols:
         con.execute("ALTER TABLE staffing_agency ADD COLUMN partner_id INTEGER")
+    # 용역도 출근·퇴근·휴게 입력 지원 (정직원 staffing_member와 동일)
+    if "start_time" not in sacols:
+        con.execute("ALTER TABLE staffing_agency ADD COLUMN start_time TEXT DEFAULT ''")
+    if "end_time" not in sacols:
+        con.execute("ALTER TABLE staffing_agency ADD COLUMN end_time TEXT DEFAULT ''")
+    if "break_min" not in sacols:
+        con.execute("ALTER TABLE staffing_agency ADD COLUMN break_min REAL DEFAULT 0")
     acols = [r[1] for r in con.execute("PRAGMA table_info(audit_log)")]
     if "username" not in acols:
         con.execute("ALTER TABLE audit_log ADD COLUMN username TEXT DEFAULT ''")

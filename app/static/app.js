@@ -1032,11 +1032,13 @@ function mapStaffRow(r) {
   let ag = [];
   try { ag = JSON.parse(r.agency || "[]"); } catch (e) { ag = []; }
   if (ag.length) {
-    ag = ag.map(a => ({ h: a.h || "", w: a.w == null ? "" : a.w, g: a.g || "", pid: a.pid || null }));
+    ag = ag.map(a => ({ h: a.h || "", w: a.w == null ? "" : a.w, g: a.g || "", pid: a.pid || null,
+      start: a.start || "", end: a.end || "", brk: a.brk || "" }));
   } else {
     const n = Number(r.agency_count) || 0, th = Number(r.agency_hours) || 0;
     const perH = n ? Math.round(th / n * 100) / 100 : "";
-    ag = Array.from({ length: n }, () => ({ h: perH || "", w: r.agency_wage ?? "", g: "", pid: null }));
+    ag = Array.from({ length: n }, () => ({ h: perH || "", w: r.agency_wage ?? "", g: "", pid: null,
+      start: "", end: "", brk: "" }));
   }
   return { line_id: r.line_id, headcount: r.headcount,
     agency: ag, agency_wage: r.agency_wage ?? "",
@@ -2270,23 +2272,36 @@ function memberHLabel(m) {
   if (ch != null) return "= " + ch + "h";
   return (m.h !== "" && m.h != null) ? "= " + m.h + "h" : "= —";
 }
+// 출퇴근 시각 드롭다운 [시 ▼]:[분 ▼] — prefix: ms/me(정직원 출·퇴근), as/ae(용역 출·퇴근)
+// 시 00~23 (24시간제 — 오전/오후 없이 명확), 분 00~50 10분 단위 (기존 저장값이 다른 분이면 그 값도 옵션에 포함)
+function timeDD(prefix, key, val) {
+  const [hh = "", mm = ""] = (val || "").split(":");
+  let h = `<option value="">--</option>`;
+  for (let i = 0; i < 24; i++) {
+    const v = String(i).padStart(2, "0");
+    h += `<option value="${v}" ${v === hh ? "selected" : ""}>${v}</option>`;
+  }
+  const mins = ["00", "10", "20", "30", "40", "50"];
+  if (mm && !mins.includes(mm)) { mins.push(mm); mins.sort(); }
+  const m = `<option value="">--</option>` +
+    mins.map(v => `<option value="${v}" ${v === mm ? "selected" : ""}>${v}</option>`).join("");
+  return `<select class="mini-sel tsel" data-${prefix}h="${key}" title="${prefix[1] === "s" ? "출근" : "퇴근"} 시">${h}</select><span class="auto" style="font-size:10px">:</span><select class="mini-sel tsel" data-${prefix}m="${key}" title="${prefix[1] === "s" ? "출근" : "퇴근"} 분">${m}</select>`;
+}
 function renderStaff() {
   const admin = canM("labor");   // 시급 입력칸 노출 여부
   $("eStaff").innerHTML = E.staff.map((r, i) => {
     const line = M.line.find(l => l.id === r.line_id);
     const rate = staffRate(r);
     const ids = (r.members || []).map(m => m.id);
-    // 정직원 칩 — 이름 + 출근·퇴근·휴게 → 근무시간 자동 계산
+    // 정직원 칩 — 이름 + 출근·퇴근 드롭다운·휴게 → 근무시간 자동 계산
     const chips = (r.members || []).map(m => {
       const st = M.staff.find(s => s.id === m.id);
       return st ? `<span class="member-chip memtime">${esc(st.name)}
-        <input type="time" class="mini-input" data-ms="${m.id}" value="${m.start || ""}" title="출근 시각"
-          style="width:72px; padding:1px 2px; font-size:11px;">
+        ${timeDD("ms", m.id, m.start)}
         <span class="auto" style="font-size:10px;">~</span>
-        <input type="time" class="mini-input" data-me="${m.id}" value="${m.end || ""}" title="퇴근 시각"
-          style="width:72px; padding:1px 2px; font-size:11px;">
-        <input class="mini-input num" data-mb="${m.id}" value="${m.brk ?? ""}" placeholder="휴게" title="휴게(분)"
-          style="width:38px; padding:1px 3px; font-size:11px;"><span class="auto" style="font-size:10px;">분</span>
+        ${timeDD("me", m.id, m.end)}
+        <span class="auto" style="font-size:10px;">휴게</span><input class="mini-input num" data-mb="${m.id}" value="${m.brk ?? ""}" placeholder="60" title="휴게(분)"
+          style="width:34px; padding:1px 3px; font-size:11px;"><span class="auto" style="font-size:10px;">분</span>
         <b data-mhlbl="${m.id}" title="근무시간 = 퇴근 − 출근 − 휴게">${memberHLabel(m)}</b>
         <button data-rm="${m.id}">✕</button></span>` : "";
     }).join("");
@@ -2304,9 +2319,13 @@ function renderStaff() {
             <option value="여" ${a.g === "여" ? "selected" : ""}>여</option>
           </select>
           <button data-arm="${ai}">✕</button></span>
-        <span style="white-space:nowrap">용역
-          <input class="mini-input num" data-ah="${ai}" value="${a.h ?? ""}" placeholder="h"
-            title="이 용역 인원의 투입 시간" style="width:38px; padding:1px 3px; font-size:11px;">h
+        <span style="white-space:nowrap">
+          ${timeDD("as", ai, a.start)}
+          <span class="auto" style="font-size:10px;">~</span>
+          ${timeDD("ae", ai, a.end)}
+          <span class="auto" style="font-size:10px;">휴게</span><input class="mini-input num" data-abk="${ai}" value="${a.brk ?? ""}" placeholder="60" title="휴게(분)"
+            style="width:34px; padding:1px 3px; font-size:11px;"><span class="auto" style="font-size:10px;">분</span>
+          <b data-ahlbl="${ai}" title="근무시간 = 퇴근 − 출근 − 휴게">${memberHLabel(a)}</b>
           ${admin ? `<span style="font-size:10.5px;">시급
           <input class="mini-input num" data-aw="${ai}" value="${a.w ?? ""}" placeholder="원"
             title="이 용역 인원의 시급 (노무비 = 시간 × 시급)" style="width:58px; padding:1px 3px; font-size:11px;"></span>` : ""}</span>
@@ -2338,30 +2357,48 @@ $("addStaff").onclick = () => { mustDate() && (E.staff.push({ line_id: null, hea
 $("eStaff").addEventListener("input", e => {
   const tr = e.target.closest("tr[data-i]"); if (!tr) return;
   const row = E.staff[+tr.dataset.i];
-  const mh = e.target.dataset.mh, ah = e.target.dataset.ah, aw = e.target.dataset.aw;
-  const agd = e.target.dataset.agd, apt = e.target.dataset.apt;
-  const ms = e.target.dataset.ms, me = e.target.dataset.me, mb = e.target.dataset.mb;
-  // 출근·퇴근·휴게 → 근무시간 자동 계산 (재렌더 없이 라벨만 갱신해 포커스 유지)
-  const memTime = ms || me || mb;
-  if (memTime) {
-    const id = +(ms || me || mb);
+  const ds = e.target.dataset;
+  // 시각 드롭다운 값 반영 → 근무시간 자동 계산 (재렌더 없이 라벨만 갱신해 포커스 유지)
+  // p: "ms"/"me"(정직원 출·퇴근) 또는 "as"/"ae"(용역 출·퇴근), key: 직원 id 또는 용역 index
+  const applyTime = (obj, p, key) => {
+    const hSel = tr.querySelector(`[data-${p}h="${key}"]`), mSel = tr.querySelector(`[data-${p}m="${key}"]`);
+    const hh = hSel.value, mm = mSel.value;
+    if (hh && !mm) mSel.value = "00";   // 시만 고르면 분은 00으로
+    obj[p[1] === "s" ? "start" : "end"] = hh ? hh + ":" + (mm || "00") : "";
+  };
+  const recalc = (obj, lblSel) => {
+    const ch = memberHours(obj);
+    if (ch != null) obj.h = ch;   // 출·퇴근이 완전하면 근무시간 확정
+    const lbl = tr.querySelector(lblSel);
+    if (lbl) lbl.textContent = memberHLabel(obj);
+  };
+  // 정직원: 출퇴근 드롭다운(msh/msm/meh/mem) + 휴게(mb)
+  const mKey = ["msh", "msm", "meh", "mem"].find(k => ds[k] !== undefined);
+  if (mKey || ds.mb !== undefined) {
+    const id = +(mKey ? ds[mKey] : ds.mb);
     const m = (row.members || []).find(x => x.id === id);
     if (m) {
-      if (ms) m.start = e.target.value;
-      else if (me) m.end = e.target.value;
+      if (mKey) applyTime(m, mKey.slice(0, 2), id);
       else m.brk = e.target.value;
-      const ch = memberHours(m);
-      if (ch != null) m.h = ch;   // 시각이 완전하면 근무시간 확정
-      const lbl = tr.querySelector(`[data-mhlbl="${id}"]`);
-      if (lbl) lbl.textContent = memberHLabel(m);
+      recalc(m, `[data-mhlbl="${id}"]`);
     }
     return;
   }
-  if (mh) { const m = (row.members || []).find(x => x.id === +mh); if (m) m.h = e.target.value; }
-  else if (ah != null) { if (row.agency && row.agency[+ah]) row.agency[+ah].h = e.target.value; }
-  else if (aw != null) { if (row.agency && row.agency[+aw]) row.agency[+aw].w = e.target.value; }
-  else if (agd != null) { if (row.agency && row.agency[+agd]) row.agency[+agd].g = e.target.value; }
-  else if (apt != null) { if (row.agency && row.agency[+apt]) row.agency[+apt].pid = e.target.value ? +e.target.value : null; }
+  // 용역: 출퇴근 드롭다운(ash/asm/aeh/aem) + 휴게(abk)
+  const aKey = ["ash", "asm", "aeh", "aem"].find(k => ds[k] !== undefined);
+  if (aKey || ds.abk !== undefined) {
+    const ai = +(aKey ? ds[aKey] : ds.abk);
+    const a = row.agency && row.agency[ai];
+    if (a) {
+      if (aKey) applyTime(a, aKey.slice(0, 2), ai);
+      else a.brk = e.target.value;
+      recalc(a, `[data-ahlbl="${ai}"]`);
+    }
+    return;
+  }
+  if (ds.aw != null) { if (row.agency && row.agency[+ds.aw]) row.agency[+ds.aw].w = e.target.value; }
+  else if (ds.agd != null) { if (row.agency && row.agency[+ds.agd]) row.agency[+ds.agd].g = e.target.value; }
+  else if (ds.apt != null) { if (row.agency && row.agency[+ds.apt]) row.agency[+ds.apt].pid = e.target.value ? +e.target.value : null; }
 });
 function mustDate() { if (!E.date) { toast("달력에서 날짜를 먼저 선택하세요"); return false; } return true; }
 
@@ -2488,7 +2525,8 @@ function wireEntryTable(tbodyId, arr, rerender, liveUpdate) {
         const last = (row.agency || [])[row.agency ? row.agency.length - 1 : -1];
         row.agency = (row.agency || []).concat({ h: row.work_hours || "",
           w: (last && last.w) || row.agency_wage || "",     // 시급·업체·성별 기본값 = 직전 용역
-          g: (last && last.g) || "", pid: (last && last.pid) || null });
+          g: (last && last.g) || "", pid: (last && last.pid) || null,
+          start: "", end: "", brk: "60" });                  // 휴게 기본 60분 (점심)
       } else {
         row.members = (row.members || []).concat({ id: +e.target.value, h: row.work_hours || "",
           start: "", end: "", brk: "60" });   // 휴게 기본 60분 (점심)
@@ -2667,7 +2705,9 @@ $("btnSaveDay").onclick = async () => {           // 생산 입력 탭
       agency: (r.agency || []).map(a => ({
         h: Number(String(a.h ?? "").replace(/,/g, "")) || 0,
         w: Number(String(a.w ?? "").replace(/,/g, "")) || 0,
-        g: a.g || "", pid: a.pid || null })),
+        g: a.g || "", pid: a.pid || null,
+        start: a.start || "", end: a.end || "",
+        brk: Number(String(a.brk ?? "").replace(/,/g, "")) || 0 })),
       agency_count: (r.agency || []).length,
       agency_hours: (r.agency || []).reduce((s, a) => s + (Number(a.h) || 0), 0),
       agency_wage: r.agency_wage || 0 })),
@@ -2809,6 +2849,7 @@ $("btnCopyPrevStaff").onclick = async () => {
   E.staff = d.staffing.map(r => {
     const m = mapStaffRow(r);
     m.members.forEach(x => { if (!x.brk) x.brk = "60"; });   // 휴게 미입력 인원은 기본 60분
+    (m.agency || []).forEach(x => { if (!x.brk) x.brk = "60"; });
     return { ...m, stop_reason: "" };
   });
   renderStaff();
