@@ -1,5 +1,5 @@
 {
-  "version": "1.1.0",
+  "version": "1.2.0",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· 생산금액·재고금액이 거래처별 판매 단가를 반영합니다\n· 생산 현황 생산실적에서 제품명 클릭 → LOT·거래처·금액 상세 팝업\n· 재고현황 팝업에 LOT별 단가·금액 표시"
+  "notes": "· 배합비 탭에 [🗑 배합비 삭제] 추가 — 제품별 배합비를 통째로 삭제(자재는 그대로)"
 }

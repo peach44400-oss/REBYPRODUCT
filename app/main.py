@@ -40,7 +40,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.1.0"     # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.2.0"     # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -2920,6 +2920,24 @@ def bom_save(product_id: int, body: dict):
         bump_masters()
         con.commit()
         return {"ok": True}
+    finally:
+        con.close()
+
+
+@app.delete("/api/bom/{product_id}")
+def bom_delete(request: Request, product_id: int):
+    """이 제품의 배합비 전체 삭제 — 자재는 그대로, 배합 행만 지운다.
+    제품의 1배합당 생산수량(batch_yield)도 함께 초기화(배합비 근거가 사라지므로)."""
+    require_admin(request)
+    con = connect()
+    try:
+        n = con.execute("DELETE FROM bom WHERE product_id=?", (product_id,)).rowcount
+        con.execute("UPDATE product SET batch_yield=0 WHERE id=?", (product_id,))
+        nm = con.execute("SELECT name FROM product WHERE id=?", (product_id,)).fetchone()
+        audit(con, "delete_bom", f"{nm['name'] if nm else product_id}: 배합 {n}행 삭제")
+        bump_masters()
+        con.commit()
+        return {"ok": True, "removed": n}
     finally:
         con.close()
 

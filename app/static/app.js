@@ -3524,6 +3524,8 @@ async function renderBomTab() {
       .map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
   $("mAdd").style.display = "none";        // 하단 추가 버튼·검색 제거 — 배합은 각 섹션 헤더의 검색/버튼으로 추가
   $("bomAddSearch").style.display = "none";
+  // 배합비가 등록된 제품일 때만 '배합비 삭제' 노출 (admin)
+  $("bomDelete").style.display = (ROLE === "admin" && BOM.pid && has.has(BOM.pid)) ? "" : "none";
   $("mHint").textContent = "1배합당 소요량(g) 기준으로 편집합니다 · 반죽/토핑 각 섹션 옆의 🔍 검색으로 자재를 추가합니다 · 저장은 제품 단위(두 배합 함께 보존)";
   if (BOM.pid && BOM.loadedFor !== BOM.pid) { loadBom(BOM.pid); return; }
   renderBomRows();
@@ -3676,6 +3678,22 @@ $("bomSave").onclick = async () => {
   BOM.loadedFor = null;   // 저장본 재로드
   await reloadMaster("product");   // batch_yield 변경분을 제품 캐시에 반영
   renderBomTab();         // 등록/미등록 그룹·복사 목록도 갱신
+};
+$("bomDelete").onclick = async () => {
+  if (!BOM.pid) return;
+  const p = productById(BOM.pid);
+  const n = ((BOMALL && BOMALL[BOM.pid]) || []).length;
+  if (!confirm(`'${p ? p.name : ""}' 배합비를 통째로 삭제할까요?\n\n`
+    + `• 배합 자재 ${n}종이 모두 지워집니다 (자재 자체는 안 지워짐)\n`
+    + `• 제품의 1배합당 생산수량도 초기화됩니다\n\n이 작업은 되돌릴 수 없습니다.`)) return;
+  try {
+    const r = await api("/api/bom/" + BOM.pid, { method: "DELETE" });
+    toast(`'${p ? p.name : ""}' 배합비 삭제됨 — ${r.removed}종 제거`);
+    BOM.rows = []; BOM.loadedFor = null;
+    BOMALL = null; COSTS = null;
+    await reloadMaster("product");
+    renderBomTab();
+  } catch (e) { /* api()가 토스트 */ }
 };
 // 배합 자재 납품처 팝업 — 여러 곳 체크 선택
 let bpIdx = -1;
