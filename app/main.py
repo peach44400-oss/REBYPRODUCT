@@ -40,7 +40,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.4.0"     # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.5.0"     # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -516,9 +516,10 @@ def current_lots(con, pid, upto, exclude_ship_on_date=False, exclude_ship_date=N
                              "partner_id": None, "pack_mid": None, "pack_set": ""})
 
     def fifo_take(amount, protect_made=None):
-        # 선입선출 = 소비기한 임박(이른) 순, 기한 미상은 뒤 (생산일 보조 정렬)
+        # 선입선출 = ①이월(생산일 미상) LOT 먼저 — 가장 오래된 재고 ②그다음 소비기한 임박(이른) 순.
+        # (기한미상을 뒤로 미루면 이월분 출고가 당일 분할 LOT을 깎아 기한 정보가 사라진다)
         # protect_made: 그 생산일 LOT은 차감하지 않음 (재고 부족 보정이 당일 생산분을 지우지 않게)
-        for l in sorted(lots, key=lambda x: (x["expiry"] == "", x["expiry"], x["made"])):
+        for l in sorted(lots, key=lambda x: (x["made"] != "", x["expiry"] == "", x["expiry"], x["made"])):
             if amount <= 1e-9:
                 break
             if l["qty"] <= 0 or (protect_made and l["made"] == protect_made):
@@ -2151,6 +2152,27 @@ def prodstatus(request: Request, mode: str = "d", date: str = ""):
         con.close()
 
 
+def calc_work_hours(start, end, brk):
+    """출근·퇴근(HH:MM) + 휴게(분) → 근무시간(시간, 소수 2자리). 시각이 불완전하면 None.
+    퇴근이 출근보다 이르면 자정을 넘긴 근무로 보고 +24시간."""
+    def to_min(t):
+        t = (t or "").strip()
+        if not t or ":" not in t:
+            return None
+        try:
+            h, m = t.split(":")[:2]
+            return int(h) * 60 + int(m)
+        except ValueError:
+            return None
+    s, e = to_min(start), to_min(end)
+    if s is None or e is None:
+        return None
+    if e < s:
+        e += 24 * 60
+    net = e - s - (float(brk) if brk else 0)
+    return max(0.0, round(net / 60.0, 2))
+
+
 def period_range(mode: str, date: str):
     d0 = dt.date.fromisoformat(date)
     if mode == "d":
@@ -2439,6 +2461,39 @@ def staffhours(request: Request, mode: str = "m", date: str = ""):
         con.close()
 
 
+@app.get("/api/staffdays/{staff_id}")
+def staffdays(request: Request, staff_id: int, mode: str = "m", date: str = ""):
+    """한 사람의 출근일 상세 — 인원 관리 이름 클릭 팝업용. 날짜별 라인·출퇴근·근무시간·노무비."""
+    require_admin(request)
+    con = connect()
+    try:
+        if not date:
+            date = con.execute("SELECT MAX(date) d FROM staffing").fetchone()["d"] \
+                or dt.date.today().isoformat()
+        a, b = period_range(mode, date)
+        s = con.execute("SELECT name, wage FROM staff WHERE id=?", (staff_id,)).fetchone()
+        rows_ = rows(con.execute("""
+            SELECT st.date, COALESCE(pl.name, l.name, '—') line, COALESCE(l.process,'') process,
+                   CASE WHEN sm.hours>0 THEN sm.hours ELSE st.work_hours END hours,
+                   sm.start_time start, sm.end_time end, sm.break_min brk
+            FROM staffing_member sm
+            JOIN staffing st ON st.id=sm.staffing_id
+            LEFT JOIN line l ON l.id=st.line_id
+            LEFT JOIN line pl ON pl.id=l.parent_id
+            WHERE sm.staff_id=? AND st.date BETWEEN ? AND ?
+            ORDER BY st.date, line""", (staff_id, a, b)))
+        wage = (s["wage"] if s else 0) or 0
+        for r in rows_:
+            r["labor"] = round((r["hours"] or 0) * wage)
+        return {"staff_id": staff_id, "name": s["name"] if s else "?",
+                "wage": wage, "range": [a, b], "mode": mode,
+                "days": len({r["date"] for r in rows_}), "rows": rows_,
+                "total_hours": sum(r["hours"] or 0 for r in rows_),
+                "total_labor": sum(r["labor"] or 0 for r in rows_)}
+    finally:
+        con.close()
+
+
 # ── 일일 기록 (조회/저장) ─────────────────────
 
 
@@ -2484,7 +2539,9 @@ def day_get(date: str, request: Request):
                    COALESCE(pl.name, l.name, '—') line_group, COALESCE(l.process,'') process,
                    (SELECT json_group_array(staff_id) FROM staffing_member sm
                      WHERE sm.staffing_id=st.id) member_ids,
-                   (SELECT json_group_array(json_object('id', sm.staff_id, 'h', sm.hours))
+                   (SELECT json_group_array(json_object('id', sm.staff_id, 'h', sm.hours,
+                                                        'start', sm.start_time, 'end', sm.end_time,
+                                                        'brk', sm.break_min))
                      FROM staffing_member sm WHERE sm.staffing_id=st.id) members,
                    (SELECT json_group_array(json_object('h', sa.hours, 'w', sa.wage,
                                                         'g', sa.gender, 'pid', sa.partner_id))
@@ -2823,9 +2880,16 @@ def day_save(request: Request, date: str, body: dict):
                 for m in members:
                     if not m.get("id"):
                         continue
-                    con.execute("INSERT OR IGNORE INTO staffing_member(staffing_id, staff_id, hours)"
-                                " VALUES(?,?,?)",
-                                (cur.lastrowid, m["id"], float(m.get("h") or 0)))
+                    start = (m.get("start") or "").strip()
+                    end = (m.get("end") or "").strip()
+                    brk = float(m.get("brk") or 0)
+                    # 출근·퇴근이 모두 있으면 근무시간을 서버가 확정 계산, 아니면 수동 입력값(h) 사용
+                    calc = calc_work_hours(start, end, brk)
+                    hours = calc if calc is not None else float(m.get("h") or 0)
+                    con.execute("INSERT OR IGNORE INTO staffing_member"
+                                "(staffing_id, staff_id, hours, start_time, end_time, break_min)"
+                                " VALUES(?,?,?,?,?,?)",
+                                (cur.lastrowid, m["id"], hours, start, end, brk))
         # ── 최종 재고 무결성 검증: 이번 저장으로 어느 제품이든 계산 재고가 음수가 되면 전체 롤백 ──
         # (예: 이미 출고된 과거 생산을 축소·삭제 → 재고 −N. 커밋이 이 아래 한 번뿐이라 400이면 안전하게 취소됨)
         for pid_ in affected_pids:

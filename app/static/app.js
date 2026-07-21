@@ -100,7 +100,10 @@ $("nav").addEventListener("click", e => {
   document.querySelectorAll(".screen").forEach(s => s.classList.toggle("on", s.id === "scr-" + b.dataset.scr));
   $("scrTitle").textContent = TITLES[b.dataset.scr];
   resetSearches();
-  const fn = { dash: loadDash, prod: loadProd, ship: loadShip, entry: openEntry, lot: loadLot, items: renderMasters, ana: loadAna, lookup: () => lkCal.render(), staff: loadStaff }[b.dataset.scr];
+  const fn = { dash: loadDash, prod: loadProd, ship: loadShip, entry: openEntry, lot: loadLot, items: renderMasters, ana: loadAna, lookup: () => lkCal.render(),
+    staff: () => { STAFF.mode = "d"; STAFF.date = todayISO();   // 진입 시 항상 일별·오늘로 초기화
+      document.querySelectorAll("#staffTabs button").forEach(x => x.classList.toggle("on", x.dataset.sh === "d"));
+      loadStaff(); } }[b.dataset.scr];
   if (fn) fn();
 });
 // 화면 내 버튼(예: 대시보드 배너)에서 다른 화면으로 이동
@@ -1038,7 +1041,8 @@ function mapStaffRow(r) {
   return { line_id: r.line_id, headcount: r.headcount,
     agency: ag, agency_wage: r.agency_wage ?? "",
     target_hours: r.target_hours || "", work_hours: r.work_hours, stop_reason: r.stop_reason || "",
-    members: JSON.parse(r.members || "[]").map(m => ({ id: m.id, h: m.h || "" })) };
+    members: JSON.parse(r.members || "[]").map(m => ({ id: m.id, h: m.h || "",
+      start: m.start || "", end: m.end || "", brk: m.brk || "" })) };
 }
 async function loadDay(date) {
   const d = await api("/api/day/" + date);
@@ -2134,7 +2138,7 @@ function shipLotSel(r) {
   const pName = pid => { const pa = M.partner.find(x => x.id === pid); return pa ? pa.name : ""; };
   const label = l => `${l.made || "생산일 미상 (이월)"}${l.no ? " #" + l.no : ""} · 재고 ${NF(l.qty)}${l.expiry ? " · ~" + l.expiry.slice(5) : ""}${l.partner_id ? " · " + pName(l.partner_id) : ""}`;
   return `<select class="mini-sel" data-f="prod_date" style="max-width:270px">
-    <option value="||0">자동 — 소비기한 임박부터 (FIFO)</option>
+    <option value="||0">자동 — 이월분 → 소비기한 임박순 (FIFO)</option>
     ${lots.map(l => `<option value="${key(l)}" ${key(l) === cur ? "selected" : ""}>${label(l)}</option>`).join("")}
     ${!known ? `<option value="${cur}" selected>⚠ 선택한 재고 LOT 없음</option>` : ""}</select>`;
 }
@@ -2249,18 +2253,41 @@ function staffRate(r) {   // 가동률 = 실가동 ÷ 목표가동(그날 입력
   const std = Number(r.target_hours) > 0 ? Number(r.target_hours) : (line ? line.std_hours : 0);
   return std > 0 && r.work_hours ? PCT(r.work_hours, std) : "—";
 }
+// 출근·퇴근(HH:MM) + 휴게(분) → 근무시간. 시각이 불완전하면 null(→ 수동 h 사용).
+function hhmmToMin(t) {
+  if (!t || t.indexOf(":") < 0) return null;
+  const [h, m] = t.split(":"); const v = parseInt(h, 10) * 60 + parseInt(m, 10);
+  return isNaN(v) ? null : v;
+}
+function memberHours(m) {
+  const s = hhmmToMin(m.start), e0 = hhmmToMin(m.end);
+  if (s == null || e0 == null) return null;
+  let e = e0; if (e < s) e += 1440;   // 자정 넘긴 근무
+  return Math.max(0, Math.round((e - s - (Number(m.brk) || 0)) / 60 * 100) / 100);
+}
+function memberHLabel(m) {
+  const ch = memberHours(m);
+  if (ch != null) return "= " + ch + "h";
+  return (m.h !== "" && m.h != null) ? "= " + m.h + "h" : "= —";
+}
 function renderStaff() {
   const admin = canM("labor");   // 시급 입력칸 노출 여부
   $("eStaff").innerHTML = E.staff.map((r, i) => {
     const line = M.line.find(l => l.id === r.line_id);
     const rate = staffRate(r);
     const ids = (r.members || []).map(m => m.id);
-    // 정직원(등록된 직원) 칩 — 이름 + 개인 투입시간
+    // 정직원 칩 — 이름 + 출근·퇴근·휴게 → 근무시간 자동 계산
     const chips = (r.members || []).map(m => {
       const st = M.staff.find(s => s.id === m.id);
-      return st ? `<span class="member-chip">${esc(st.name)}
-        <input class="mini-input num" data-mh="${m.id}" value="${m.h ?? ""}" placeholder="h"
-          title="이 인원의 투입 시간 (노무비 = 시급 × 시간)" style="width:38px; padding:1px 3px; font-size:11px;">h
+      return st ? `<span class="member-chip memtime">${esc(st.name)}
+        <input type="time" class="mini-input" data-ms="${m.id}" value="${m.start || ""}" title="출근 시각"
+          style="width:72px; padding:1px 2px; font-size:11px;">
+        <span class="auto" style="font-size:10px;">~</span>
+        <input type="time" class="mini-input" data-me="${m.id}" value="${m.end || ""}" title="퇴근 시각"
+          style="width:72px; padding:1px 2px; font-size:11px;">
+        <input class="mini-input num" data-mb="${m.id}" value="${m.brk ?? ""}" placeholder="휴게" title="휴게(분)"
+          style="width:38px; padding:1px 3px; font-size:11px;"><span class="auto" style="font-size:10px;">분</span>
+        <b data-mhlbl="${m.id}" title="근무시간 = 퇴근 − 출근 − 휴게">${memberHLabel(m)}</b>
         <button data-rm="${m.id}">✕</button></span>` : "";
     }).join("");
     // 용역 칩 — 업체·성별 + 각자 투입시간 + 개인별 시급 묶음 (시급은 admin만)
@@ -2313,6 +2340,23 @@ $("eStaff").addEventListener("input", e => {
   const row = E.staff[+tr.dataset.i];
   const mh = e.target.dataset.mh, ah = e.target.dataset.ah, aw = e.target.dataset.aw;
   const agd = e.target.dataset.agd, apt = e.target.dataset.apt;
+  const ms = e.target.dataset.ms, me = e.target.dataset.me, mb = e.target.dataset.mb;
+  // 출근·퇴근·휴게 → 근무시간 자동 계산 (재렌더 없이 라벨만 갱신해 포커스 유지)
+  const memTime = ms || me || mb;
+  if (memTime) {
+    const id = +(ms || me || mb);
+    const m = (row.members || []).find(x => x.id === id);
+    if (m) {
+      if (ms) m.start = e.target.value;
+      else if (me) m.end = e.target.value;
+      else m.brk = e.target.value;
+      const ch = memberHours(m);
+      if (ch != null) m.h = ch;   // 시각이 완전하면 근무시간 확정
+      const lbl = tr.querySelector(`[data-mhlbl="${id}"]`);
+      if (lbl) lbl.textContent = memberHLabel(m);
+    }
+    return;
+  }
   if (mh) { const m = (row.members || []).find(x => x.id === +mh); if (m) m.h = e.target.value; }
   else if (ah != null) { if (row.agency && row.agency[+ah]) row.agency[+ah].h = e.target.value; }
   else if (aw != null) { if (row.agency && row.agency[+aw]) row.agency[+aw].w = e.target.value; }
@@ -5108,9 +5152,10 @@ async function loadStaff() {
     : STAFF.mode === "y" ? d.date.slice(0, 4) + "년"
     : STAFF.mode === "m" ? d.date.slice(0, 7).replace("-", "년 ") + "월"
     : `${a} ~ ${b}`;
-  renderStaff();
+  renderStaffMgmt();
 }
-function renderStaff() {
+// ※ 일일 입력의 renderStaff()와 이름이 겹치면 안 됨 — 인원 관리 화면 전용
+function renderStaffMgmt() {
   const d = STAFF.data; if (!d) return;
   const money = canM("labor");            // 노무비·시급 열람 (admin은 항상 true)
   const h1 = n => NF(Math.round((n || 0) * 10) / 10);
@@ -5127,7 +5172,7 @@ function renderStaff() {
   const memberTbl = `<div class="tbl-wrap"><table id="staffTbl">
     <thead><tr><th>이름</th><th class="r">근무시간(h)</th><th class="r">근무일수</th><th class="r">일평균(h)</th>${laborCol}</tr></thead>
     <tbody class="num">${mem.map(r => `<tr>
-      <td><b>${esc(r.name)}</b></td>
+      <td><b class="namecell" data-staffid="${r.id}" title="클릭 = 이 사람의 출근일 상세">${esc(r.name)}</b></td>
       <td class="r" style="font-weight:700">${h1(r.hours)}</td>
       <td class="r">${r.days}일</td>
       <td class="r auto">${h1(r.avg)}</td>
@@ -5166,11 +5211,37 @@ function staffStep(dir) {
 }
 $("staffPrev").onclick = () => staffStep(-1);
 $("staffNext").onclick = () => staffStep(1);
-$("staffFilter").addEventListener("input", e => { STAFF.q = e.target.value.trim(); renderStaff(); });
+$("staffFilter").addEventListener("input", e => { STAFF.q = e.target.value.trim(); renderStaffMgmt(); });
 $("staffCsv").onclick = () => {
   const t = $("staffTbl"); if (!t) return;
   tableToCsv(t.tHead, t.tBodies[0], csvName("인원관리", $("staffLbl").textContent));
 };
+// 이름 클릭 → 그 사람의 출근일 상세 팝업 (현재 선택된 기간 기준)
+$("staffBody").addEventListener("click", e => {
+  const n = e.target.closest("[data-staffid]"); if (!n) return;
+  openStaffDays(+n.dataset.staffid);
+});
+async function openStaffDays(id) {
+  const d = await api(`/api/staffdays/${id}?mode=${STAFF.mode}&date=${STAFF.date}`);
+  const money = canM("labor");
+  const [a, b] = d.range;
+  const h2 = n => Math.round((n || 0) * 100) / 100;
+  $("staffDayTitle").textContent = `${d.name} · 근무 상세`;
+  $("staffDaySub").textContent = `${a} ~ ${b} · 출근 ${d.days}일 · 총 ${Math.round(d.total_hours * 10) / 10}h`
+    + (money && d.total_labor ? ` · 노무비 ${NF(Math.round(d.total_labor))}원` : "");
+  $("staffDayBody").innerHTML = d.rows.length ? `<div class="tbl-wrap"><table>
+    <thead><tr><th>날짜</th><th>라인/공정</th><th class="r">출근</th><th class="r">퇴근</th><th class="r">휴게</th><th class="r">근무(h)</th>${money ? '<th class="r">노무비(원)</th>' : ""}</tr></thead>
+    <tbody class="num">${d.rows.map(r => `<tr>
+      <td>${r.date} <span class="auto" style="font-size:10px">(${dowOf(r.date)})</span></td>
+      <td>${esc(r.line)}${r.process ? ` <span class="auto" style="font-size:11px">${esc(r.process)}</span>` : ""}</td>
+      <td class="r">${r.start || "—"}</td><td class="r">${r.end || "—"}</td>
+      <td class="r auto">${r.brk ? NF(r.brk) + "분" : "—"}</td>
+      <td class="r" style="font-weight:700">${h2(r.hours)}</td>
+      ${money ? `<td class="r">${NF(r.labor)}</td>` : ""}</tr>`).join("")}</tbody></table></div>`
+    : `<div class="auto" style="padding:10px 0;">이 기간 출근 기록이 없습니다</div>`;
+  $("staffDayOverlay").classList.add("on");
+}
+window.closeStaffDays = () => $("staffDayOverlay").classList.remove("on");
 
 /* ══ LOT 관리 ═════════════════════════ */
 const LOT = { data: null, filter: "all", q: "", shipQ: "", openMap: {},   // openMap: 제품별 펼침 상태 (세션 유지)
@@ -5626,12 +5697,12 @@ document.addEventListener("input", e => {
 });
 
 /* ── 모달 공통 닫기 ─────────────────── */
-["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "dispOverlay", "lotSplitOverlay", "packSetOverlay"].forEach(id => {
+["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "dispOverlay", "lotSplitOverlay", "packSetOverlay", "staffDayOverlay"].forEach(id => {
   $(id).addEventListener("click", e => { if (e.target.id === id) $(id).classList.remove("on"); });
 });
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") {
-    ["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "packSetOverlay"].forEach(id => $(id).classList.remove("on"));
+    ["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "packSetOverlay", "staffDayOverlay"].forEach(id => $(id).classList.remove("on"));
     hidePad();
   }
 });

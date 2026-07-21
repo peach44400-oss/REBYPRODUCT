@@ -480,6 +480,13 @@ def init_db() -> None:
     smcols = [r[1] for r in con.execute("PRAGMA table_info(staffing_member)")]
     if "hours" not in smcols:
         con.execute("ALTER TABLE staffing_member ADD COLUMN hours REAL DEFAULT 0")
+    # 출근·퇴근 시각(HH:MM) + 휴게(분) — 입력 시 근무시간(hours) 자동 계산. 옛 행은 빈값(수동 hours 사용).
+    if "start_time" not in smcols:
+        con.execute("ALTER TABLE staffing_member ADD COLUMN start_time TEXT DEFAULT ''")
+    if "end_time" not in smcols:
+        con.execute("ALTER TABLE staffing_member ADD COLUMN end_time TEXT DEFAULT ''")
+    if "break_min" not in smcols:
+        con.execute("ALTER TABLE staffing_member ADD COLUMN break_min REAL DEFAULT 0")
     # 출고 단가 스냅샷 — 저장 시점의 판매가를 기록해 나중에 단가를 바꿔도 과거 금액이 안 바뀌게
     # (0이면 스냅샷 없음 = 기존 행 → 계산 시 현재 제품 단가로 폴백)
     if "unit_price" not in [r[1] for r in con.execute("PRAGMA table_info(shipment)")]:
