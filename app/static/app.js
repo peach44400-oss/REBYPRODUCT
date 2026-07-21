@@ -5453,10 +5453,58 @@ async function openAdmin() {
   $("adminOverlay").classList.add("on");
   $("integOut").innerHTML = "";
   $("integFix").style.display = "none";
+  $("updApply").style.display = "none";
+  $("updNotes").textContent = "";
+  $("updMsg").textContent = "";
+  UPD.latest = null;
   loadBackups();
+  updCheck(true);   // 열 때 조용히 현재 버전 표시(있으면 새 버전도)
 }
 window.closeAdmin = () => $("adminOverlay").classList.remove("on");
 $("btnAdmin").onclick = openAdmin;
+
+/* ── 프로그램 업데이트 ── */
+const UPD = { latest: null };
+async function updCheck(quiet) {
+  $("updMsg").textContent = quiet ? "" : "확인 중…";
+  $("updApply").style.display = "none";
+  let d;
+  try { d = await api("/api/update/check"); }
+  catch (e) { $("updMsg").textContent = "확인 실패"; return; }
+  $("updCur").textContent = "v" + d.current + (d.frozen ? "" : " (개발)");
+  if (d.error) { $("updMsg").textContent = quiet ? "" : "⚠ " + d.error; return; }
+  if (!d.latest) { $("updMsg").textContent = ""; return; }
+  if (d.newer) {
+    UPD.latest = d.latest;
+    $("updMsg").innerHTML = `<span style="color:var(--crit); font-weight:700">🆕 새 버전 v${esc(d.latest)}</span>`;
+    $("updNotes").textContent = d.notes || "";
+    $("updApply").style.display = d.frozen ? "" : "none";
+    if (!d.frozen) $("updMsg").innerHTML += ' <span class="auto">— exe 실행 시에만 자동 교체됩니다</span>';
+  } else {
+    $("updMsg").innerHTML = '<span style="color:var(--ok)">✓ 최신 버전입니다</span>';
+    $("updNotes").textContent = "";
+  }
+}
+$("updCheck").onclick = () => updCheck(false);
+$("updApply").onclick = async () => {
+  if (!UPD.latest) return;
+  const online = (CHAT.count || 1) - 1;   // 나 제외 접속자
+  if (!confirm(`v${UPD.latest}(으)로 업데이트합니다.\n\n`
+    + `• 데이터(DB)는 그대로 유지되고, 교체 전 자동 백업됩니다\n`
+    + `• 프로그램이 잠깐 재시작됩니다`
+    + (online > 0 ? `\n• 지금 다른 사용자 ${online}명이 접속 중입니다 — 잠시 끊깁니다` : "")
+    + `\n\n진행할까요?`)) return;
+  $("updApply").disabled = true;
+  $("updMsg").textContent = "⬇️ 다운로드 중… 완료되면 자동으로 재시작됩니다 (창이 잠깐 닫힐 수 있어요)";
+  try {
+    await api("/api/update/apply", { method: "POST" });
+    $("updMsg").innerHTML = '✅ 다운로드 완료 — 곧 재시작됩니다. <b>이 창(브라우저)은 30초 뒤 새로고침</b>하세요.';
+    setTimeout(() => location.reload(), 30000);
+  } catch (e) {
+    $("updApply").disabled = false;
+    $("updMsg").textContent = "⚠ 업데이트 실패 — 기존 버전이 그대로 유지됩니다";
+  }
+};
 async function loadBackups() {
   const list = await api("/api/backups");
   const fmt = n => n > 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.round(n / 1024) + " KB";

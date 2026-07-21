@@ -3,6 +3,7 @@
 
 실행:  python app/main.py   →  http://127.0.0.1:8600
 """
+import os
 import re
 import sys
 import json
@@ -37,6 +38,27 @@ PHOTO_DIR.mkdir(exist_ok=True)
 CHAT_DIR = DATA_BASE / "ChatFile"       # 채팅 첨부 (사진·파일)
 CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
+
+# ── 앱 버전 & 자동 업데이트 ────────────────────────────
+APP_VERSION = "1.0.0"     # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+# 새 버전 정보(version.json)를 읽어올 주소.
+#   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
+#   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
+UPDATE_MANIFEST_URL = ""  # 예: https://github.com/<user>/<repo>/releases/latest/download/version.json
+
+
+def manifest_url():
+    f = DATA_BASE / "update_url.txt"
+    if f.exists():
+        try:
+            u = f.read_text(encoding="utf-8").strip()
+            if u:
+                return u
+        except OSError:
+            pass
+    return UPDATE_MANIFEST_URL
+
+
 app = FastAPI(title="martin_stock")
 
 # 요청 처리 중인 로그인 사용자 (audit_log에 '누가'를 남기기 위한 컨텍스트)
@@ -1028,6 +1050,128 @@ def delete_packset(request: Request, name: str):
         return {"ok": True, "released": n, "lots": used}
     finally:
         con.close()
+
+
+# ── 자동 업데이트 ─────────────────────────────────────
+def _vtuple(v):
+    """'1.2.10' → (1,2,10). 비교용 — 자리수 달라도 안전."""
+    out = []
+    for part in str(v or "").strip().split("."):
+        n = "".join(ch for ch in part if ch.isdigit())
+        out.append(int(n) if n else 0)
+    return tuple(out)
+
+
+def version_newer(latest, current):
+    a, b = _vtuple(latest), _vtuple(current)
+    n = max(len(a), len(b))
+    a += (0,) * (n - len(a)); b += (0,) * (n - len(b))
+    return a > b
+
+
+def fetch_manifest():
+    """version.json 읽기 — {version, url, notes, sha256?}. 실패 시 예외."""
+    import urllib.request
+    url = manifest_url()
+    if not url:
+        raise RuntimeError("업데이트 주소가 설정되지 않았습니다 (update_url.txt)")
+    if not url.lower().startswith("https://"):
+        raise RuntimeError("업데이트 주소는 https 여야 합니다")
+    req = urllib.request.Request(url, headers={"User-Agent": "martin_stock-updater"})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        data = json.loads(r.read().decode("utf-8"))
+    if not data.get("version") or not data.get("url"):
+        raise RuntimeError("버전 정보 형식이 올바르지 않습니다 (version/url 필요)")
+    if not str(data["url"]).lower().startswith("https://"):
+        raise RuntimeError("다운로드 주소는 https 여야 합니다")
+    return data
+
+
+@app.get("/api/update/check")
+def update_check(request: Request):
+    require_admin(request)
+    info = {"current": APP_VERSION, "frozen": bool(getattr(sys, "frozen", False)),
+            "configured": bool(manifest_url())}
+    if not manifest_url():
+        info["error"] = "업데이트 주소가 설정되지 않았습니다"
+        return info
+    try:
+        m = fetch_manifest()
+    except Exception as e:
+        info["error"] = str(e)
+        return info
+    info.update(latest=m["version"], notes=m.get("notes", ""), url=m["url"],
+                newer=version_newer(m["version"], APP_VERSION))
+    return info
+
+
+@app.post("/api/update/apply")
+def update_apply(request: Request):
+    """새 exe 다운로드 → 검증 → DB 백업 → 교체 배치 실행 → 서버 종료(자동 재시작).
+    exe(frozen) 실행일 때만 동작. 실패해도 현재 실행본은 그대로 유지된다."""
+    require_admin(request)
+    if not getattr(sys, "frozen", False):
+        raise HTTPException(400, "개발 모드에서는 자동 업데이트를 쓸 수 없습니다 (exe 실행 시에만)")
+    try:
+        m = fetch_manifest()
+    except Exception as e:
+        raise HTTPException(502, f"버전 정보를 읽지 못했습니다: {e}")
+    if not version_newer(m["version"], APP_VERSION):
+        raise HTTPException(400, "이미 최신 버전입니다")
+
+    exe = Path(sys.executable)                       # 현재 실행 중인 exe (…/재고관리.exe)
+    newexe = exe.with_name(exe.stem + "_업데이트" + exe.suffix)
+    import urllib.request
+    try:
+        req = urllib.request.Request(m["url"], headers={"User-Agent": "martin_stock-updater"})
+        with urllib.request.urlopen(req, timeout=120) as r, open(newexe, "wb") as f:
+            raw = r.read()
+            f.write(raw)
+    except Exception as e:
+        try: newexe.unlink(missing_ok=True)
+        except OSError: pass
+        raise HTTPException(502, f"다운로드 실패: {e}")
+    # 검증: 최소 크기 + (있으면) sha256
+    if len(raw) < 1_000_000:
+        newexe.unlink(missing_ok=True)
+        raise HTTPException(502, "받은 파일이 너무 작습니다 — 다운로드가 온전치 않습니다")
+    want = (m.get("sha256") or "").lower().strip()
+    if want:
+        got = hashlib.sha256(raw).hexdigest()
+        if got != want:
+            newexe.unlink(missing_ok=True)
+            raise HTTPException(502, "체크섬이 일치하지 않습니다 — 교체를 중단했습니다")
+    # 교체 전 DB 백업 (혹시 새 버전 마이그레이션 문제 대비)
+    try:
+        do_backup("업데이트전백업")
+    except Exception:
+        pass
+    # 교체 배치: 이 exe가 종료되길 기다렸다 새 파일로 바꾸고 재실행 후 자기 삭제
+    bat = exe.with_name("_자동업데이트.bat")
+    bat.write_text(
+        "@echo off\r\n"
+        "chcp 65001 >nul\r\n"
+        "title 재고관리 업데이트\r\n"
+        "echo 업데이트 적용 중 - 잠시만 기다려 주세요...\r\n"
+        ':wait\r\n'
+        f'move /y "{newexe.name}" "{exe.name}" >nul 2>&1\r\n'
+        "if errorlevel 1 (\r\n"
+        "  timeout /t 1 /nobreak >nul\r\n"
+        "  goto wait\r\n"
+        ")\r\n"
+        f'start "" "{exe.name}"\r\n'
+        'del "%~f0"\r\n', encoding="utf-8")
+
+    def _relaunch():
+        import subprocess
+        time.sleep(0.6)
+        # 새 콘솔에서 배치 실행 → 이 프로세스 종료 후 교체·재시작
+        subprocess.Popen(["cmd", "/c", str(bat)], cwd=str(exe.parent),
+                         creationflags=0x00000010)   # CREATE_NEW_CONSOLE
+        time.sleep(0.4)
+        os._exit(0)
+    threading.Thread(target=_relaunch, daemon=True).start()
+    return {"ok": True, "version": m["version"]}
 
 
 @app.get("/api/lowstock")
@@ -2883,7 +3027,6 @@ def index():
 
 
 if __name__ == "__main__":
-    import os
     import socket
     import threading
     import webbrowser

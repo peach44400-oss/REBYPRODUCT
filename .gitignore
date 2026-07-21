@@ -31,3 +31,6 @@ __pycache__/
 .vscode/
 .idea/
 *.log
+
+# 배포 대상 지정(각 PC별) — 커밋 안 함
+update_url.txt
