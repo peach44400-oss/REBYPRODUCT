@@ -1,0 +1,1408 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>REBYPRODUCT 재고관리</title>
+<style>
+  :root{
+    --bg:#F5F5F3; --surface:#FFFFFF; --line:#E5E4E0; --line-soft:#EFEEEA;
+    --ink:#121212; --muted:#75726C; --faint:#B0ADA6;
+    --accent:#121212; --accent-ink:#000000; --accent-soft:#EFEEEB;
+    --side:#0C0C0C; --side-ink:#F2F1EE; --side-muted:#8F8C86;
+    --crit:#C2372C; --crit-soft:#FBEBE9; --warn:#C4841D; --warn-soft:#FAF1DF;
+    --ok:#3E7A50; --ok-soft:#EAF2EC; --r:10px;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{height:100%;}
+  body{font-family:"Pretendard Variable",Pretendard,"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;
+    background:var(--bg); color:var(--ink); font-size:14px; line-height:1.55; -webkit-font-smoothing:antialiased;}
+  .num{font-variant-numeric:tabular-nums;}
+  button{font:inherit; cursor:pointer;}
+  button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
+  .app{display:flex; min-height:100vh;}
+  .side{width:216px; flex:none; background:var(--side); color:var(--side-ink);
+    display:flex; flex-direction:column; padding:20px 12px 16px; position:sticky; top:0; height:100vh;}
+  .brand{padding:6px 10px 18px; border-bottom:1px solid rgba(255,255,255,.09); margin-bottom:14px;
+    display:flex; flex-direction:column; align-items:flex-start; gap:9px;}
+  .brand svg{color:#fff;}
+  .brand b{font-size:15px; font-weight:800; letter-spacing:.045em; display:block; color:#fff;}
+  .brand span{font-size:11px; color:var(--side-muted);}
+  .nav{display:flex; flex-direction:column; gap:2px;}
+  .nav button{display:flex; align-items:center; gap:10px; width:100%; background:none; border:0;
+    color:var(--side-muted); padding:9px 10px; border-radius:8px; font-size:13.5px; font-weight:600; text-align:left;}
+  .nav button svg{flex:none; opacity:.75;}
+  .nav button:hover{background:rgba(255,255,255,.06); color:var(--side-ink);}
+  .nav button.on{background:rgba(255,255,255,.1); color:#fff;}
+  .nav-sep{display:flex; align-items:center; gap:8px; margin:10px 4px 3px; padding:0 6px;}
+  .nav-sep span{font-size:10px; font-weight:800; letter-spacing:.06em; color:var(--side-muted);
+    text-transform:uppercase; white-space:nowrap;}
+  .nav-sep::after{content:''; flex:1; height:1px; background:rgba(255,255,255,.08);}
+  .nav .cnt{margin-left:auto; background:var(--crit); color:#fff; font-size:11px; font-weight:700;
+    padding:1px 7px; border-radius:99px;}
+  /* 사이드바 부족 자재 알림 — 팝업 대신 상주. 길어져도 사이드바를 밀지 않게 목록만 스크롤 */
+  #lowPanel{margin-top:16px; padding:10px 10px 8px; border-radius:10px;
+    background:rgba(194,55,44,.14); border:1px solid rgba(194,55,44,.35); min-height:0;
+    display:flex; flex-direction:column;}
+  .lowp-h{display:flex; align-items:center; justify-content:space-between; gap:6px;
+    font-size:11.5px; color:#FFB4AE; margin-bottom:6px;}
+  .lowp-h b{font-size:12px; color:#FFD5D1;}
+  #lowpCnt{font-size:10.5px; color:#FFB4AE;}
+  #lowpList{display:flex; flex-direction:column; gap:3px; overflow-y:auto; max-height:190px;}
+  .lowp-item{display:flex; align-items:center; justify-content:space-between; gap:6px; width:100%;
+    background:none; border:0; color:var(--side-ink); font-size:11.5px; padding:4px 6px;
+    border-radius:6px; text-align:left; cursor:pointer;}
+  .lowp-item:hover{background:rgba(255,255,255,.08);}
+  .lowp-item .nm{overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .lowp-item .qt{flex:none; font-size:11px; color:#FFB4AE; font-weight:700;}
+  .lowp-item.ordered .qt{color:var(--side-muted); font-weight:500;}
+  #lowpNote{font-size:10.5px; color:var(--side-muted); margin-top:6px; line-height:1.45;}
+  #lowpNote button{background:none; border:0; color:#FFB4AE; text-decoration:underline;
+    cursor:pointer; font-size:10.5px; padding:0;}
+  .side-foot{margin-top:auto; padding:12px 10px 0; border-top:1px solid rgba(255,255,255,.08);
+    font-size:11.5px; color:var(--side-muted);}
+  .side-foot .dot{display:inline-block; width:7px; height:7px; border-radius:99px; background:var(--ok); margin-right:6px;}
+  /* 푸터 버튼 3종 — 균등 폭·동일 높이 (이모지·글자수 차이로 어긋나지 않게) */
+  .side-foot .sfbtn{flex:1; height:26px; padding:0 4px; font-size:11px; line-height:1;
+    display:inline-flex; align-items:center; justify-content:center; min-height:0; min-width:0;}
+  .main{flex:1; min-width:0; padding:22px 28px 40px;}
+  .topbar{display:flex; align-items:baseline; gap:14px; margin-bottom:18px;}
+  #menuBtn{display:none; border:1px solid var(--line); background:var(--surface); border-radius:8px;
+    font-size:17px; padding:4px 11px; cursor:pointer; align-self:center;}
+  #sideDim{display:none;}
+  /* ── 모바일 (휴대폰·좁은 창): 사이드바 = 서랍, 레이아웃 1열 ── */
+  @media (max-width: 900px){
+    #menuBtn{display:inline-block;}
+    .side{position:fixed; left:-240px; top:0; bottom:0; z-index:1500; transition:left .22s ease;
+      overflow-y:auto; box-shadow:none;}
+    .side.open{left:0; box-shadow:0 0 40px rgba(0,0,0,.4);}
+    #sideDim.on{display:block; position:fixed; inset:0; z-index:1490; background:rgba(12,12,12,.45);}
+    .main{padding:14px 12px 90px;}
+    .topbar{flex-wrap:wrap; gap:8px; margin-bottom:12px;}
+    .topbar h1{font-size:19px;}
+    .kpis{grid-template-columns:repeat(2,1fr) !important; gap:8px;}
+    .kpi{padding:11px 12px;} .kpi .val{font-size:19px;}
+    .dash-grid{grid-template-columns:1fr !important;}
+    .entry-grid{grid-template-columns:1fr !important;}
+    .mini-input, .mini-sel{min-height:34px;}   /* 터치 크기 */
+    .btn{min-height:34px;}
+    .today-banner{flex-wrap:wrap;}
+    #chatPanel{width:calc(100vw - 36px); height:60vh;}
+    .modal{max-width:calc(100vw - 24px); max-height:88vh; overflow-y:auto;}
+    #dpPop{max-width:calc(100vw - 16px);}
+    /* 표·검색칸·팝업이 화면을 밀지 않게 */
+    .card{padding:12px 12px; overflow:hidden;}
+    .card h2{flex-wrap:wrap; font-size:14.5px;}
+    .tbl-wrap{overflow-x:auto; -webkit-overflow-scrolling:touch; margin-left:-12px; margin-right:-12px; padding:0 12px;}
+    .draft-foot input.mini-input{width:100% !important; max-width:none; flex:1 1 160px;}
+    .draft-foot{gap:6px;}
+    #prodCalPop, #shipCalPop{left:8px !important; right:8px; width:auto !important; max-width:calc(100vw - 40px);}
+    .tabs button{padding:7px 10px; font-size:12.5px;}
+    .pchip{font-size:11px;}
+    .mh-wrap{font-size:11.5px; padding:8px 10px;}
+    #mFilterBar{gap:6px;}
+    #mFilterBar #mFilter{width:100% !important; flex:1 1 100%;}
+    .chartbox{height:200px !important;}
+    #chatWidget{right:10px; bottom:10px;}
+    #chatToggle{font-size:12px; padding:6px 11px;}
+    .fgrid{grid-template-columns:1fr !important;}
+    .kchip{font-size:10.5px;}
+    #eStaff td{white-space:normal;}
+    .photo-grid .ph-item{width:84px; height:84px;}
+  }
+  .topbar h1{font-size:21px; font-weight:800; letter-spacing:-.02em;}
+  .topbar .today{font-size:13px; color:var(--muted);}
+  .spacer{flex:1;}
+  .screen{display:none;}
+  .screen.on{display:block;}
+  .card{background:var(--surface); border:1px solid var(--line); border-radius:var(--r); padding:16px 18px;}
+  .card h2{font-size:14px; font-weight:800; margin-bottom:12px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;}
+  .card h2 .sub{font-weight:500; font-size:12px; color:var(--muted);}
+  .chip{display:inline-block; font-size:11.5px; font-weight:700; padding:2px 9px; border-radius:99px;}
+  .chip.crit{background:var(--crit-soft); color:var(--crit);}
+  .chip.warn{background:var(--warn-soft); color:#98670F;}
+  .chip.ok{background:var(--ok-soft); color:var(--ok);}
+  .chip.cat{background:var(--accent-soft); color:var(--accent-ink);}
+  table{width:100%; border-collapse:collapse; font-size:13px;}
+  th{font-size:11.5px; color:var(--muted); font-weight:700; text-align:left; padding:7px 10px;
+    border-bottom:1px solid var(--line); white-space:nowrap; cursor:pointer; user-select:none;}
+  th:hover{color:var(--ink);}
+  td{padding:7px 10px; border-bottom:1px solid var(--line-soft); white-space:nowrap;}
+  tr:last-child td{border-bottom:0;}
+  td.r,th.r{text-align:right;}
+  tbody tr:hover td{background:#FAFAF8;}
+  .tbl-wrap{overflow-x:auto;}
+  .btn{border:1px solid var(--line); background:var(--surface); color:var(--ink);
+    border-radius:8px; padding:8px 16px; font-size:13px; font-weight:700; white-space:nowrap;}
+  .btn:hover{border-color:var(--faint);}
+  .btn.primary{background:var(--accent); border-color:var(--accent); color:#fff;}
+  .btn.primary:hover{background:#000;}
+  .btn.ghost{border-color:transparent; color:var(--muted);}
+  .btn.sm{padding:5px 11px; font-size:12px;}
+  .kpis{display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:14px;}
+  .kpi{background:var(--surface); border:1px solid var(--line); border-radius:var(--r); padding:14px 16px;}
+  .kpi .lbl{font-size:12px; color:var(--muted); font-weight:600; margin-bottom:5px;}
+  .kpi .val{font-size:26px; font-weight:800; line-height:1.1;}
+  .kpi .val small{font-size:13px; font-weight:600; color:var(--muted); margin-left:2px;}
+  .kpi .delta{font-size:11.5px; margin-top:4px; color:var(--muted);}
+  .kpi.alert{border-color:#EBC7C3; background:linear-gradient(0deg,var(--crit-soft),var(--surface) 65%);}
+  .kpi.alert .val{color:var(--crit);}
+  .kpi.ok-kpi{border-color:#C4DDCB; background:linear-gradient(0deg,var(--ok-soft),var(--surface) 70%);}
+  .kpi .lbl .ki{margin-right:5px; font-size:14px;}
+  .kpi.warn-kpi{border-color:#EAD5AC; background:linear-gradient(0deg,var(--warn-soft),var(--surface) 70%);}
+  .kpi.warn-kpi .val{color:#98670F;}
+  /* 오늘 입력 상태 배너 */
+  #dashTodayBanner{margin-bottom:14px;}
+  .today-banner{display:flex; align-items:center; gap:12px; padding:13px 18px; border-radius:var(--r);
+    border:1px solid var(--line); font-size:14px;}
+  .today-banner .tb-emo{font-size:22px; line-height:1;}
+  .today-banner .tb-txt{flex:1; min-width:0;}
+  .today-banner .tb-txt b{font-weight:700;}
+  .today-banner .tb-sub{font-size:12px; color:var(--muted); margin-top:1px;}
+  .today-banner.wait{border-color:#EAD5AC; background:linear-gradient(90deg,var(--warn-soft),var(--surface) 80%);}
+  .today-banner.done{border-color:#C4DDCB; background:linear-gradient(90deg,var(--ok-soft),var(--surface) 80%);}
+  .today-banner .btn{white-space:nowrap;}
+  /* 이번주 생산 TOP 랭킹 */
+  .rank-row{display:flex; align-items:center; gap:11px; padding:8px 2px; border-bottom:1px solid var(--line-soft);}
+  .rank-row:last-child{border-bottom:0;}
+  .rank-row .rk{font-weight:800; font-size:14px; width:22px; text-align:center; color:var(--muted);}
+  .rank-row .rk.top{color:var(--warn);}
+  .rank-row .rthumb{width:38px; height:38px; border-radius:7px; object-fit:cover; border:1px solid var(--line); flex:none;}
+  .rank-row .rthumb.ph{display:flex; align-items:center; justify-content:center; background:var(--bg); font-size:17px;}
+  .rank-row .rname{flex:1; min-width:0; font-size:13px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .rank-row .rbar{height:6px; border-radius:4px; background:linear-gradient(90deg,#121212,#8B5E34); margin-top:4px;}
+  .rank-row .rqty{font-weight:800; font-size:13px; white-space:nowrap;}
+  /* 도넛 범례 */
+  .donut-leg{display:flex; flex-direction:column; gap:5px; margin-top:10px;}
+  .donut-leg .dl-row{display:flex; align-items:center; gap:8px; font-size:12.5px;}
+  .donut-leg .dl-dot{width:10px; height:10px; border-radius:3px; flex:none;}
+  .donut-leg .dl-name{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .donut-leg .dl-val{font-weight:700; color:var(--muted);}
+  /* 완제품 부족 리스트 */
+  .plow-row{display:flex; align-items:center; gap:10px; padding:7px 2px; border-bottom:1px solid var(--line-soft); font-size:13px;}
+  .plow-row:last-child{border-bottom:0;}
+  .plow-row .pthumb{width:30px; height:30px; border-radius:6px; object-fit:cover; border:1px solid var(--line); flex:none;}
+  .plow-row .pthumb.ph{display:flex; align-items:center; justify-content:center; background:var(--bg); font-size:14px;}
+  .plow-row .pname{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .plow-row .pst{font-weight:700; color:var(--crit); white-space:nowrap;}
+  .plow-row .psafe{font-size:11px; color:var(--muted); white-space:nowrap;}
+  .dash-grid{display:grid; grid-template-columns:1.6fr 1fr; gap:14px; align-items:start;}
+  .dash-col{display:flex; flex-direction:column; gap:14px; min-width:0;}
+  .legend{display:flex; gap:14px; font-size:12px; color:var(--muted);}
+  .legend i{display:inline-block; width:16px; height:3px; border-radius:2px; vertical-align:middle; margin-right:5px;}
+  .feed-item{display:flex; gap:10px; padding:8px 2px; border-bottom:1px solid var(--line-soft);
+    font-size:13px; align-items:baseline;}
+  .feed-item:last-child{border-bottom:0;}
+  .feed-item .q{margin-left:auto; font-weight:700;}
+  .feed-item .q.in{color:var(--ok);} .feed-item .q.out{color:var(--crit);}
+  .tabs{display:flex; gap:4px; border-bottom:1px solid var(--line); margin-bottom:14px; flex-wrap:wrap;}
+  .tabs button{border:0; background:none; padding:8px 14px 10px; font-size:13.5px; font-weight:700;
+    color:var(--muted); border-bottom:2px solid transparent; margin-bottom:-1px;}
+  .tabs button.on{color:var(--accent-ink); border-bottom-color:var(--accent);}
+  .mini-input{width:84px; border:1px solid var(--line); border-radius:6px; padding:4px 8px;
+    font:inherit; font-size:12.5px; text-align:right;}
+  .mini-input.w{width:120px;}
+  .bad-num{border-color:var(--crit) !important; background:#FEF2F2 !important; color:var(--crit);}
+  .ship-over{border-color:var(--crit) !important; background:#FEF2F2 !important; color:var(--crit); font-weight:700;}
+  /* 자재 사용 원/부 구분 칩 — 원재료(초록) · 부재료(주황) */
+  .kchip{font-size:10px; font-weight:800; padding:2px 7px; border-radius:99px; margin-right:6px;
+    flex:none; line-height:1.3; border:1px solid transparent;}
+  .kchip-raw{background:#E7F5EC; color:#0A7D3C; border-color:#BBE3C9;}
+  .kchip-sub{background:#FDECD8; color:#B45309; border-color:#F6D3A6;}
+  .note-cell{max-width:210px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer;
+    border:1px solid var(--line); border-radius:6px; padding:4px 8px; font:inherit; font-size:12.5px;
+    background:var(--surface); color:var(--ink); text-align:left; display:block;}
+  .note-cell:hover{border-color:var(--ink);}
+  /* 용역 칩 — 시간 + 개인별 시급 세로 묶음 */
+  .member-chip.agstack{display:inline-flex; flex-direction:column; gap:2px; align-items:flex-start;
+    padding:4px 8px; vertical-align:middle; line-height:1.5;}
+  /* 기준정보 완성도 점검 배너 */
+  .mh-wrap{display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:10px 14px;
+    border:1px solid #EAD5AC; border-radius:10px; background:linear-gradient(90deg,var(--warn-soft),var(--surface) 85%); font-size:12.5px;}
+  .mh-wrap.allok{border-color:#C4DDCB; background:linear-gradient(90deg,var(--ok-soft),var(--surface) 85%);}
+  .mh-chip{border:1px solid var(--line); background:var(--surface); border-radius:14px; padding:4px 11px;
+    font-size:12px; cursor:pointer; color:#98670F; font-weight:700;}
+  .mh-chip:hover{border-color:#98670F;}
+  .mh-chip.on{background:#98670F; color:#fff; border-color:#98670F;}
+  /* 빠른 편집 모드 */
+  .qe-input{width:86px; border:1px solid #EAD5AC; background:#FFFDF5; border-radius:6px; padding:4px 8px;
+    font:inherit; font-size:12.5px; text-align:right; font-variant-numeric:tabular-nums;}
+  .qe-input:focus{outline:none; border-color:#98670F;}
+  .qe-input.saved{border-color:var(--ok); background:var(--ok-soft);}
+  #mQuickEdit.on{background:var(--ink); color:#fff; border-color:var(--ink);}
+  /* 공용 날짜 선택 달력 */
+  input.datepick{cursor:pointer;}
+  input.datepick:hover{border-color:var(--ink);}
+  .dp-pop{position:fixed; z-index:1400; display:none; width:240px; background:var(--surface);
+    border:1px solid var(--line); border-radius:10px; box-shadow:0 14px 38px rgba(12,12,12,.22); padding:10px;}
+  .dp-pop.on{display:block;}
+  .dp-head{display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; font-size:13px; font-weight:700;}
+  .dp-head button{border:none; background:none; cursor:pointer; font-size:13px; padding:2px 8px; color:var(--muted); border-radius:6px;}
+  .dp-head button:hover{background:var(--bg); color:var(--ink);}
+  .dp-dow{display:grid; grid-template-columns:repeat(7,1fr); gap:2px; font-size:10.5px; color:var(--muted); text-align:center; margin-bottom:3px;}
+  .dp-dow span:first-child{color:var(--crit);}
+  .dp-days{display:grid; grid-template-columns:repeat(7,1fr); gap:2px;}
+  .dp-days button{border:1px solid transparent; background:none; cursor:pointer; padding:6px 0; font-size:12px; border-radius:6px; color:var(--ink);}
+  .dp-days button:hover{background:var(--bg);}
+  .dp-days button.today{border-color:var(--line); font-weight:700;}
+  .dp-days button.sel{background:var(--ink); color:#fff; font-weight:700;}
+  .dp-days span{display:block;}
+  .dp-foot{display:flex; justify-content:space-between; margin-top:8px; padding-top:8px; border-top:1px solid var(--line-soft);}
+  .dp-foot button{border:1px solid var(--line); background:var(--surface); border-radius:6px; font-size:11.5px; padding:4px 10px; cursor:pointer; color:var(--muted);}
+  .dp-foot button:hover{border-color:var(--ink); color:var(--ink);}
+  /* 예상 자재 소요·부족 */
+  /* 예상 자재 소요 — 3열 고정 그리드(자재명 / 필요량 / 현재고·부족).
+     flex로 두면 자재명 길이에 따라 숫자 위치가 흔들려 열이 안 맞는다. */
+  .need-head, .need-row{display:grid; grid-template-columns:minmax(0,1fr) 130px 140px; gap:12px; align-items:center;}
+  /* 좌우 패딩은 모든 행이 동일해야 한다 — 부족 행만 다르면 그 행의 숫자 열이 밀려 어긋난다 */
+  .need-row{padding:6px 8px; border-bottom:1px solid var(--line-soft); font-size:13px;}
+  .need-row:last-child{border-bottom:0;}
+  .need-row .nn{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .need-row .nq{white-space:nowrap; color:var(--ink); text-align:right;}
+  .need-row .nstk{white-space:nowrap; font-size:11.5px; color:var(--muted); text-align:right;}
+  .need-row.short{background:var(--crit-soft); border-radius:6px;}
+  .need-row.short .nn{font-weight:700;}
+  .need-row.short .nshort{color:var(--crit); font-weight:800; white-space:nowrap; text-align:right;}
+  .need-head{font-size:11.5px; color:var(--muted); font-weight:700; padding:2px 8px 4px; border-bottom:1px solid var(--line);}
+  .need-head span:not(:first-child){text-align:right;}
+  @media (max-width:720px){   /* 좁은 화면에선 숫자 열을 줄임 */
+    .need-head, .need-row{grid-template-columns:minmax(0,1fr) 92px 104px; gap:8px;}
+  }
+  /* 불량 사유 버튼(생산실적 행 내) */
+  .dfr-btn{margin-top:3px; width:100%; font-size:11px; padding:2px 4px;}
+  .dfr-btn.set{border-color:var(--warn); color:#98670F; background:var(--warn-soft);}
+  .dchip{border:1px solid var(--line); background:var(--surface); border-radius:14px; padding:4px 10px; font-size:12px; cursor:pointer;}
+  .dchip:hover{border-color:var(--ink);}
+  /* 생산 사진 */
+  .photo-grid{display:flex; flex-wrap:wrap; gap:10px;}
+  .photo-grid .ph-item{position:relative; width:104px; height:104px; border-radius:8px; overflow:hidden; border:1px solid var(--line);}
+  .photo-grid .ph-item img{width:100%; height:100%; object-fit:cover; display:block;}
+  .photo-grid .ph-del{position:absolute; top:3px; right:3px; width:22px; height:22px; border:none; border-radius:6px;
+    background:rgba(12,12,12,.62); color:#fff; font-size:13px; cursor:pointer; line-height:1;}
+  .photo-grid .ph-empty{font-size:12.5px; color:var(--muted); padding:6px 2px;}
+  /* 저장 요약 */
+  .ssum-row{display:flex; justify-content:space-between; padding:7px 2px; border-bottom:1px solid var(--line-soft); font-size:13.5px;}
+  .ssum-row:last-child{border-bottom:0;}
+  .ssum-row .sv{font-weight:700;}
+  .ssum-row.warn .sv{color:var(--warn);}
+  #chatWidget{position:fixed; right:18px; bottom:18px; z-index:1200; display:flex; flex-direction:column; align-items:flex-end; gap:8px;}
+  #chatToggle{border:1px solid var(--line); background:var(--surface); color:var(--ink); border-radius:22px;
+    padding:8px 14px; font:inherit; font-size:13px; font-weight:700; cursor:pointer; box-shadow:0 4px 14px rgba(0,0,0,.18); position:relative;}
+  #chatToggle:hover{border-color:var(--ink);}
+  #chatBadge{display:none; position:absolute; top:-5px; right:-5px; min-width:18px; height:18px; padding:0 5px;
+    background:#E11D48; color:#fff; border-radius:9px; font-size:11px; line-height:18px; text-align:center;}
+  #chatBadge.on{display:inline-block;}
+  #chatPanel{display:none; flex-direction:column; width:320px; height:420px; background:var(--surface);
+    border:1px solid var(--line); border-radius:14px; box-shadow:0 12px 40px rgba(0,0,0,.28); overflow:hidden;}
+  #chatPanel.on{display:flex;}
+  #chatHead{display:flex; align-items:center; gap:8px; padding:10px 12px; border-bottom:1px solid var(--line); background:var(--bg);}
+  #chatHead b{font-size:13.5px;} #chatHead .hint{flex:1; font-size:11.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  #chatClose{border:none; background:none; cursor:pointer; font-size:15px; color:var(--muted); padding:2px 4px;}
+  #chatMsgs{flex:1; overflow-y:auto; padding:10px 12px; display:flex; flex-direction:column; gap:7px;}
+  .cmsg{max-width:80%; padding:6px 10px; border-radius:12px; font-size:12.5px; line-height:1.35; word-break:break-word;}
+  .cmsg .cwho{font-size:10.5px; color:var(--muted); margin-bottom:2px;}
+  .cmsg.them{align-self:flex-start; background:var(--bg); border:1px solid var(--line);}
+  .cmsg.me{align-self:flex-end; background:#DCFCE7; border:1px solid #BBF7D0; color:#14532D;}
+  .cmsg .cat{display:block; font-size:10px; color:var(--muted); margin-top:2px; text-align:right;}
+  .cday{align-self:center; font-size:10.5px; color:var(--muted); padding:2px 0;}
+  /* 날짜 이동 (지난 대화 보기) */
+  #chatDayNav{display:flex; align-items:center; gap:6px; padding:5px 10px; border-bottom:1px solid var(--line);
+    background:var(--bg); font-size:11.5px;}
+  #chatDayNav button{border:1px solid var(--line); background:#fff; border-radius:6px; cursor:pointer;
+    font-size:11px; padding:2px 7px; color:var(--ink);}
+  #chatDayNav button:disabled{opacity:.35; cursor:default;}
+  #chatDayLbl{flex:1; text-align:center; font-weight:700; color:var(--muted);}
+  #chatDayNav.past #chatDayLbl{color:#B45309;}
+  /* 시스템 메시지 (감사로그 자동 기록) */
+  .csys{align-self:center; max-width:92%; text-align:center; font-size:10.5px; color:var(--muted);
+    background:var(--bg); border:1px dashed var(--line); border-radius:8px; padding:3px 8px; line-height:1.35;}
+  .csys .cat{color:var(--muted); margin-left:4px;}
+  /* @멘션 */
+  .cment{background:#E0E7FF; color:#3730A3; border-radius:4px; padding:0 3px; font-weight:700;}
+  .cment.me{background:#FEF08A; color:#854D0E;}
+  .cmsg.mentioned{border-color:#F59E0B; box-shadow:0 0 0 2px #FEF3C7;}
+  #chatMentions{display:none; flex-direction:column; border-top:1px solid var(--line); max-height:132px; overflow-y:auto;}
+  #chatMentions.on{display:flex;}
+  #chatMentions button{text-align:left; border:0; background:#fff; padding:6px 10px; cursor:pointer; font-size:12px;}
+  #chatMentions button.on, #chatMentions button:hover{background:var(--accent-soft);}
+  /* 읽음 표시 · 첨부 */
+  .cread{color:#16A34A; font-weight:700; margin-right:5px;}
+  .cimg{max-width:180px; max-height:180px; border-radius:8px; display:block; margin-top:4px; cursor:pointer;}
+  .cfile{display:inline-block; margin-top:4px; font-size:11.5px; color:var(--accent-ink);
+    background:var(--accent-soft); border-radius:6px; padding:3px 7px; text-decoration:none; word-break:break-all;}
+  #chatFileRow{display:none; align-items:center; gap:6px; padding:5px 10px; border-top:1px solid var(--line);
+    background:var(--accent-soft); font-size:11.5px;}
+  #chatFileRow.on{display:flex;}
+  #chatFileName{flex:1; word-break:break-all;}
+  #chatFileRow button{border:0; background:transparent; cursor:pointer; color:var(--muted);}
+  #chatAttach{border:1px solid var(--line); background:#fff; border-radius:8px; cursor:pointer; padding:0 8px; font-size:14px;}
+  #chatAttach:disabled, #chatInput:disabled{opacity:.5; cursor:default;}
+  #chatBadge.ment{background:#F59E0B;}
+  #chatInputRow{display:flex; gap:6px; padding:8px 10px; border-top:1px solid var(--line);}
+  #chatInput{flex:1; min-width:0; border:1px solid var(--line); border-radius:10px; padding:7px 10px; font:inherit; font-size:12.5px; background:var(--surface); color:var(--ink);}
+  .lot-scroll{max-height:62vh; overflow-y:auto;}
+  .lot-scroll thead th{position:sticky; top:0; background:var(--surface); z-index:2;
+    box-shadow:0 1px 0 var(--line);}
+  tr.lotg td{background:var(--bg); cursor:pointer; font-weight:700;}
+  tr.lotg:hover td{background:#EFEDE8;}
+  .lotg .tri{display:inline-block; width:14px; color:var(--faint); font-size:11px;}
+  .mini-sel{border:1px solid var(--line); border-radius:6px; padding:4px 6px; font:inherit;
+    font-size:12.5px; background:var(--surface); color:var(--ink); max-width:220px;}
+  .mini-sel.nm{max-width:360px; width:100%; min-width:180px;}   /* 제품·자재명 — 긴 이름 안 잘리게 */
+  /* 자재명 + 상태칩을 한 칸에 — select가 줄어들 수 있어야 칩이 옆 칸을 침범하지 않는다 */
+  .namecell{display:flex; align-items:center; gap:6px; min-width:0;}
+  .namecell .mini-sel.nm{min-width:0;}
+  .mtab{display:none;} .mtab.on{display:block;}
+  .ptab{display:none;} .ptab.on{display:block;}
+  .uselink{background:none; border:0; padding:0; font:inherit; font-weight:700; color:var(--ink);
+    text-decoration:underline dotted; text-decoration-color:var(--faint); text-underline-offset:3px; cursor:pointer;}
+  .uselink:hover{text-decoration-color:var(--ink);}
+  .fld{margin-bottom:12px;}
+  .fld label{display:block; font-size:12px; font-weight:700; color:var(--muted); margin-bottom:5px;}
+  .fld input,.fld select,.fld textarea{width:100%; border:1px solid var(--line); border-radius:8px;
+    padding:9px 11px; font:inherit; font-size:13.5px; background:var(--surface); color:var(--ink);}
+  .hint{font-size:11.5px; color:var(--faint); margin-top:4px;}
+  .draft-foot{display:flex; align-items:center; gap:10px; margin-top:12px; flex-wrap:wrap;}
+  .draft-foot .sum{font-size:12.5px; color:var(--muted);}
+  .calhead{display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;
+    font-weight:800; font-size:13.5px;}
+  .dow,.days{display:grid; grid-template-columns:repeat(7,1fr); gap:2px; text-align:center;}
+  .dow span{font-size:10.5px; color:var(--faint); font-weight:700; padding:2px 0;}
+  .days button{position:relative; border:0; background:none; border-radius:7px; padding:7px 0;
+    font-size:12.5px; color:var(--ink); font-weight:600;}
+  .days button:hover{background:var(--bg);}
+  .days .has::after{content:''; position:absolute; left:50%; transform:translateX(-50%);
+    bottom:2.5px; width:4px; height:4px; border-radius:99px; background:var(--ok);}
+  .days .today{background:var(--ink); color:#fff; font-weight:800;}
+  .days .off{color:var(--faint); font-weight:500;}
+  .days .sel{box-shadow:inset 0 0 0 2px var(--ink);}
+  .callegend{display:flex; gap:14px; font-size:11px; color:var(--muted); margin-top:9px;}
+  .callegend .dotg{display:inline-block; width:5px; height:5px; border-radius:99px; background:var(--ok);
+    vertical-align:middle; margin-right:4px;}
+  .callegend .sq{display:inline-block; width:9px; height:9px; border-radius:3px; background:var(--ink);
+    vertical-align:middle; margin-right:4px;}
+  .auto{color:var(--muted);}
+  .memo{width:100%; border:1px solid var(--line); border-radius:8px; padding:9px 11px;
+    font:inherit; font-size:13px; min-height:58px; resize:vertical; color:var(--ink);}
+  .entry-grid{display:grid; grid-template-columns:264px 1fr; gap:14px; align-items:start;}
+  .chartbox{position:relative; margin-bottom:10px;}
+  .chartbox canvas{width:100% !important; height:100% !important;}
+  .chartbox .barcol{transition:opacity .18s ease;}
+  .chartbox .barcol.dim{opacity:.28;}
+  .chartbox .hit{cursor:pointer;}
+  .chart-detail{border:1px solid var(--line-soft); background:#FAFAF8; border-radius:8px;
+    padding:10px 14px; font-size:12.5px; margin-bottom:14px; color:var(--muted); line-height:1.7;}
+  .chart-detail b{color:var(--ink);}
+  #chartTip{position:fixed; z-index:70; background:#121212; color:#fff; font-size:12px;
+    padding:8px 12px; border-radius:8px; pointer-events:none; display:none; line-height:1.6;
+    box-shadow:0 8px 24px rgba(12,12,12,.25); white-space:nowrap;}
+  #chartTip .tt{font-weight:700; margin-bottom:2px; display:block;}
+  .overlay{position:fixed; inset:0; background:rgba(12,12,12,.45); display:none;
+    align-items:center; justify-content:center; z-index:60; padding:20px;}
+  .overlay.on{display:flex;}
+  .modal{background:#fff; border-radius:12px; padding:20px 22px; width:520px; max-width:100%;
+    max-height:90vh; overflow-y:auto; box-shadow:0 18px 50px rgba(12,12,12,.28);}
+  .modal h3{font-size:15px; font-weight:800; margin-bottom:4px;}
+  .modal .hint{margin-bottom:10px;}
+  .modal-foot{display:flex; justify-content:flex-end; gap:8px; margin-top:12px;}
+  .fgrid{display:grid; grid-template-columns:1fr 1fr; gap:0 14px;}
+  .fgrid .full{grid-column:1 / -1;}
+  .toast{position:fixed; left:50%; bottom:28px; transform:translateX(-50%); background:#121212;
+    color:#fff; padding:10px 18px; border-radius:10px; font-size:13px; z-index:80; display:none;}
+  #numPad{position:fixed; z-index:66; display:none; grid-template-columns:repeat(5, 50px); gap:6px;
+    background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:10px;
+    box-shadow:0 16px 40px rgba(12,12,12,.24);}
+  #numPad button{height:44px; border:1px solid var(--line); border-radius:8px; background:var(--surface);
+    font-size:15px; font-weight:700; color:var(--ink);}
+  #numPad button:hover{background:var(--bg);}
+  /* 키패드 상단 — 이전 저장값 / 현재 입력값 비교 (수정 중 원래 값을 잊지 않게) */
+  #padInfo{grid-column:1/-1; display:flex; align-items:center; justify-content:space-between; gap:8px;
+    font-size:11.5px; padding:2px 4px 6px; border-bottom:1px solid var(--line-soft); margin-bottom:2px;}
+  #padInfo .pv{display:flex; flex-direction:column; line-height:1.3;}
+  #padInfo .pv b{font-size:13px;}
+  #padInfo .lbl{color:var(--muted); font-size:10.5px;}
+  #padInfo .prev b{color:var(--muted);}
+  #padInfo .cur b{color:var(--accent-ink);}
+  #padInfo .diff{font-size:10.5px; font-weight:700;}
+  #numPad button.pfn{font-size:12.5px; color:var(--muted);}
+  #numPad button.pop{background:var(--accent-soft); color:var(--accent-ink); font-size:16px;}
+  #numPad button.pok{background:var(--ink); border-color:var(--ink); color:#fff; font-size:13px;}
+  .stopbtn{border:1px dashed var(--line); background:none; border-radius:6px; padding:4px 10px;
+    font-size:12px; color:var(--muted); max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .stopbtn.hastext{border-style:solid; color:var(--ink); font-weight:600;}
+  .member-chip{display:inline-flex; align-items:center; gap:4px; background:var(--accent-soft);
+    color:var(--accent-ink); font-size:11.5px; font-weight:700; padding:2px 8px; border-radius:99px; margin:1px;}
+  .member-chip button{border:0; background:none; font-size:11px; color:var(--muted); padding:0;}
+  .psec{border-top:1px solid var(--line-soft); margin-top:18px; padding-top:12px;}
+  .psec-h{font-size:13.5px; font-weight:800; cursor:pointer; user-select:none;
+    display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
+  .psec-h::before{content:'▾'; color:var(--faint); font-size:11px;}
+  .psec.closed .psec-h::before{content:'▸';}
+  .psec.closed .psec-b{display:none;}
+  .psec-h .sub{font-weight:500; font-size:12px; color:var(--muted);}
+  .psec-b{margin-top:10px;}
+  .ugroup{border:1px solid var(--line-soft); border-radius:8px; padding:10px 12px; margin-bottom:10px;}
+  .ughead-add{display:flex; gap:8px; align-items:center; margin-top:8px;}
+  .ughead{display:flex; gap:10px; align-items:center; margin-bottom:4px; font-size:13px; flex-wrap:wrap;}
+  .ughead .uno{font-weight:800;}
+  @media (max-width:980px){
+    .kpis{grid-template-columns:1fr 1fr;}
+    .dash-grid,.entry-grid{grid-template-columns:1fr;}
+  }
+  @media print{
+    .side,.topbar,.noprint,.chart-detail{display:none !important;}
+    body{background:#fff;}
+    .main{padding:0;}
+    .card{border:0; padding:8px 0; break-inside:avoid;}
+  }
+  .pchip{display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line);
+    border-radius:99px; padding:3px 11px; font-size:12px; font-weight:600; background:var(--surface);}
+  .pchip i{width:10px; height:10px; border-radius:3px; display:inline-block;}
+  .pchip button{border:0; background:none; color:var(--muted); font-size:11px; padding:0;}
+  .abar-row{display:flex; align-items:center; gap:12px; margin:7px 0; font-size:12.5px;}
+  .abar-name{width:230px; font-weight:700; flex:none; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .abar-track{flex:1; height:15px; background:var(--bg); border:1px solid var(--line-soft);
+    border-radius:8px; position:relative; overflow:hidden;}
+  .abar-fill{position:absolute; left:0; top:0; bottom:0; border-radius:8px;}
+  .abar-pct{width:170px; text-align:right; font-weight:700; flex:none;}
+  .abar-pct small{font-weight:500; color:var(--muted);}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand">
+      <svg width="34" height="46" viewBox="0 0 40 52" fill="none" aria-hidden="true">
+        <g stroke="currentColor" stroke-width="4" stroke-linecap="square">
+          <path d="M11 3 29 15M29 3 11 15"/><path d="M20 1v6"/>
+          <path d="M6 28 20 17l14 11"/><path d="M6 38 20 27l14 11"/><path d="M9 48 20 39l11 9"/>
+        </g>
+      </svg>
+      <div><b>REBYPRODUCT</b><span>리바이프로덕트 재고관리</span></div>
+    </div>
+    <nav class="nav" id="nav">
+      <button class="on" data-scr="dash">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 8.5 8 3l6 5.5M4 7.5V13h8V7.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <em>대시보드</em><span class="cnt" id="navLowCnt" style="display:none">0</span>
+      </button>
+      <button data-scr="entry">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        <em>일일 입력</em>
+      </button>
+
+      <div class="nav-sep"><span>현황</span></div>
+      <button data-scr="prod">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2.5" y="2.5" width="11" height="11" rx="2" stroke="currentColor" stroke-width="1.4"/><path d="M5.5 10.5V8m2.5 2.5V5.5m2.5 5V7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        <em>생산 현황</em>
+      </button>
+      <button data-scr="ship">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M1.5 5.5h8v6h-8zM9.5 7.5h3l2 2.5v1.5h-5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><circle cx="4" cy="12.5" r="1.2" stroke="currentColor" stroke-width="1.2"/><circle cx="11.5" cy="12.5" r="1.2" stroke="currentColor" stroke-width="1.2"/></svg>
+        <em>출고 현황</em>
+      </button>
+      <button data-scr="lot">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2 13.5 4.7v6.6L8 14 2.5 11.3V4.7L8 2Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M2.7 4.8 8 7.4l5.3-2.6M8 7.4V14" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+        <em>LOT 관리</em><span class="cnt" id="navLotCnt" style="display:none">0</span>
+      </button>
+
+      <div class="nav-sep"><span>분석 · 조회</span></div>
+      <button data-scr="ana">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2.5 12.5 6 8l3 2.5 4.5-6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="13.5" cy="4.5" r="1.3" fill="currentColor"/></svg>
+        <em>분석</em>
+      </button>
+      <button data-scr="lookup">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="7" cy="7" r="4.2" stroke="currentColor" stroke-width="1.5"/><path d="m10.2 10.2 3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        <em>기록 조회</em>
+      </button>
+
+      <div class="nav-sep"><span>설정</span></div>
+      <button data-scr="items">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2.5" y="2.5" width="11" height="11" rx="2" stroke="currentColor" stroke-width="1.4"/><path d="M5.5 6h5M5.5 8.5h5M5.5 11h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        <em>기준정보 관리</em>
+      </button>
+    </nav>
+    <!-- 부족 자재 알림 — 자재 담당·admin에게만. 팝업 대신 사이드바에 상주해 흐름을 막지 않는다 -->
+    <div id="lowPanel" style="display:none;">
+      <div class="lowp-h"><b>⚠ 발주 필요</b><span id="lowpCnt"></span></div>
+      <div id="lowpList"></div>
+      <div id="lowpNote"></div>
+    </div>
+    <div class="side-foot">
+      <div><span class="dot"></span><span id="dbStatus">DB 연결됨</span></div>
+      <div id="userBox" style="margin-top:8px; display:none;">
+        <span id="userLbl" style="color:var(--side-ink); font-weight:700;"></span>
+        <div style="display:flex; gap:5px; margin-top:6px;">
+          <button class="btn sm sfbtn" id="btnPw">비밀번호</button>
+          <button class="btn sm sfbtn" id="btnAdmin" style="display:none;" title="백업/복원 · 데이터 점검">관리</button>
+          <button class="btn sm sfbtn" id="btnLogout">로그아웃</button>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <div class="main">
+    <div class="topbar">
+      <button id="menuBtn" title="메뉴">☰</button>
+      <h1 id="scrTitle">대시보드</h1>
+      <span class="today num" id="todayLbl"></span>
+      <span class="spacer"></span>
+    </div>
+    <div id="sideDim"></div>
+
+    <!-- 대시보드 -->
+    <section class="screen on" id="scr-dash">
+      <div id="dashTodayBanner"></div>
+      <div class="kpis" id="dashKpis"></div>
+      <div class="dash-grid">
+        <div class="dash-col">
+          <div class="card">
+            <h2 style="margin-bottom:4px">📈 생산 · 출고 추이 <span class="sub">최근 기록 14일</span></h2>
+            <div class="legend" style="margin:2px 0 6px;">
+              <span><i style="background:#121212"></i>생산</span>
+              <span><i style="background:#B0ADA6"></i>출고</span>
+            </div>
+            <div class="chartbox" style="height:250px"><canvas id="dashTrend"></canvas></div>
+            <div class="chart-detail" id="dashTrendD">막대를 클릭하면 그날 상세가 표시됩니다</div>
+          </div>
+          <div class="card">
+            <h2>🏆 이번주 생산 TOP <span class="sub" id="topLbl"></span></h2>
+            <div id="dashTop"></div>
+          </div>
+          <div class="card">
+            <h2>📦 재고 부족 현황 <span class="sub">실재고 ≤ 0 또는 안전재고 미달</span></h2>
+            <div class="tbl-wrap"><table>
+              <thead><tr><th>자재명</th><th>구분</th><th class="r">현재고</th><th class="r">안전재고</th><th>발주</th><th>기준일</th></tr></thead>
+              <tbody class="num" id="lowBody"></tbody>
+            </table></div>
+          </div>
+        </div>
+        <div class="dash-col">
+          <div class="card">
+            <h2>🥧 거래처별 출고 비중 <span class="sub" id="partnerLbl"></span></h2>
+            <div class="chartbox" style="height:200px"><canvas id="dashPartner"></canvas></div>
+            <div id="dashPartnerLeg" class="donut-leg"></div>
+          </div>
+          <div class="card">
+            <h2>⏰ 소비기한 임박·만료 LOT <span class="sub" id="expLbl"></span></h2>
+            <div id="expList"></div>
+          </div>
+          <div class="card">
+            <h2>🏭 완제품 재고 부족 <span class="sub" id="prodLowLbl"></span></h2>
+            <div id="dashProdLow"></div>
+          </div>
+          <div class="card">
+            <h2>🕒 최근 기록일 활동 <span class="sub" id="lastdayLbl"></span></h2>
+            <div id="lastdayFeed"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 생산 현황 -->
+    <section class="screen" id="scr-prod">
+      <div class="card" style="position:relative;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <div class="tabs" id="prodTabs" style="border-bottom:0; margin-bottom:0;">
+            <button class="on" data-pt="d">일일</button>
+            <button data-pt="w">주간</button>
+            <button data-pt="m">월간</button>
+            <button data-pt="y">년간</button>
+          </div>
+          <span class="spacer"></span>
+          <button class="btn sm" id="prodCsv" title="아래 생산실적 표를 CSV(엑셀) 파일로 저장">📄 엑셀(CSV)</button>
+          <button class="btn sm" onclick="window.print()">인쇄</button>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px; margin:12px 0;">
+          <button class="btn ghost sm" id="prodPrev">◀</button>
+          <b class="num" style="font-size:14.5px; cursor:pointer; text-decoration:underline dotted; text-decoration-color:var(--faint); text-underline-offset:4px;"
+             id="prodLbl" title="클릭하면 달력이 열립니다">-</b>
+          <button class="btn ghost sm" id="prodNext">▶</button>
+          <span class="hint" style="margin:0;">날짜 클릭 = 달력</span>
+          <span class="spacer"></span>
+          <input class="mini-input" id="prodFilter" autocomplete="off" placeholder="🔍 표에서 검색 (제품·자재·라인)" style="text-align:left; width:210px;">
+        </div>
+        <div id="prodCalPop" style="display:none; position:absolute; top:96px; left:18px; z-index:55;
+             background:var(--surface); border:1px solid var(--line); border-radius:10px;
+             padding:12px 14px; width:272px; box-shadow:0 14px 36px rgba(12,12,12,.2);">
+          <div class="calhead">
+            <button class="btn ghost sm" id="pcalPrev">◀</button>
+            <span class="num" id="pcalLbl"></span>
+            <button class="btn ghost sm" id="pcalNext">▶</button>
+          </div>
+          <div class="dow"><span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span></div>
+          <div class="days num" id="pcalDays"></div>
+          <div class="callegend"><span><i class="dotg"></i>기록 있음</span></div>
+        </div>
+        <div id="prodKpis" style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px;"></div>
+        <div style="font-size:13.5px; font-weight:800; margin-bottom:10px;">1. 생산실적</div>
+        <div id="prodAbars" style="display:none; border:1px solid var(--line-soft); border-radius:8px; padding:12px 14px; margin-bottom:14px;"></div>
+        <div class="chartbox" id="prodChartBox" style="display:none; height:250px"><canvas id="prodChart"></canvas></div>
+        <div class="chart-detail" id="prodChartD" style="display:none">막대를 클릭하면 상세가 표시됩니다</div>
+        <div class="tbl-wrap"><table>
+          <thead id="prodHead"></thead>
+          <tbody class="num" id="prodBody"></tbody>
+        </table></div>
+        <div id="prodSections"></div>
+      </div>
+    </section>
+
+    <!-- 출고 현황 -->
+    <section class="screen" id="scr-ship">
+      <div class="card" style="position:relative;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <div class="tabs" id="shipTabs" style="border-bottom:0; margin-bottom:0;">
+            <button class="on" data-st="d">일일</button>
+            <button data-st="w">주간</button>
+            <button data-st="m">월간</button>
+            <button data-st="y">년간</button>
+          </div>
+          <span class="spacer"></span>
+          <button class="btn sm" id="shipCsv" title="출고 내역 표를 CSV(엑셀) 파일로 저장">📄 엑셀(CSV)</button>
+          <button class="btn sm" onclick="window.print()">인쇄</button>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px; margin:12px 0;">
+          <button class="btn ghost sm" id="shipPrev">◀</button>
+          <b class="num" style="font-size:14.5px; cursor:pointer; text-decoration:underline dotted; text-decoration-color:var(--faint); text-underline-offset:4px;"
+             id="shipLbl" title="클릭하면 달력이 열립니다">-</b>
+          <button class="btn ghost sm" id="shipNext">▶</button>
+          <span class="hint" style="margin:0;">날짜 클릭 = 달력</span>
+          <span class="spacer"></span>
+          <input class="mini-input" id="shipFilter" autocomplete="off" placeholder="🔍 표에서 검색 (제품·거래처)" style="text-align:left; width:210px;">
+        </div>
+        <div id="shipCalPop" style="display:none; position:absolute; top:96px; left:18px; z-index:55;
+             background:var(--surface); border:1px solid var(--line); border-radius:10px;
+             padding:12px 14px; width:272px; box-shadow:0 14px 36px rgba(12,12,12,.2);">
+          <div class="calhead">
+            <button class="btn ghost sm" id="scalPrev">◀</button>
+            <span class="num" id="scalLbl"></span>
+            <button class="btn ghost sm" id="scalNext">▶</button>
+          </div>
+          <div class="dow"><span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span></div>
+          <div class="days num" id="scalDays"></div>
+          <div class="callegend"><span><i class="dotg"></i>기록 있음</span></div>
+        </div>
+        <div id="shipKpis" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;"></div>
+        <div id="shipCharts" style="display:flex; gap:18px; flex-wrap:wrap; margin-bottom:12px;">
+          <div id="shipTrendBox" style="flex:1.6; min-width:300px; display:none;">
+            <div style="font-size:12px; font-weight:700; color:var(--muted); margin-bottom:4px;">📈 일별 출고 추이</div>
+            <div class="chartbox" style="height:190px"><canvas id="shipChart"></canvas></div>
+          </div>
+          <div id="shipDonutBox" style="flex:1; min-width:230px; display:none;">
+            <div style="font-size:12px; font-weight:700; color:var(--muted); margin-bottom:4px;">🥧 거래처 비중</div>
+            <div class="chartbox" style="height:140px"><canvas id="shipDonut"></canvas></div>
+            <div id="shipDonutLeg" class="donut-leg"></div>
+          </div>
+        </div>
+        <div id="shipSections"></div>
+      </div>
+    </section>
+
+    <!-- 일일 입력 -->
+    <section class="screen" id="scr-entry">
+      <div class="entry-grid">
+        <div class="dash-col">
+          <div class="card">
+            <h2>날짜 이동</h2>
+            <div class="calhead">
+              <button class="btn ghost sm" id="calPrev">◀</button>
+              <span class="num" id="calLbl"></span>
+              <button class="btn ghost sm" id="calNext">▶</button>
+            </div>
+            <div class="dow"><span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span></div>
+            <div class="days num" id="calDays"></div>
+            <div class="callegend"><span><i class="dotg"></i>기록 있음</span><span><i class="sq"></i>오늘</span></div>
+          </div>
+          <div class="card">
+            <h2 id="entryStateTitle">상태</h2>
+            <div id="entryState" style="font-size:12.5px; color:var(--muted); line-height:1.8;"></div>
+            <button class="btn sm" style="margin-top:10px; width:100%;" id="btnCopyPrevProd" title="직전 생산일의 제품·라인·배합·계획 구성을 불러옵니다 (생산수량은 비움)">📋 어제처럼 — 생산 구성 불러오기</button>
+            <button class="btn sm" style="margin-top:6px; width:100%;" id="btnCopyPrevStaff" title="직전 생산일의 인원·가동 구성을 불러옵니다 (정지사유는 비움)">👷 어제처럼 — 인원 구성 불러오기</button>
+            <button class="btn sm" style="margin-top:6px; width:100%;" id="btnCopyPrev">직전 기록일 자재 불러오기</button>
+          </div>
+        </div>
+        <div class="dash-col">
+          <div class="card" style="padding-bottom:2px;">
+            <div class="tabs" id="entryTabs" style="margin-bottom:8px;">
+              <button class="on" data-et="prod">🏭 생산 입력</button>
+              <button data-et="stock">📦 재고 · 입고</button>
+            </div>
+            <p class="hint" id="entryTabHint" style="margin:0 0 10px;"></p>
+          </div>
+          <div class="card" data-esec="prod">
+            <h2>생산실적 <span class="sub">달성률 · 양품 자동 계산 · 소비기한 = 이 생산분(LOT)의 기한 (LOT 관리와 연동)</span></h2>
+            <div class="tbl-wrap"><table>
+              <thead><tr><th>제품명</th><th>라인</th><th class="r">배합</th><th class="r">계획</th><th class="r">생산</th><th class="r">불량</th><th class="r">달성률</th><th class="r">양품</th><th>소비기한</th><th></th></tr></thead>
+              <tbody class="num" id="eProd"></tbody>
+            </table></div>
+            <div class="draft-foot"><button class="btn sm" id="addProd">+ 생산 행 추가</button>
+              <input class="mini-input" id="qaProd" list="qaProducts" placeholder="🔍 제품 검색 후 Enter = 행 추가" style="text-align:left; width:220px;"></div>
+            <datalist id="qaProducts"></datalist>
+          </div>
+          <div class="card" data-esec="prod">
+            <h2>완제품 출고</h2>
+            <div class="tbl-wrap"><table>
+              <thead><tr><th>제품명</th><th>생산일자 (재고 LOT)</th><th>거래처</th><th class="r">출고량</th><th></th></tr></thead>
+              <tbody class="num" id="eShip"></tbody>
+            </table></div>
+            <div class="draft-foot"><button class="btn sm" id="addShip">+ 출고 행 추가</button>
+              <input class="mini-input" id="qaShip" list="qaProducts" placeholder="🔍 제품 검색 후 Enter = 행 추가" style="text-align:left; width:220px;"></div>
+          </div>
+          <div class="card" data-esec="prod">
+            <h2>자재 사용 <span class="sub">어떤 자재를 얼마나 썼는지 — 제품별 그룹 + 기타 사용(생산 외), 사용처 분석의 원천</span></h2>
+            <div id="eUsage"></div>
+            <p class="hint">생산실적에 제품을 추가하면 그룹이 자동으로 생깁니다 · 배합 수 입력 = 그 배합치 재료 전량(블록별 1배합당 소요량 × 배합수)이 자동 입력됩니다 — 생산수량과 무관</p>
+          </div>
+          <div class="card" data-esec="prod">
+            <h2>📋 예상 자재 소요 · 부족 <span class="sub" id="needSub">생산 계획(또는 생산수량) × 배합비 기준</span></h2>
+            <div id="eNeed"></div>
+          </div>
+          <div class="card" data-esec="stock">
+            <h2>원부자재 입고 <span class="sub">입고만 기록해도 재고에 자동 반영 — 발주한 자재는 자동으로 나타남 · 유통기한 기록</span></h2>
+            <div class="tbl-wrap"><table>
+              <thead><tr><th>자재명</th><th>단위</th><th class="r">입고량</th><th>유통기한</th><th>비고</th><th></th></tr></thead>
+              <tbody class="num" id="eMatIn"></tbody>
+            </table></div>
+            <div class="draft-foot"><button class="btn sm" id="addMatIn">+ 입고 행 추가</button>
+              <input class="mini-input" id="qaMatIn" list="qaMaterials" placeholder="🔍 자재 검색 후 Enter = 행 추가" style="text-align:left; width:220px;"></div>
+          </div>
+          <div class="card" data-esec="stock">
+            <h2>원부자재 재고 실사 <span class="sub">실제 세어본 재고를 입력 — 사용량(총량) = 전일재고 + 입고 − 실재고 · 입고는 위 '원부자재 입고' 카드에서 · 사용량 클릭 = 사용처 분석</span></h2>
+            <div class="tbl-wrap"><table>
+              <thead><tr><th>자재명</th><th>단위</th><th class="r">전일재고</th><th class="r">입고</th><th class="r">실재고</th><th class="r">사용량</th><th class="r">발주량</th><th>발주일</th><th></th></tr></thead>
+              <tbody class="num" id="eMat"></tbody>
+            </table></div>
+            <div class="draft-foot"><button class="btn sm" id="addMat">+ 자재 행 추가</button>
+              <input class="mini-input" id="qaMat" list="qaMaterials" placeholder="🔍 자재 검색 후 Enter = 행 추가" style="text-align:left; width:220px;"></div>
+            <datalist id="qaMaterials"></datalist>
+            <datalist id="qaMatRaw"></datalist>
+            <datalist id="qaMatSub"></datalist>
+          </div>
+          <div class="card" data-esec="stock">
+            <div class="draft-foot" style="margin-top:0;">
+              <span class="sum">입고·실사만 저장됩니다 — 생산 입력 탭의 데이터는 건드리지 않습니다</span>
+              <span class="spacer"></span>
+              <button class="btn primary" id="btnSaveStock">재고 · 입고 저장</button>
+            </div>
+          </div>
+          <div class="card" data-esec="prod">
+            <h2>인원 · 가동 <span class="sub">가동률 = 실가동 ÷ 라인 정상가동시간 · 정직원은 이름 선택, 용역은 [＋ 용역]으로 추가</span></h2>
+            <div class="tbl-wrap"><table>
+              <thead><tr><th>라인/공정</th><th>투입 인원</th><th class="r">인원수</th><th class="r">목표가동(h)</th><th class="r">실가동(h)</th><th class="r">가동률</th><th>정지사유</th><th></th></tr></thead>
+              <tbody class="num" id="eStaff"></tbody>
+            </table></div>
+            <div class="draft-foot"><button class="btn sm" id="addStaff">+ 라인 행 추가</button></div>
+          </div>
+          <div class="card" data-esec="prod">
+            <h2>📷 생산 현장 사진 <span class="sub">그날의 현장·불량품 사진 첨부 (추가 즉시 저장)</span></h2>
+            <div id="ePhotos" class="photo-grid"></div>
+            <div class="draft-foot" style="margin-top:10px;">
+              <button class="btn sm" id="addPhotoBtn">📷 사진 추가</button>
+              <input type="file" id="photoFile" accept="image/*" style="display:none;">
+              <span class="sum" style="font-size:11.5px;">png·jpg·webp·gif · 8MB 이하</span>
+            </div>
+          </div>
+          <div class="card" data-esec="prod">
+            <h2>특이사항 / 비고</h2>
+            <textarea class="memo" id="eMemo" placeholder="설비 고장, 원료 이슈, 클레임 등"></textarea>
+            <div class="draft-foot">
+              <span class="sum">생산·출고·자재사용·인원·특이사항만 저장됩니다 — 재고·입고 탭 데이터는 건드리지 않습니다</span>
+              <span class="spacer"></span>
+              <button class="btn primary" id="btnSaveDay">생산 입력 저장</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 기준정보 -->
+    <section class="screen" id="scr-items">
+      <div class="card">
+        <div class="tabs" id="itemTabs">
+          <button class="on" data-mt="product">완제품</button>
+          <button data-mt="raw">원재료</button>
+          <button data-mt="sub">부재료</button>
+          <button data-mt="bom">배합비</button>
+          <button data-mt="partner">거래처</button>
+          <button data-mt="staff">인원</button>
+          <button data-mt="line">생산라인</button>
+          <button data-mt="users" id="tabUsers" style="display:none">사용자</button>
+          <button data-mt="audit" id="tabAudit" style="display:none">이력</button>
+        </div>
+        <div id="mFilterBar" style="display:flex; align-items:center; gap:10px; margin-bottom:10px; flex-wrap:wrap;">
+          <input class="mini-input" id="mFilter" list="mFilterList" autocomplete="off" placeholder="🔍 이름으로 검색" style="text-align:left; width:240px;">
+          <datalist id="mFilterList"></datalist>
+          <span class="auto num" id="mFilterCnt" style="font-size:12px;"></span>
+          <span class="spacer"></span>
+          <button class="btn sm" id="mQuickEdit" style="display:none"
+                  title="단가·소비일·안전재고를 팝업 없이 표에서 바로 입력합니다 (입력 즉시 저장)">⚡ 빠른 편집</button>
+          <button class="btn sm" id="mImport" style="display:none"
+                  title="CSV(엑셀) 파일로 단가·소비일·안전재고를 일괄 갱신합니다 — 이름으로 매칭">📤 가져오기</button>
+          <input type="file" id="mImportFile" accept=".csv,.txt" style="display:none;">
+          <button class="btn sm" id="mPackSet" style="display:none"
+                  title="여러 부재료(트레이·슬리브·BOX 등)를 하나의 포장 세트로 묶습니다 — 포장 선택 시 한 세트로 표시·함께 소모">📦 포장 세트</button>
+          <button class="btn sm" id="mCsv" title="현재 탭 목록을 CSV(엑셀)로 저장">📄 엑셀(CSV)</button>
+        </div>
+        <div id="mHealthBar" style="display:none; margin-bottom:10px;"></div>
+        <div id="bomBar" style="display:none; align-items:center; gap:10px; margin-bottom:12px; flex-wrap:wrap;">
+          <span style="font-size:12px; font-weight:700; color:var(--muted);">제품 선택</span>
+          <input class="mini-input" id="bomProdSearch" list="qaProducts" placeholder="🔍 제품 검색" autocomplete="off"
+                 style="text-align:left; width:180px;" title="이름 일부를 치면 옆 목록이 좁혀집니다 · Enter = 첫 제품 선택">
+          <select class="mini-sel" id="bomProdSel" style="width:300px; max-width:300px"></select>
+          <span class="chip cat num" id="bomYieldChip" style="display:none"></span>
+          <span class="auto num" id="bomCount" style="font-size:11.5px;"></span>
+          <button class="btn sm" id="bomEstimate">📐 실측 데이터로 자동 계산</button>
+          <select class="mini-sel" id="bomCopySel" style="max-width:220px"></select>
+          <button class="btn sm" id="bomCopyBtn">📋 복사</button>
+          <span class="spacer"></span>
+          <button class="btn primary sm" id="bomSave">배합비 저장</button>
+        </div>
+        <div id="bomBlocks" style="display:none; align-items:center; gap:8px; margin:-4px 0 12px; flex-wrap:wrap; font-size:12.5px;"></div>
+        <div class="tbl-wrap"><table>
+          <thead id="mHead"></thead>
+          <tbody class="num" id="mBody"></tbody>
+        </table></div>
+        <div class="draft-foot">
+          <span class="sum" id="mHint"></span>
+          <span class="spacer"></span>
+          <input class="mini-input" id="bomAddSearch" list="qaMaterials" placeholder="🔍 자재 검색 후 Enter = 추가"
+                 style="display:none; text-align:left; width:230px;">
+          <button class="btn primary" id="mAdd">+ 새 항목</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 분석 (martin_data 대시보드 이식) -->
+    <section class="screen" id="scr-ana">
+      <div class="card" style="margin-bottom:14px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:12px 16px;">
+        <span style="font-size:12px; font-weight:700; color:var(--muted);">기간</span>
+        <input type="text" readonly placeholder="📅 시작일" class="mini-input w num datepick" style="text-align:left" id="anaFrom">
+        <span style="color:var(--faint)">~</span>
+        <input type="text" readonly placeholder="📅 종료일" class="mini-input w num datepick" style="text-align:left" id="anaTo">
+        <button class="btn sm" id="anaAll">전체 기간</button>
+        <div class="tabs" id="anaAgg" style="border-bottom:0; margin-bottom:0;">
+          <button class="on" data-agg="d">일별</button>
+          <button data-agg="w">주간</button>
+          <button data-agg="m">월간</button>
+        </div>
+        <span class="spacer"></span>
+        <button class="btn sm noprint" onclick="window.print()">인쇄</button>
+      </div>
+      <div class="kpis" id="anaKpis" style="grid-template-columns:repeat(6,1fr);"></div>
+      <div class="card" style="margin-bottom:14px;">
+        <h2 style="margin-bottom:4px;">생산 · 출고 · 재고 추이</h2>
+        <div class="legend" style="margin:2px 0 6px;">
+          <span><i style="background:#121212"></i>생산</span>
+          <span><i style="background:#B0ADA6"></i>출고</span>
+          <span><i style="background:#C2372C"></i>재고(우측 아님, 동일 축)</span>
+        </div>
+        <div class="chartbox" style="height:280px"><canvas id="anaTrend"></canvas></div>
+        <div class="chart-detail" id="anaTrendD">지점을 클릭하면 상세가 표시됩니다</div>
+      </div>
+      <div class="dash-grid" style="grid-template-columns:1fr 1fr; margin-bottom:14px;">
+        <div class="card">
+          <h2>요일별 평균 생산 · 출고 <span class="sub">선택 기간</span></h2>
+          <div class="chartbox" style="height:230px"><canvas id="anaDow"></canvas></div>
+        </div>
+        <div class="card">
+          <h2>월별 집계</h2>
+          <div class="tbl-wrap"><table>
+            <thead><tr><th>월</th><th class="r">생산</th><th class="r">출고</th><th class="r">기말재고</th></tr></thead>
+            <tbody class="num" id="anaMonthly"></tbody>
+          </table></div>
+        </div>
+      </div>
+      <div class="dash-grid" style="grid-template-columns:1fr 1fr; margin-bottom:14px;">
+        <div class="card">
+          <h2>🏆 제품 TOP <span class="sub">선택 기간</span>
+            <div class="tabs" id="anaTopTabs" style="border-bottom:0; margin:0 0 0 auto; display:inline-flex;">
+              <button class="on" data-top="prod">생산</button>
+              <button data-top="ship">출고</button>
+            </div>
+          </h2>
+          <div id="anaTop"></div>
+        </div>
+        <div class="card">
+          <h2>🚫 불량 분석 <span class="sub" id="anaDefSub">선택 기간 · 사유는 일일 입력의 불량 사유 기준</span></h2>
+          <div id="anaDefKpi" style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px;"></div>
+          <div class="tbl-wrap"><table>
+            <thead><tr><th>불량 사유</th><th class="r">수량</th><th class="r">비중</th></tr></thead>
+            <tbody class="num" id="anaDefReasons"></tbody>
+          </table></div>
+        </div>
+      </div>
+      <div class="card" id="anaCostCard" style="display:none; margin-bottom:14px;">
+        <h2>💰 원가 · 수익성 <span class="sub" id="anaCostSub"></span>
+          <button class="btn sm" id="anaCostCsv" style="margin-left:auto;" title="원가표를 CSV(엑셀)로 저장">📄 CSV</button>
+        </h2>
+        <div id="anaCostWarn"></div>
+        <div class="tbl-wrap"><table>
+          <thead id="anaCostHead"><tr><th>제품명</th><th class="r">판매가(원)</th><th class="r">자재비(원)</th>
+            <th class="r">노무비(원)</th><th class="r">원가(원)</th><th class="r">마진(원)</th><th class="r">마진율</th></tr></thead>
+          <tbody class="num" id="anaCostBody"></tbody>
+        </table></div>
+        <p class="hint">원가 = 배합비 × 자재단가 + 개당 노무비(최근 30일 노무비 ÷ 양품 수량, 전 제품 공통) ·
+          제품명 클릭 = 자재별 원가 구성 · 판매가·자재 단가는 기준정보에서 입력</p>
+      </div>
+      <div class="card">
+        <h2>재고 회전 · 장기재고
+          <span class="sub">재고일수 = 현재고 ÷ 평균 일출고 · 장기재고 기준</span>
+          <select class="mini-sel" id="anaDeadThr" style="max-width:80px">
+            <option value="7" selected>7일</option><option value="14">14일</option><option value="30">30일</option>
+          </select>
+          <span class="sub">이상 출고 없음 = 빨강</span>
+          <input class="mini-input" id="anaRotFilter" list="qaProducts" autocomplete="off" placeholder="🔍 제품 검색" style="text-align:left; max-width:160px; margin-left:auto;">
+          <button class="btn sm" id="anaRotCsv" title="재고 회전 표를 CSV(엑셀)로 저장">📄 CSV</button>
+        </h2>
+        <div class="tbl-wrap"><table>
+          <thead id="anaRotHead"><tr><th>제품명</th><th class="r">현재고</th><th class="r">기간생산</th><th class="r">기간출고</th><th class="r">평균 일출고</th><th class="r">재고일수</th><th class="r">마지막 출고</th><th class="r">경과일</th></tr></thead>
+          <tbody class="num" id="anaRotation"></tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <!-- LOT 관리 -->
+    <section class="screen" id="scr-lot">
+      <div class="card">
+        <h2>완제품 LOT 현황 <span class="sub">생산일자별 재고 · 소비기한은 LOT마다 개별 지정 (미지정 시 생산일 + 제품 소비일) · 관리 = 생산 담당</span></h2>
+        <div id="lotKpis" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;"></div>
+        <div style="display:flex; gap:10px; align-items:center; margin-bottom:10px; flex-wrap:wrap;">
+          <div class="tabs" style="margin:0; border:0;" id="lotTabs">
+            <button class="on" data-lf="all">전체</button>
+            <button data-lf="warn">임박 · 만료만</button>
+          </div>
+          <input class="mini-input" id="lotFilter" list="qaProducts" autocomplete="off"
+                 placeholder="🔍 제품 검색" style="text-align:left; width:220px;">
+          <select class="mini-sel" id="lotLimit" title="표시할 LOT 개수" style="font-size:12px;">
+            <option value="100" selected>100개</option>
+            <option value="50">50개</option>
+            <option value="30">30개</option>
+            <option value="10">10개</option>
+            <option value="0">전체보기</option>
+          </select>
+          <span class="auto num" id="lotCnt" style="font-size:12px;"></span>
+          <span class="spacer"></span>
+          <button class="btn sm" id="lotBulkDisp" style="display:none; color:var(--crit); border-color:var(--crit);"
+                  title="만료된 LOT 전부를 '소비기한 만료' 사유로 한 번에 폐기 처리합니다">🗑 만료 LOT 일괄 폐기</button>
+        </div>
+        <div class="tbl-wrap lot-scroll"><table>
+          <thead><tr><th>제품명</th><th class="r">생산일자</th><th class="r">수량</th><th class="r">보관일수</th>
+            <th class="r">소비기한</th><th class="r">D-day</th><th>상태</th><th></th></tr></thead>
+          <tbody class="num" id="lotBody"></tbody>
+        </table></div>
+        <p class="hint">소비기한은 <b>일일 입력의 생산실적</b>에서 생산과 함께 입력하거나, 이 표에서 LOT마다 직접 지정합니다 —
+          비워두면 생산일 + 제품 소비일(기준정보)로 자동 계산 · 생산일자 클릭 = 그날 기록 보기</p>
+      </div>
+      <div class="card">
+        <h2>출고 이력 (납품) <span class="sub">거래처별 출고 + 생산 LOT · 소비기한 표기 · 날짜·개수로 조회</span></h2>
+        <div style="display:flex; gap:10px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
+          <input class="mini-input" id="shipHistFilter" list="qaProducts" autocomplete="off"
+                 placeholder="🔍 제품·거래처 검색" style="text-align:left; width:240px;">
+          <span class="auto" style="font-size:12px;">기간</span>
+          <input type="date" class="mini-input" id="shipHistFrom" title="시작일 (비우면 처음부터)" style="width:150px;">
+          <span class="auto">~</span>
+          <input type="date" class="mini-input" id="shipHistTo" title="종료일 (비우면 현재까지)" style="width:150px;">
+          <button class="btn ghost sm" id="shipHistDateClear" title="기간 해제 = 전체 날짜 보기">전체 날짜</button>
+          <select class="mini-sel" id="shipHistLimit" title="표시할 출고 건수" style="font-size:12px;">
+            <option value="100">최근 100개</option>
+            <option value="50" selected>최근 50개</option>
+            <option value="30">최근 30개</option>
+            <option value="10">최근 10개</option>
+            <option value="0">전체보기</option>
+          </select>
+          <span class="auto num" id="shipHistCnt" style="font-size:12px;"></span>
+        </div>
+        <div class="tbl-wrap lot-scroll" style="max-height:44vh;"><table>
+          <thead><tr><th>출고일</th><th>제품명</th><th>거래처</th><th class="r">출고량</th>
+            <th class="r">생산 LOT</th></tr></thead>
+          <tbody class="num" id="shipHistBody"></tbody>
+        </table></div>
+      </div>
+      <div class="card">
+        <h2>폐기 이력 <span class="sub">폐기 = 재고 차감 (기초 + 생산 − 출고 − 폐기) · 날짜·개수로 조회</span></h2>
+        <div style="display:flex; gap:10px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
+          <input class="mini-input" id="dispHistFilter" list="qaProducts" autocomplete="off"
+                 placeholder="🔍 제품 검색" style="text-align:left; width:240px;">
+          <span class="auto" style="font-size:12px;">기간</span>
+          <input type="date" class="mini-input" id="dispHistFrom" title="시작일 (비우면 처음부터)" style="width:150px;">
+          <span class="auto">~</span>
+          <input type="date" class="mini-input" id="dispHistTo" title="종료일 (비우면 현재까지)" style="width:150px;">
+          <button class="btn ghost sm" id="dispHistDateClear" title="기간 해제 = 전체 날짜 보기">전체 날짜</button>
+          <select class="mini-sel" id="dispHistLimit" title="표시할 폐기 건수" style="font-size:12px;">
+            <option value="100">최근 100개</option>
+            <option value="50" selected>최근 50개</option>
+            <option value="30">최근 30개</option>
+            <option value="10">최근 10개</option>
+            <option value="0">전체보기</option>
+          </select>
+          <span class="auto num" id="dispHistCnt" style="font-size:12px;"></span>
+        </div>
+        <div class="tbl-wrap"><table>
+          <thead><tr><th>폐기일</th><th>제품명</th><th class="r">LOT (생산일)</th><th class="r">수량</th><th>사유</th><th>메모</th><th></th></tr></thead>
+          <tbody class="num" id="dispBody"></tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <!-- 기록 조회 -->
+    <section class="screen" id="scr-lookup">
+      <div class="entry-grid">
+        <div class="dash-col">
+          <div class="card">
+            <h2>날짜로 찾기</h2>
+            <div class="calhead">
+              <button class="btn ghost sm" id="lkPrev">◀</button>
+              <span class="num" id="lkLbl"></span>
+              <button class="btn ghost sm" id="lkNext">▶</button>
+            </div>
+            <div class="dow"><span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span></div>
+            <div class="days num" id="lkDays"></div>
+            <div class="callegend"><span><i class="dotg"></i>기록 있음</span></div>
+          </div>
+          <div class="card">
+            <h2>품목으로 찾기</h2>
+            <input class="mini-input w" list="qaProducts" autocomplete="off" style="width:100%; text-align:left;" id="lkSearch" placeholder="제품명 검색 후 Enter">
+            <div style="display:flex; gap:4px; align-items:center; margin-top:8px; font-size:12px;">
+              <input type="text" readonly placeholder="📅 시작일" class="mini-input num datepick" id="lkFrom" style="flex:1; min-width:0;">
+              <span class="auto">~</span>
+              <input type="text" readonly placeholder="📅 종료일" class="mini-input num datepick" id="lkTo" style="flex:1; min-width:0;">
+              <button class="btn sm" id="lkGo">검색</button>
+              <button class="btn sm" id="lkAll" title="제품명 없이 기간 내 모든 제품 기록">전체</button>
+            </div>
+            <p class="hint" style="margin:6px 0 0;">제품명 검색 = 그 제품 · [전체] = 기간 내 모든 제품 · 기간 미지정 = 최근분</p>
+            <div id="lkSearchOut" style="margin-top:10px;"></div>
+          </div>
+        </div>
+        <div class="dash-col">
+          <div class="card" id="lkDetail">
+            <h2>날짜를 선택하세요</h2>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<!-- 기준정보 등록/수정 모달 -->
+<div class="overlay" id="mstOverlay">
+  <div class="modal">
+    <h3 id="mstTitle">등록</h3>
+    <p class="hint" id="mstHint"></p>
+    <div class="fgrid" id="mstForm"></div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeMaster()">취소</button>
+      <button class="btn primary" id="mstSave">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- 포장 세트 관리 모달 -->
+<div class="overlay" id="packSetOverlay">
+  <div class="modal" style="max-width:560px;">
+    <h3>📦 포장 세트 관리</h3>
+    <p class="hint">여러 부재료(트레이 상/하·슬리브·외포장 BOX 등)를 한 세트로 묶습니다. 세트로 묶으면 LOT 포장 선택에서 하나로 표시되고 함께 소모됩니다. <b>한 부재료를 여러 세트에 넣어도 됩니다.</b></p>
+    <div class="tabs" style="margin:0 0 10px;" id="packSetTabs">
+      <button class="on" data-pstab="list">세트 목록</button>
+      <button data-pstab="edit">＋ 세트 만들기</button>
+    </div>
+    <div id="packSetListPane">
+      <p class="hint" id="packSetListCount" style="margin:0 0 6px;"></p>
+      <div id="packSetSets" style="max-height:360px; overflow-y:auto;"></div>
+    </div>
+    <div id="packSetEditPane" style="display:none;">
+      <div class="fld"><label>세트 이름 *</label>
+        <input id="packSetName" list="packSetNameDl" placeholder="예: 소보로T 16개입">
+        <datalist id="packSetNameDl"></datalist></div>
+      <div style="margin-top:8px;">
+        <input class="mini-input" id="packSetSearch" placeholder="🔍 부재료 검색" style="width:100%; text-align:left;">
+        <p class="hint" id="packSetCount" style="margin:6px 0;"></p>
+        <div id="packSetList" style="max-height:300px; overflow-y:auto; border:1px solid var(--line-soft); border-radius:8px;"></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="document.getElementById('packSetOverlay').classList.remove('on')">닫기</button>
+      <button class="btn primary" id="packSetSave" style="display:none;">세트 저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- 사용처 분석 모달 -->
+<div class="overlay" id="useOverlay">
+  <div class="modal">
+    <h3 id="useTitle">사용처 분석</h3>
+    <p class="hint" id="useHint">원료수불부 실측 데이터 기준 제품별 사용량입니다.</p>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>제품명</th><th class="r">생산수량</th><th class="r">사용량</th><th class="r">비중</th></tr></thead>
+      <tbody class="num" id="useBody"></tbody>
+    </table></div>
+    <div class="modal-foot"><button class="btn" onclick="closeUse()">닫기</button></div>
+  </div>
+</div>
+
+<!-- 제품 상세 모달 (분석) -->
+<input type="file" id="prodImgInput" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none">
+<div class="overlay" id="anaOverlay">
+  <div class="modal" style="width:780px; max-width:96vw;">
+    <h3 id="anaPTitle">제품 상세</h3>
+    <p class="hint" id="anaPHint"></p>
+    <div id="anaPBody"></div>
+    <div class="modal-foot"><button class="btn" onclick="closeAnaP()">닫기</button></div>
+  </div>
+</div>
+
+<!-- 정지사유 모달 -->
+<!-- 배합비 비고 -->
+<!-- 관리 도구 (admin): 백업/복원 + 데이터 점검 -->
+<div class="overlay" id="adminOverlay">
+  <div class="modal" style="max-width:560px;">
+    <h3>🛠 관리 도구</h3>
+    <div style="font-size:12.5px; font-weight:800; color:var(--muted); margin:12px 0 6px;">💾 백업 / 복원</div>
+    <p class="hint" style="margin:0 0 8px;">매일 자동 백업됩니다 (백업 폴더 · 최근 30개 보관). 복원하면 현재 DB가 그 시점으로 되돌아가며, 복원 직전 상태도 자동 백업됩니다.</p>
+    <div style="margin-bottom:8px;"><button class="btn sm" id="bkNow">💾 지금 백업</button></div>
+    <div id="bkList" style="max-height:200px; overflow-y:auto; border:1px solid var(--line); border-radius:8px;"></div>
+    <div style="font-size:12.5px; font-weight:800; color:var(--muted); margin:16px 0 6px;">🔍 데이터 점검</div>
+    <p class="hint" style="margin:0 0 8px;">자재 재고 체인·자동차감 정합·음수 재고·연결 끊긴 기록을 검사합니다. DB를 교체했을 때 한 번 돌려보세요.</p>
+    <div style="margin-bottom:8px;">
+      <button class="btn sm" id="integRun">🔍 점검 실행</button>
+      <button class="btn sm" id="integFix" style="display:none; color:var(--warn); border-color:var(--warn);">🔧 체인 자동 복구</button>
+    </div>
+    <div id="integOut" style="font-size:12.5px; line-height:1.9;"></div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeAdmin()">닫기</button>
+    </div>
+  </div>
+</div>
+
+<!-- 배합 자재 납품처 지정 (복수 선택) -->
+<div class="overlay" id="bpOverlay">
+  <div class="modal" style="max-width:380px;">
+    <h3>납품처 지정</h3>
+    <p class="hint" id="bpHint">이 자재를 쓰는 납품처를 모두 체크하세요 — 아무것도 안 고르면 '공통'(전 거래처)입니다.</p>
+    <div id="bpList" style="display:flex; flex-direction:column; gap:8px; margin:10px 0; max-height:40vh; overflow-y:auto;"></div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeBomPartner()">취소</button>
+      <button class="btn primary" id="bpSave">확인</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="notePopOverlay">
+  <div class="modal" style="width:460px;">
+    <h3>비고</h3>
+    <p class="hint" id="notePopHint"></p>
+    <textarea class="memo" id="notePopText" style="min-height:120px;"></textarea>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeNotePop()">취소</button>
+      <button class="btn primary" id="notePopSave">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- 생산 LOT 소비기한 분할 -->
+<div class="overlay" id="lotSplitOverlay">
+  <div class="modal" style="width:1000px; max-width:96vw;">
+    <h3>소비기한 설정 (LOT 분할)</h3>
+    <p class="hint" id="lotSplitHint">한 생산분을 수량별로 나눠 소비기한을 다르게 지정합니다. 남은 수량은 제품 소비일로 자동 계산됩니다. 구간마다 포장을 선택하면 부재료(BOX) 사용량이 그 배정대로 계산됩니다.</p>
+    <div class="fld"><label>대상</label><div id="lotSplitTarget" style="font-size:13.5px; font-weight:700;"></div></div>
+    <p class="hint num" id="lotSplitExist" style="margin:4px 0 8px;"></p>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>포장 (선택 시 환산·BOX 소모 계산)</th><th>납품처</th><th class="r">수량</th><th>소비기한</th><th>기존 재고</th><th></th></tr></thead>
+      <tbody class="num" id="lotSplitBody"></tbody>
+    </table></div>
+    <div style="display:flex; gap:10px; align-items:center; margin-top:8px;">
+      <button class="btn sm" id="lotSplitAdd">+ 구간 추가</button>
+      <span class="spacer"></span>
+      <span class="num" id="lotSplitSum" style="font-size:12.5px;"></span>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeLotSplit()">취소</button>
+      <button class="btn primary" id="lotSplitSave">적용</button>
+    </div>
+  </div>
+</div>
+
+<!-- 동시 편집: 다른 사용자가 이 날짜를 저장했을 때 -->
+<div class="overlay" id="dayUpdOverlay">
+  <div class="modal" style="width:460px;">
+    <h3>🔄 다른 사용자가 이 날짜를 저장했습니다</h3>
+    <p class="hint" id="dayUpdHint"></p>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeDayUpd()">나중에</button>
+      <button class="btn primary" id="dayUpdReload">화면 갱신</button>
+    </div>
+  </div>
+</div>
+
+<!-- LOT 폐기 -->
+<div class="overlay" id="dispOverlay">
+  <div class="modal" style="width:440px;">
+    <h3>LOT 폐기 처리</h3>
+    <p class="hint" id="dispHint">폐기하면 재고에서 즉시 차감되고 이력에 기록됩니다.</p>
+    <div class="fld"><label>대상</label><div id="dispTarget" style="font-size:13.5px; font-weight:700;"></div></div>
+    <div class="fgrid">
+      <div class="fld"><label>폐기 수량 *</label><input class="mini-input num" id="dispQty" style="width:100%; text-align:right;" inputmode="decimal"></div>
+      <div class="fld"><label>폐기일</label><input type="text" readonly placeholder="📅 폐기일" class="datepick" id="dispDate" style="width:100%;"></div>
+      <div class="fld"><label>사유</label><select id="dispReason" style="width:100%;">
+        <option>소비기한 만료</option><option>불량</option><option>파손</option><option>기타</option></select></div>
+      <div class="fld"><label>메모</label><input id="dispNote" style="width:100%;" placeholder="선택"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeDisp()">취소</button>
+      <button class="btn primary" id="dispSave">폐기 확정</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="stopOverlay">
+  <div class="modal">
+    <h3>정지사유 입력</h3>
+    <p class="hint">정지 시간 · 원인 · 조치 내용을 자유롭게 기록하세요.</p>
+    <textarea class="memo" id="stopText"></textarea>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeStop()">취소</button>
+      <button class="btn primary" onclick="saveStop()">확인</button>
+    </div>
+  </div>
+</div>
+
+<!-- 원가 구성 (분석 › 원가·수익성 제품 클릭) -->
+<div class="overlay" id="costOverlay">
+  <div class="modal" style="max-width:520px;">
+    <h3 id="costTitle">원가 구성</h3>
+    <p class="hint" id="costHint"></p>
+    <div class="tbl-wrap" style="max-height:56vh; overflow-y:auto;"><table>
+      <thead><tr><th>자재</th><th class="r">1개당 소요</th><th class="r">단가(원)</th><th class="r">금액(원)</th></tr></thead>
+      <tbody class="num" id="costBody"></tbody>
+    </table></div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeCost()">닫기</button>
+    </div>
+  </div>
+</div>
+
+<!-- 생산 거래처 분배 -->
+<div class="overlay" id="planSplitOverlay">
+  <div class="modal" style="max-width:480px;">
+    <h3>생산 거래처 분배</h3>
+    <p class="hint" id="planSplitTarget"></p>
+    <div style="display:flex; align-items:center; gap:8px; margin:2px 0 10px;">
+      <label style="font-size:12.5px; font-weight:600; white-space:nowrap;">생산 수량</label>
+      <input class="mini-input num" id="planSplitProd" style="width:110px" inputmode="decimal" placeholder="예: 10000">
+      <span class="hint" style="margin:0;">개 — 분배하고 남는 수량은 보유(재고)</span>
+    </div>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>거래처</th><th class="r">수량</th><th></th></tr></thead>
+      <tbody class="num" id="planSplitBody"></tbody>
+    </table></div>
+    <div style="display:flex; align-items:center; gap:10px; margin-top:8px;">
+      <button class="btn sm" id="planSplitAdd">＋ 거래처 추가</button>
+      <span class="spacer"></span>
+      <span class="num" id="planSplitSum" style="font-size:12.5px;"></span>
+    </div>
+    <p class="hint" style="margin-top:8px;">분배 합계는 생산 수량까지만 가능하고, 남는 수량은 보유(미출고 재고)로 남습니다 · 생산 수량을 비우면 분배 합계가 생산 수량이 됩니다 · 거래처가 1곳이고 수량을 비우면 생산 전량 자동 · 납품처 지정 부재료(박스·트레이)는 각 거래처 분배량 기준으로 계산됩니다</p>
+    <div class="modal-foot">
+      <button class="btn ghost" onclick="clearPlanSplit()" style="color:var(--crit)">분배 해제</button>
+      <button class="btn" onclick="closePlanSplit()">취소</button>
+      <button class="btn primary" id="planSplitSave">확인</button>
+    </div>
+  </div>
+</div>
+
+<!-- 불량 사유 -->
+<div class="overlay" id="dreasonOverlay">
+  <div class="modal">
+    <h3>불량 사유 입력</h3>
+    <p class="hint" id="dreasonHint">불량이 발생한 원인을 선택하거나 직접 적어주세요.</p>
+    <div id="dreasonChips" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px;"></div>
+    <textarea class="memo" id="dreasonText" placeholder="예: 오븐 온도 과다로 겉면 태움 · 성형 불량 등"></textarea>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeDreason()">취소</button>
+      <button class="btn primary" onclick="saveDreason()">확인</button>
+    </div>
+  </div>
+</div>
+
+<!-- 저장 전 요약 확인 -->
+<div class="overlay" id="saveSumOverlay">
+  <div class="modal">
+    <h3>저장 내용 확인</h3>
+    <p class="hint" id="saveSumHint"></p>
+    <div id="saveSumBody"></div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeSaveSum()">취소</button>
+      <button class="btn primary" id="saveSumConfirm">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- 로그인 -->
+<div id="loginOverlay" style="position:fixed; inset:0; z-index:100; background:var(--bg); display:none; align-items:center; justify-content:center;">
+  <div style="width:330px; background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:28px 26px; box-shadow:0 20px 60px rgba(12,12,12,.12);">
+    <div style="display:flex; flex-direction:column; align-items:center; gap:8px; margin-bottom:20px;">
+      <svg width="30" height="40" viewBox="0 0 40 52" fill="none" style="color:var(--ink)">
+        <g stroke="currentColor" stroke-width="4" stroke-linecap="square">
+          <path d="M11 3 29 15M29 3 11 15"/><path d="M20 1v6"/>
+          <path d="M6 28 20 17l14 11"/><path d="M6 38 20 27l14 11"/><path d="M9 48 20 39l11 9"/>
+        </g>
+      </svg>
+      <b style="letter-spacing:.05em;">REBYPRODUCT</b>
+      <span class="hint" style="margin:0;">리바이프로덕트 재고관리 로그인</span>
+    </div>
+    <div class="fld"><label>아이디</label><input id="loginId" autocomplete="username"></div>
+    <div class="fld"><label>비밀번호</label><input id="loginPw" type="password" autocomplete="current-password"></div>
+    <button class="btn primary" style="width:100%;" id="loginBtn">로그인</button>
+    <p class="hint" id="loginMsg" style="margin-top:10px; color:var(--crit);"></p>
+  </div>
+</div>
+
+<!-- 비밀번호 변경 -->
+<div class="overlay" id="pwOverlay">
+  <div class="modal" style="width:340px;">
+    <h3>비밀번호 변경</h3>
+    <div class="fld"><label>현재 비밀번호</label><input type="password" id="pwOld"></div>
+    <div class="fld"><label>새 비밀번호</label><input type="password" id="pwNew"></div>
+    <div class="modal-foot">
+      <button class="btn" onclick="document.getElementById('pwOverlay').classList.remove('on')">취소</button>
+      <button class="btn primary" id="pwSaveBtn">변경</button>
+    </div>
+  </div>
+</div>
+
+<div id="chartTip"></div>
+<!-- 접속 인원 + 채팅 -->
+<div id="chatWidget" style="display:none;">
+  <div id="chatPanel">
+    <div id="chatHead">
+      <b>사내 채팅</b>
+      <span id="chatOnline" class="hint"></span>
+      <button id="chatClose" title="닫기">✕</button>
+    </div>
+    <div id="chatDayNav">
+      <button id="chatPrev" title="이전 대화">◀</button>
+      <span id="chatDayLbl"></span>
+      <button id="chatNext" title="다음 대화">▶</button>
+      <button id="chatToday" title="오늘 대화로">오늘</button>
+    </div>
+    <div id="chatMsgs"></div>
+    <div id="chatMentions"></div>
+    <div id="chatFileRow"><span id="chatFileName"></span><button id="chatFileDel" title="첨부 취소">✕</button></div>
+    <div id="chatInputRow">
+      <button id="chatAttach" title="사진·파일 첨부 (8MB 이하)">📎</button>
+      <input type="file" id="chatFile" style="display:none">
+      <input id="chatInput" placeholder="메시지 입력… (@이름으로 호출)" maxlength="1000" autocomplete="off">
+      <button id="chatSend" class="btn primary sm">전송</button>
+    </div>
+  </div>
+  <button id="chatToggle">🟢 <span id="chatCount">0</span>명 접속<span id="chatBadge"></span></button>
+</div>
+<div class="toast" id="toast"></div>
+<div id="numPad">
+  <div id="padInfo"></div>
+  <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button><button data-k="⌫" class="pfn">⌫</button><button data-k="/" class="pop">÷</button>
+  <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button><button data-k="C" class="pfn">지움</button><button data-k="*" class="pop">×</button>
+  <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button><button data-k="00" class="pfn">00</button><button data-k="-" class="pop">−</button>
+  <button data-k="0">0</button><button data-k=".">.</button><button data-k="000" class="pfn">000</button><button data-k="+" class="pop">＋</button><button data-k="OK" class="pok">확인</button>
+</div>
+<script src="/static/vendor/chart.umd.js"></script>
+<script src="/static/vendor/chartjs-plugin-zoom.min.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
