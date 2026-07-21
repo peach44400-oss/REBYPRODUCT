@@ -28,8 +28,9 @@ if not exist "dist\재고관리.exe" (
 
 echo.
 echo [2/3] GitHub Release 생성 (v%VER%)...
-REM exe는 영문 이름(RebyStock.exe)으로 업로드 — 다운로드 URL에 한글이 들어가면 깨질 수 있음
-gh release create "v%VER%" "dist\재고관리.exe#RebyStock.exe" "version.json" --title "v%VER%" --notes-file version.json
+REM exe는 영문 이름(RebyStock.exe)으로 업로드 — 한글 파일명은 릴리스에서 default.exe로 깨짐
+copy /y "dist\재고관리.exe" "dist\RebyStock.exe" >nul
+gh release create "v%VER%" "dist\RebyStock.exe" "version.json" --title "v%VER%" --notes-file version.json
 if errorlevel 1 (
   echo [오류] Release 생성 실패. gh 로그인 상태를 확인하세요:  gh auth status
   pause & exit /b 1
