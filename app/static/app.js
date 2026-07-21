@@ -1031,20 +1031,22 @@ renderEntryTabs();
 function mapStaffRow(r) {
   let ag = [];
   try { ag = JSON.parse(r.agency || "[]"); } catch (e) { ag = []; }
+  // 휴게 미입력(0·빈값)은 기본 60분으로 — 안 그러면 칸에 회색 60만 보이고 계산은 0분으로 됨.
+  // (휴게 없음이 정말 필요하면 0을 직접 입력 — 단 다시 불러오면 60으로 돌아오는 한계 있음)
   if (ag.length) {
     ag = ag.map(a => ({ h: a.h || "", w: a.w == null ? "" : a.w, g: a.g || "", pid: a.pid || null,
-      start: a.start || "", end: a.end || "", brk: a.brk || "" }));
+      start: a.start || "", end: a.end || "", brk: a.brk || "60" }));
   } else {
     const n = Number(r.agency_count) || 0, th = Number(r.agency_hours) || 0;
     const perH = n ? Math.round(th / n * 100) / 100 : "";
     ag = Array.from({ length: n }, () => ({ h: perH || "", w: r.agency_wage ?? "", g: "", pid: null,
-      start: "", end: "", brk: "" }));
+      start: "", end: "", brk: "60" }));
   }
   return { line_id: r.line_id, headcount: r.headcount,
     agency: ag, agency_wage: r.agency_wage ?? "",
     target_hours: r.target_hours || "", work_hours: r.work_hours, stop_reason: r.stop_reason || "",
     members: JSON.parse(r.members || "[]").map(m => ({ id: m.id, h: m.h || "",
-      start: m.start || "", end: m.end || "", brk: m.brk || "" })) };
+      start: m.start || "", end: m.end || "", brk: m.brk || "60" })) };
 }
 async function loadDay(date) {
   const d = await api("/api/day/" + date);
@@ -2846,12 +2848,7 @@ $("btnCopyPrevStaff").onclick = async () => {
   if (hasNow && !confirm(`${E.prevProdDate} 인원·가동 구성으로 현재 인원을 교체할까요?\n(생산실적은 그대로 둡니다)`)) return;
   const d = await api("/api/day/" + E.prevProdDate);
   if (!d.staffing.length) return toast(`${E.prevProdDate}에는 인원 기록이 없습니다`);
-  E.staff = d.staffing.map(r => {
-    const m = mapStaffRow(r);
-    m.members.forEach(x => { if (!x.brk) x.brk = "60"; });   // 휴게 미입력 인원은 기본 60분
-    (m.agency || []).forEach(x => { if (!x.brk) x.brk = "60"; });
-    return { ...m, stop_reason: "" };
-  });
+  E.staff = d.staffing.map(r => ({ ...mapStaffRow(r), stop_reason: "" }));   // 휴게 기본 60은 mapStaffRow가 처리
   renderStaff();
   toast(`${E.prevProdDate} 인원 구성을 불러왔습니다`);
 };
