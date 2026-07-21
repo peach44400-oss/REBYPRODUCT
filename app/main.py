@@ -1069,6 +1069,18 @@ def version_newer(latest, current):
     return a > b
 
 
+def _nocache_request(url):
+    """GitHub 릴리스 자산 CDN(Fastly) 캐시 우회 — 새 릴리스 직후 엣지 노드가
+    같은 파일명(version.json·RebyStock.exe)의 이전 자산을 최대 수 분 캐싱한다.
+    쿼리 캐시버스터로 캐시 키를 바꾸고 no-cache 헤더를 함께 보낸다."""
+    import urllib.request
+    sep = "&" if "?" in url else "?"
+    busted = f"{url}{sep}_cb={int(time.time())}"
+    return urllib.request.Request(busted, headers={
+        "User-Agent": "martin_stock-updater",
+        "Cache-Control": "no-cache", "Pragma": "no-cache"})
+
+
 def fetch_manifest():
     """version.json 읽기 — {version, url, notes, sha256?}. 실패 시 예외."""
     import urllib.request
@@ -1077,7 +1089,7 @@ def fetch_manifest():
         raise RuntimeError("업데이트 주소가 설정되지 않았습니다 (update_url.txt)")
     if not url.lower().startswith("https://"):
         raise RuntimeError("업데이트 주소는 https 여야 합니다")
-    req = urllib.request.Request(url, headers={"User-Agent": "martin_stock-updater"})
+    req = _nocache_request(url)
     with urllib.request.urlopen(req, timeout=10) as r:
         data = json.loads(r.read().decode("utf-8"))
     if not data.get("version") or not data.get("url"):
@@ -1123,7 +1135,7 @@ def update_apply(request: Request):
     newexe = exe.with_name(exe.stem + "_업데이트" + exe.suffix)
     import urllib.request
     try:
-        req = urllib.request.Request(m["url"], headers={"User-Agent": "martin_stock-updater"})
+        req = _nocache_request(m["url"])   # exe도 CDN 캐시 우회 (새 릴리스 직후 이전 exe 방지)
         with urllib.request.urlopen(req, timeout=120) as r, open(newexe, "wb") as f:
             raw = r.read()
             f.write(raw)
