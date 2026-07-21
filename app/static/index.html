@@ -229,6 +229,16 @@
     font:inherit; font-size:12.5px; text-align:right; font-variant-numeric:tabular-nums;}
   .qe-input:focus{outline:none; border-color:#98670F;}
   .qe-input.saved{border-color:var(--ok); background:var(--ok-soft);}
+  /* 순서 변경(드래그·▲▼) 셀 */
+  .ord-cell{white-space:nowrap; display:flex; align-items:center; gap:2px;}
+  .ord-grip{cursor:grab; color:var(--muted); font-size:15px; padding:0 3px; user-select:none;}
+  .ord-grip:active{cursor:grabbing;}
+  .ord-btn{border:1px solid var(--line); background:var(--surface); border-radius:5px; cursor:pointer;
+    font-size:9px; line-height:1; width:18px; height:17px; color:var(--ink); padding:0;}
+  .ord-btn:hover:not(:disabled){background:var(--bg);}
+  .ord-btn:disabled{opacity:.3; cursor:default;}
+  tr.dragging{opacity:.4;}
+  tr[draggable="true"]{cursor:default;}
   #mQuickEdit.on{background:var(--ink); color:#fff; border-color:var(--ink);}
   /* 공용 날짜 선택 달력 */
   input.datepick{cursor:pointer;}

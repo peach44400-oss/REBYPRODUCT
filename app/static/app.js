@@ -3039,11 +3039,14 @@ function renderMasters() {
   $("mQuickEdit").classList.toggle("on", mQuick);
   $("mQuickEdit").textContent = mQuick ? "⚡ 빠른 편집 종료" : "⚡ 빠른 편집";
   const { full, list } = masterList();
+  // 순서 변경(드래그·▲▼)은 빠른 편집 + 검색/필터 해제 상태에서만 (전체 목록 기준이라야 위치가 명확)
+  const reorder = mQuick && qeMap && !mFilter && !mMissing;
   // 검색창 클릭 시 이 탭의 등록 항목 전체가 드롭다운으로 — 입력하면 자동 필터
   $("mFilterList").innerHTML = full.map(r => `<option value="${esc(r.name)}">`).join("");
   $("mFilterCnt").textContent = (mFilter || mMissing) ? `${list.length}건 / 전체 ${full.length}건` : "";
-  $("mHead").innerHTML = "<tr>" + cfg.cols.map(c => `<th>${c}</th>`).join("") + "<th></th></tr>";
-  $("mBody").innerHTML = list.map(r => {
+  $("mHead").innerHTML = "<tr>" + (reorder ? '<th style="width:64px">순서</th>' : "")
+    + cfg.cols.map(c => `<th>${c}</th>`).join("") + "<th></th></tr>";
+  $("mBody").innerHTML = list.map((r, i) => {
     const cells = cfg.row(r);
     if (mQuick && qeMap) {
       for (const [idx, f] of Object.entries(qeMap)) {
@@ -3054,16 +3057,77 @@ function renderMasters() {
           value="${Number(r[f]) > 0 ? r[f] : ""}" placeholder="${cfg.cols[idx]}">`;
       }
     }
-    return `<tr>${cells.map(c => `<td>${c}</td>`).join("")}
+    // 순서 셀: 드래그 핸들(⠿) + 위/아래 버튼
+    const handleCell = reorder ? `<td class="ord-cell">
+        <span class="ord-grip" data-grip title="드래그해서 위치 이동">⠿</span>
+        <button class="ord-btn" data-moveup="${r.id}" ${i === 0 ? "disabled" : ""} title="위로">▲</button>
+        <button class="ord-btn" data-movedn="${r.id}" ${i === list.length - 1 ? "disabled" : ""} title="아래로">▼</button></td>` : "";
+    return `<tr ${reorder ? `draggable="true" data-rid="${r.id}"` : ""}>${handleCell}${cells.map(c => `<td>${c}</td>`).join("")}
      <td style="white-space:nowrap"><button class="btn ghost sm" data-edit="${r.id}">수정</button><button class="btn ghost sm" style="color:var(--crit)" data-delm="${r.id}">삭제</button></td></tr>`;
   }).join("")
-    || `<tr><td colspan="${cfg.cols.length + 1}" class="auto">${mMissing ? "미등록 항목이 없습니다 👍" : "등록된 항목이 없습니다"}</td></tr>`;
+    || `<tr><td colspan="${cfg.cols.length + (reorder ? 2 : 1)}" class="auto">${mMissing ? "미등록 항목이 없습니다 👍" : "등록된 항목이 없습니다"}</td></tr>`;
   $("mHint").textContent = mQuick
-    ? "⚡ 빠른 편집: 노란 칸에 값을 입력하면 즉시 저장됩니다 (Tab/Enter로 다음 칸 이동)"
+    ? (reorder ? "⚡ 빠른 편집: 노란 칸=즉시 저장 · ⠿ 드래그 또는 ▲▼로 순서를 바꾸면 목록·검색이 그 순서를 따릅니다"
+       : "⚡ 빠른 편집: 노란 칸에 값을 입력하면 즉시 저장됩니다 · 순서를 바꾸려면 검색을 해제하세요")
     : cfg.hint;
   $("mAdd").textContent = "+ 새 " + cfg.label;
 }
 $("mQuickEdit").onclick = () => { mQuick = !mQuick; renderMasters(); };
+/* ── 제품/자재 순서 변경 (빠른 편집) ── M[mTab] 배열을 재배열 후 sort를 서버에 저장 ── */
+async function saveOrder() {
+  const arr = M[mTab] || [];
+  try {
+    await api(`/api/masters/${mTab}/reorder`, { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids: arr.map(r => r.id) }) });
+    arr.forEach((r, i) => { r.sort = i + 1; });   // 로컬 캐시도 갱신
+  } catch (e) { renderMasters(); }                // 실패 시 서버 순서로 되돌림
+}
+function moveRow(id, dir) {
+  const arr = M[mTab] || [];
+  const i = arr.findIndex(r => r.id === id);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= arr.length) return;
+  [arr[i], arr[j]] = [arr[j], arr[i]];
+  renderMasters(); saveOrder();
+}
+// 드래그로 위치 이동
+let dragId = null;
+$("mBody").addEventListener("dragstart", e => {
+  const tr = e.target.closest("tr[data-rid]"); if (!tr) return;
+  dragId = +tr.dataset.rid;
+  e.dataTransfer.effectAllowed = "move";
+  tr.classList.add("dragging");
+});
+$("mBody").addEventListener("dragend", e => {
+  const tr = e.target.closest("tr"); if (tr) tr.classList.remove("dragging");
+  dragId = null;
+});
+$("mBody").addEventListener("dragover", e => {
+  if (dragId == null) return;
+  e.preventDefault(); e.dataTransfer.dropEffect = "move";
+});
+$("mBody").addEventListener("drop", e => {
+  if (dragId == null) return;
+  const tr = e.target.closest("tr[data-rid]"); if (!tr) return;
+  e.preventDefault();
+  const toId = +tr.dataset.rid;
+  if (toId === dragId) return;
+  const arr = M[mTab] || [];
+  const from = arr.findIndex(r => r.id === dragId);
+  const dragged = arr.splice(from, 1)[0];
+  const to = arr.findIndex(r => r.id === toId);
+  arr.splice(to, 0, dragged);   // 대상 위치에 끼워 넣기
+  dragId = null;
+  renderMasters(); saveOrder();
+});
+// ▲▼ 버튼
+$("mBody").addEventListener("click", e => {
+  const up = e.target.closest("[data-moveup]");
+  if (up) { moveRow(+up.dataset.moveup, -1); return; }
+  const dn = e.target.closest("[data-movedn]");
+  if (dn) { moveRow(+dn.dataset.movedn, 1); return; }
+});
 // 빠른 편집 저장 — 입력 확정(change) 시 해당 필드만 PUT, 표 재렌더 없이 제자리 반영
 $("mBody").addEventListener("change", async e => {
   const inp = e.target.closest(".qe-input"); if (!inp) return;

@@ -40,7 +40,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.2.0"     # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.3.0"     # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -1594,6 +1594,28 @@ def mat_history(mid: int, limit: int = 40):
 
 
 # ── 기준정보 ─────────────────────────────────
+
+
+@app.post("/api/masters/{mtype}/reorder")
+def masters_reorder(request: Request, mtype: str, body: dict):
+    """빠른 편집에서 드래그/이동한 순서를 sort 컬럼에 저장 — 목록·검색이 이 순서를 따른다.
+    (미들웨어가 guest의 POST를 이미 차단)"""
+    table = "material" if mtype in ("raw", "sub") else mtype
+    if table not in ("product", "material", "partner", "staff", "line"):
+        raise HTTPException(400, "순서 변경을 지원하지 않는 항목입니다")
+    ids = [int(x) for x in (body.get("ids") or [])]
+    if not ids:
+        raise HTTPException(400, "순서 목록이 비어 있습니다")
+    con = connect()
+    try:
+        for i, mid in enumerate(ids, 1):
+            con.execute(f"UPDATE {table} SET sort=? WHERE id=?", (i, mid))
+        audit(con, "reorder_" + mtype, f"{len(ids)}건 순서 변경")
+        bump_masters()
+        con.commit()
+        return {"ok": True, "count": len(ids)}
+    finally:
+        con.close()
 
 
 @app.get("/api/masters/{mtype}")

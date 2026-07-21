@@ -1,5 +1,5 @@
 {
-  "version": "1.2.0",
+  "version": "1.3.0",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· 배합비 탭에 [🗑 배합비 삭제] 추가 — 제품별 배합비를 통째로 삭제(자재는 그대로)"
+  "notes": "· 기준정보 [빠른 편집]에서 제품·자재 순서를 드래그(⠿)·▲▼로 직접 변경\n· 바꾼 순서를 목록·검색이 그대로 따릅니다"
 }
