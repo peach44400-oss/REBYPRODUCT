@@ -2490,7 +2490,8 @@ function wireEntryTable(tbodyId, arr, rerender, liveUpdate) {
           w: (last && last.w) || row.agency_wage || "",     // 시급·업체·성별 기본값 = 직전 용역
           g: (last && last.g) || "", pid: (last && last.pid) || null });
       } else {
-        row.members = (row.members || []).concat({ id: +e.target.value, h: row.work_hours || "" });
+        row.members = (row.members || []).concat({ id: +e.target.value, h: row.work_hours || "",
+          start: "", end: "", brk: "60" });   // 휴게 기본 60분 (점심)
         row.headcount = row.members.length;
       }
       rerender();
@@ -2805,7 +2806,11 @@ $("btnCopyPrevStaff").onclick = async () => {
   if (hasNow && !confirm(`${E.prevProdDate} 인원·가동 구성으로 현재 인원을 교체할까요?\n(생산실적은 그대로 둡니다)`)) return;
   const d = await api("/api/day/" + E.prevProdDate);
   if (!d.staffing.length) return toast(`${E.prevProdDate}에는 인원 기록이 없습니다`);
-  E.staff = d.staffing.map(r => ({ ...mapStaffRow(r), stop_reason: "" }));
+  E.staff = d.staffing.map(r => {
+    const m = mapStaffRow(r);
+    m.members.forEach(x => { if (!x.brk) x.brk = "60"; });   // 휴게 미입력 인원은 기본 60분
+    return { ...m, stop_reason: "" };
+  });
   renderStaff();
   toast(`${E.prevProdDate} 인원 구성을 불러왔습니다`);
 };
@@ -5540,6 +5545,7 @@ let padSkipScrollHide = false;   // Tab 이동 중 focus 스크롤로 패드가 
 function padEligible(el) {
   if (!(el instanceof HTMLInputElement)) return false;
   if (el.type === "date") return false;
+  if (el.type === "time") return false;   // 출퇴근 시각칸은 브라우저 시계 선택기만 사용 (키패드 겹침 방지)
   if (el.classList.contains("datepick")) return false;   // 날짜칸은 달력 팝업 사용
   if (el.dataset.f === "order_date" || el.dataset.f === "note") return false;
   if (el.hasAttribute("list")) return false;   // 🔍 검색칸(자동완성 datalist)은 글자 입력 — 키패드 제외
