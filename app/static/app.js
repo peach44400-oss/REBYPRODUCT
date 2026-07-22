@@ -2714,7 +2714,10 @@ $("btnSaveDay").onclick = async () => {           // 생산 입력 탭
       agency_count: (r.agency || []).length,
       agency_hours: (r.agency || []).reduce((s, a) => s + (Number(a.h) || 0), 0),
       agency_wage: r.agency_wage || 0 })),
-    usage: E.usage.filter(u => u.material_id && u.qty),   // 제품 없는 기타 사용도 저장
+    // 제품별 행은 사용량이 있어야 저장 (배합비로 자동 재생성되므로 0 저장 불필요 — 실측 추정 왜곡 방지)
+    // 기타 사용(제품 없음) 행은 사용량이 비어도 0으로 저장 — 저장 후 다시 열어도 행이 남게
+    usage: E.usage.filter(u => u.material_id && (u.qty || !u.product_id))
+      .map(u => ({ ...u, qty: Number(String(u.qty ?? "").replace(/,/g, "")) || 0 })),
   };
   showSaveSum(body, "생산 입력");   // 저장 전 요약 확인 → 확인 시 저장
 };
@@ -2984,9 +2987,10 @@ const MCOLS = {
         esc(r.stock_date || "—"), chip(r.status)];
     },
     hint: "재고일수 = 현재고 ÷ 최근 30일 일평균 사용량 · 생산가능수량 = 현재고 × 단위당 수량 · 횟수 = 수량 ÷ 1회 소요량 (환산계수는 7/7 실사 엑셀에서 갱신됨)" },
-  partner: { label: "거래처", cols: ["거래처명", "유형", "연락처", "담당자", "비고", "상태"],
-    row: r => [B(r.name), `<span class="chip cat">${esc(r.type)}</span>`, esc(r.phone || "—"), esc(r.contact || "—"), esc(r.note || "—"), chip(r.status)],
-    hint: "중지 상태 거래처는 일일 입력 드롭다운에서 숨겨집니다" },
+  partner: { label: "거래처", cols: ["거래처명", "유형", "사업자번호", "대표자", "전화", "모바일", "담당자", "상태"],
+    row: r => [B(r.name), `<span class="chip cat">${esc(r.type)}</span>`, esc(r.biz_no || "—"), esc(r.ceo || "—"),
+      esc(r.phone || "—"), esc(r.mobile || "—"), esc(r.contact || "—"), chip(r.status)],
+    hint: "중지 상태 거래처는 일일 입력 드롭다운에서 숨겨집니다 · [ERP 가져오기]로 거래처등록(ESA001M) 엑셀을 그대로 올릴 수 있습니다" },
   staff: { label: "인원", cols: ["이름", "구분", "직책", "담당 공정", "시급(원)", "입사일", "상태"],
     row: r => [B(r.name), esc(r.kind), esc(r.position || "—"), esc(r.process || "—"), r.wage == null ? "—" : NF(r.wage), esc(r.join_date || "—"), chip(r.status)],
     hint: "일일 입력의 투입 인원 선택 목록 · 노무비 계산 기준" },
@@ -3137,6 +3141,7 @@ function renderMasters() {
   $("mQuickEdit").style.display = (qeMap && ROLE !== "guest") ? "" : "none";
   $("mImport").style.display = (qeMap && ROLE === "admin") ? "" : "none";
   $("mPackSet").style.display = (mTab === "sub" && ROLE === "admin") ? "" : "none";
+  $("mErpImport").style.display = (mTab === "partner" && ROLE === "admin") ? "" : "none";
   $("mQuickEdit").classList.toggle("on", mQuick);
   $("mQuickEdit").textContent = mQuick ? "⚡ 빠른 편집 종료" : "⚡ 빠른 편집";
   const { full, list } = masterList();
@@ -3245,6 +3250,30 @@ $("mBody").addEventListener("change", async e => {
     renderMHealth();   // 배너 건수만 갱신 (표는 그대로 — 포커스 유지)
   } catch (err) { /* api()가 오류 토스트 표시 */ }
 });
+/* 거래처 엑셀 받기 — ERP(ESA001M.xlsx)·앱 [엑셀(CSV)] 내보내기 양식 모두 지원 (admin).
+   1차 미리보기(건수 계산)로 사용자에게 추가 여부를 확인받은 뒤 2차 호출로 실제 저장한다. */
+$("mErpImport").onclick = () => $("mErpFile").click();
+$("mErpFile").addEventListener("change", async e => {
+  const f = e.target.files[0]; e.target.value = "";
+  if (!f) return;
+  const b64 = await new Promise((res, rej) => {
+    const rd = new FileReader(); rd.onload = () => res(rd.result); rd.onerror = rej; rd.readAsDataURL(f);
+  });
+  const post = apply => api("/api/partners/import", { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ data: b64, apply }) });
+  try {
+    const pv = await post(false);   // 1차: 미리보기 (저장 없음)
+    if (!pv.added && !pv.updated)
+      return toast(`추가할 신규 거래처가 없습니다 — 전부 기존과 중복 (${pv.total}건 확인)`);
+    const sample = (pv.new_names || []).join(", ") + (pv.added > (pv.new_names || []).length ? " …" : "");
+    if (!confirm(`엑셀 거래처를 추가할까요?\n\n· 신규 등록: ${pv.added}건${sample ? ` (${sample})` : ""}\n· 기존 거래처 빈 항목 채움: ${pv.updated}건\n· 중복 제외: ${pv.skipped}건`)) return;
+    const r = await post(true);     // 2차: 실제 저장
+    toast(`📥 엑셀 받기 완료 — 신규 ${r.added} · 채움 ${r.updated} · 중복 제외 ${r.skipped}`);
+    await reloadMaster("partner");
+    renderMasters();
+  } catch (err) { /* api()가 오류 토스트 표시 */ }
+});
+
 /* CSV 일괄 가져오기 — 이름으로 매칭해 단가/소비일/안전재고/시급 갱신 (admin) */
 $("mImport").onclick = () => $("mImportFile").click();
 $("mImportFile").addEventListener("change", async e => {
@@ -4095,7 +4124,9 @@ const MFORMS = {
     ["stock_set", "현재고 (아래 기준일의 실사 기록으로 저장됩니다)", "num"], ["stock_date", "기준일 (이 날짜에 기록)", "date"],
     ["prod_mult", "단위당 수량 (생산가능 환산)", "num"], ["prod_per", "1회 생산 소요량", "num"],
     ["status", "상태", "sel", ["사용중", "중단"]], ["note", "비고", "full"]],
-  partner: [["name", "거래처명 *"], ["type", "유형 — 선택 또는 직접 입력 (예: 기부)", "combo", ["판매처", "자재 공급처", "용역업체"]], ["phone", "연락처"],
+  partner: [["name", "거래처명 *"], ["type", "유형 — 선택 또는 직접 입력 (예: 기부)", "combo", ["판매처", "자재 공급처", "용역업체"]],
+    ["biz_no", "사업자등록번호"], ["ceo", "대표자명"],
+    ["phone", "전화"], ["mobile", "모바일"],
     ["contact", "담당자"], ["status", "상태", "sel", ["활성", "중지"]], ["note", "비고", "full"]],
   staff: [["name", "이름 *"], ["kind", "구분", "sel", ["정직원", "계약직", "용역", "일용직", "아르바이트", "파견"]],
     ["position", "직책", "combo", []], ["process", "담당 공정"],

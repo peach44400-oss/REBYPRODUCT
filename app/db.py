@@ -66,7 +66,10 @@ CREATE TABLE IF NOT EXISTS partner (
   phone TEXT DEFAULT '',
   contact TEXT DEFAULT '',
   note TEXT DEFAULT '',
-  status TEXT DEFAULT '활성'            -- 활성/중지
+  status TEXT DEFAULT '활성',           -- 활성/중지
+  biz_no TEXT DEFAULT '',              -- 사업자등록번호 (ERP 가져오기 매칭 키)
+  ceo TEXT DEFAULT '',                 -- 대표자명
+  mobile TEXT DEFAULT ''               -- 모바일
 );
 
 CREATE TABLE IF NOT EXISTS staff (
@@ -543,6 +546,11 @@ def init_db() -> None:
     micols = [r[1] for r in con.execute("PRAGMA table_info(material_in)")]
     if "made_date" not in micols:
         con.execute("ALTER TABLE material_in ADD COLUMN made_date TEXT DEFAULT ''")
+    # 거래처: 사업자등록번호·대표자·모바일 (ERP 거래처등록 엑셀 가져오기)
+    pcols = [r[1] for r in con.execute("PRAGMA table_info(partner)")]
+    for col in ("biz_no", "ceo", "mobile"):
+        if col not in pcols:
+            con.execute(f"ALTER TABLE partner ADD COLUMN {col} TEXT DEFAULT ''")
     # 용역도 출근·퇴근·휴게 입력 지원 (정직원 staffing_member와 동일)
     if "start_time" not in sacols:
         con.execute("ALTER TABLE staffing_agency ADD COLUMN start_time TEXT DEFAULT ''")

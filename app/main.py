@@ -40,7 +40,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.7.0"     # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.8.0"     # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -134,7 +134,7 @@ MASTER_TABLES = {
                             "shelf_days", "safety_stock", "batch_yield", "status", "note"]),
     "material": ("material", ["kind", "name", "spec", "unit", "pack_count", "pack_set", "unit_price", "partner_id",
                               "safety_stock", "prod_mult", "prod_per", "status", "note"]),
-    "partner": ("partner", ["name", "type", "phone", "contact", "note", "status"]),
+    "partner": ("partner", ["name", "type", "phone", "contact", "note", "status", "biz_no", "ceo", "mobile"]),
     "staff": ("staff", ["name", "kind", "position", "process", "wage", "join_date", "phone", "status", "note"]),
     "line": ("line", ["name", "process", "std_hours", "parent_id", "note", "status"]),
 }
@@ -1610,6 +1610,150 @@ def mat_history(mid: int, limit: int = 40):
         con.close()
 
 
+# ── 거래처 엑셀 받기 (ERP ESA001M.xlsx / 앱 엑셀 내보내기 CSV) ──────────
+# 열 이름 별칭 — ERP 양식·앱 내보내기 양식 어느 쪽이든 헤더 이름으로 매핑
+PARTNER_COL_ALIAS = {
+    "name": ("거래처명",),
+    "biz": ("거래처코드", "사업자번호", "사업자등록번호"),
+    "ceo": ("대표자명", "대표자"),
+    "phone": ("전화", "연락처"),
+    "mobile": ("모바일",),
+    "type": ("유형",),
+    "contact": ("담당자",),
+    "status": ("상태",),
+    "use": ("사용구분",),
+}
+
+
+def _parse_partner_file(content: bytes):
+    """xlsx(ERP)·csv(앱 내보내기) → [{name, biz, ceo, phone, mobile, type, contact, status}].
+    헤더행은 '거래처명'이 있는 행을 자동 탐색."""
+    grid = []
+    if content[:2] == b"PK":   # xlsx
+        import io
+        import openpyxl
+        try:
+            wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
+        except Exception:
+            raise HTTPException(400, "엑셀(.xlsx) 파일을 읽지 못했습니다 — 원본 그대로 올려주세요")
+        for r in wb.worksheets[0].iter_rows(values_only=True):
+            grid.append([str(c).strip() if c is not None else "" for c in r])
+    else:                      # csv (utf-8 BOM / cp949 모두 허용)
+        import csv
+        import io
+        text = None
+        for enc in ("utf-8-sig", "cp949", "utf-8"):
+            try:
+                text = content.decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        if text is None:
+            raise HTTPException(400, "CSV 인코딩을 읽지 못했습니다")
+        for r in csv.reader(io.StringIO(text)):
+            grid.append([str(c).strip() for c in r])
+    # 헤더행: '거래처명' 열이 있는 첫 행
+    hdr_i, col = -1, {}
+    for i, cells in enumerate(grid[:10]):
+        if any(c == "거래처명" for c in cells):
+            hdr_i = i
+            for key, aliases in PARTNER_COL_ALIAS.items():
+                for j, h in enumerate(cells):
+                    if h in aliases:
+                        col[key] = j
+                        break
+            break
+    if hdr_i < 0 or "name" not in col:
+        raise HTTPException(400, "헤더행(거래처명 …)을 찾지 못했습니다 — ERP 거래처등록(ESA001M) 또는 앱 [엑셀(CSV)] 양식을 올려주세요")
+
+    def cell(r, key):
+        j = col.get(key)
+        v = r[j] if j is not None and j < len(r) else ""
+        v = str(v).strip()
+        return "" if v in ("—", "None") else v   # 내보내기의 빈값 표시(—)는 빈값으로
+
+    out = []
+    for r in grid[hdr_i + 1:]:
+        if not cell(r, "name"):
+            continue
+        out.append({k: cell(r, k) for k in PARTNER_COL_ALIAS})
+    return out
+
+
+@app.post("/api/partners/import")
+def partners_import(request: Request, body: dict):
+    """거래처 엑셀 받기 — ERP(ESA001M.xlsx)든 앱 [엑셀(CSV)] 내보내기든 그대로 업로드.
+    거래처코드/사업자번호 열은 biz_no로 저장. 중복 판정: ①거래처명 ②사업자번호 —
+    있으면 빈 필드만 채우고(기존 값 보존) 없으면 신규 등록.
+    body.apply=false면 실제 저장 없이 건수만 미리 계산(확인창용)."""
+    require_admin(request)
+    import base64 as b64
+    raw = body.get("data") or ""
+    if "," in raw[:100]:                       # dataURL 형식이면 앞부분 제거
+        raw = raw.split(",", 1)[1]
+    try:
+        content = b64.b64decode(raw)
+    except Exception:
+        raise HTTPException(400, "파일 데이터를 읽지 못했습니다")
+    items = _parse_partner_file(content)
+    apply_ = bool(body.get("apply"))
+
+    def norm_biz(v):   # 숫자·하이픈만 (엑셀이 숫자로 읽은 값도 문자열로)
+        return "".join(ch for ch in str(v) if ch.isdigit() or ch == "-")
+
+    con = connect()
+    try:
+        existing = rows(con.execute("SELECT id, name, biz_no FROM partner"))
+        by_name = {r["name"].strip(): r["id"] for r in existing if r["name"]}
+        by_biz = {norm_biz(r["biz_no"]): r["id"] for r in existing if (r["biz_no"] or "").strip()}
+        added = updated = skipped = 0
+        new_names = []
+        for it in items:
+            name, biz = it["name"], norm_biz(it["biz"])
+            pid = by_name.get(name) or (by_biz.get(biz) if biz else None)
+            if pid == -1:   # 미리보기 중 같은 파일 안 중복 행 — 1건만 신규로 집계
+                skipped += 1
+                continue
+            if pid:   # 기존 거래처 — 빈 필드만 채움, 이름/유형/상태/비고는 유지
+                cur = con.execute("SELECT biz_no, ceo, phone, mobile, contact FROM partner WHERE id=?", (pid,)).fetchone()
+                sets, vals = [], []
+                for f, nv in (("biz_no", biz), ("ceo", it["ceo"]), ("phone", it["phone"]),
+                              ("mobile", it["mobile"]), ("contact", it["contact"])):
+                    if nv and not (cur[f] or "").strip():
+                        sets.append(f + "=?"); vals.append(nv)
+                if sets:
+                    if apply_:
+                        con.execute(f"UPDATE partner SET {', '.join(sets)} WHERE id=?", (*vals, pid))
+                    updated += 1
+                else:
+                    skipped += 1
+            else:     # 신규 등록 — 유형 열이 있으면 그대로, 없으면 '자재 공급처'(판매 드롭다운 보호)
+                status = it["status"] or ("중지" if it["use"].upper() == "NO" else "활성")
+                if apply_:
+                    cur = con.execute("""INSERT INTO partner(name, type, phone, contact, note, status, biz_no, ceo, mobile)
+                        VALUES(?,?,?,?,?,?,?,?,?)""",
+                                      (name, it["type"] or "자재 공급처", it["phone"], it["contact"], "",
+                                       status, biz, it["ceo"], it["mobile"]))
+                    by_name[name] = cur.lastrowid
+                    if biz:
+                        by_biz[biz] = cur.lastrowid
+                else:
+                    by_name[name] = -1   # 미리보기에서도 파일 내 중복은 1건으로
+                    if biz:
+                        by_biz[biz] = -1
+                added += 1
+                if len(new_names) < 5:
+                    new_names.append(name)
+        if apply_:
+            audit(con, "import_partner", f"거래처 엑셀 받기 — 신규 {added} · 채움 {updated} · 변동없음 {skipped}")
+            bump_masters()
+            con.commit()
+        return {"ok": True, "applied": apply_, "added": added, "updated": updated,
+                "skipped": skipped, "total": len(items), "new_names": new_names}
+    finally:
+        con.close()
+
+
 # ── 기준정보 ─────────────────────────────────
 
 
@@ -2805,15 +2949,18 @@ def day_save(request: Request, date: str, body: dict):
         if "usage" in body:
             con.execute("DELETE FROM material_usage WHERE date=?", (date,))
             for r in body.get("usage", []):
-                if not r.get("material_id") or not r.get("qty"):
-                    continue   # 제품은 없어도 됨 (기타 사용 — 생산 외 용도)
-                if float(r["qty"]) < 0:
+                # 제품별 행은 사용량 필수 (배합비로 자동 재생성 — 0 저장 시 실측 추정 왜곡)
+                # 기타 사용(제품 없음) 행은 사용량 미입력도 0으로 저장 (행 유지)
+                if not r.get("material_id") or (r.get("product_id") and not r.get("qty")):
+                    continue
+                q = float(r.get("qty") or 0)
+                if q < 0:
                     nm = con.execute("SELECT name FROM material WHERE id=?", (r["material_id"],)).fetchone()
                     raise HTTPException(400, f"'{nm['name'] if nm else r['material_id']}' 자재 사용량에 "
                                         "음수는 저장할 수 없습니다")
                 con.execute("""INSERT OR REPLACE INTO material_usage
                     (date, material_id, product_id, qty, block) VALUES(?,?,?,?,?)""",
-                            (date, r["material_id"], r.get("product_id"), float(r["qty"]),
+                            (date, r["material_id"], r.get("product_id"), q,
                              r.get("block") or ""))
         if touch_mat:
             # 자동 반영: 실사(수동 자재행)가 없는 자재는 전일재고 + 입고 − 사용 합계로 계산
