@@ -180,6 +180,7 @@ CREATE TABLE IF NOT EXISTS material_in (
   date TEXT NOT NULL,
   material_id INTEGER NOT NULL REFERENCES material(id),
   qty REAL NOT NULL DEFAULT 0,
+  made_date TEXT DEFAULT '',           -- 제조일자
   expiry TEXT DEFAULT '',              -- 유통기한
   note TEXT DEFAULT ''
 );
@@ -538,6 +539,10 @@ def init_db() -> None:
         con.execute("ALTER TABLE staffing_agency ADD COLUMN gender TEXT DEFAULT ''")
     if "partner_id" not in sacols:
         con.execute("ALTER TABLE staffing_agency ADD COLUMN partner_id INTEGER")
+    # 원부자재 입고 제조일자 (유통기한과 동일 구조)
+    micols = [r[1] for r in con.execute("PRAGMA table_info(material_in)")]
+    if "made_date" not in micols:
+        con.execute("ALTER TABLE material_in ADD COLUMN made_date TEXT DEFAULT ''")
     # 용역도 출근·퇴근·휴게 입력 지원 (정직원 staffing_member와 동일)
     if "start_time" not in sacols:
         con.execute("ALTER TABLE staffing_agency ADD COLUMN start_time TEXT DEFAULT ''")

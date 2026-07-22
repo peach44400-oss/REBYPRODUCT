@@ -40,7 +40,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.6.1"     # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.7.0"     # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -1598,8 +1598,12 @@ def mat_history(mid: int, limit: int = 40):
         for r in con.execute("""SELECT date, GROUP_CONCAT(expiry, ', ') e FROM material_in
             WHERE material_id=? AND expiry!='' GROUP BY date""", (mid,)):
             in_expiry[r["date"]] = r["e"]
+        in_made = {}     # 날짜별 입고 제조일자
+        for r in con.execute("""SELECT date, GROUP_CONCAT(made_date, ', ') e FROM material_in
+            WHERE material_id=? AND made_date!='' GROUP BY date""", (mid,)):
+            in_made[r["date"]] = r["e"]
         return {"name": mat["name"], "unit": mat["unit"], "kind": mat["kind"], "rows": hist,
-                "in_expiry": in_expiry,
+                "in_expiry": in_expiry, "in_made": in_made,
                 "last_in": dict(last_in) if last_in else None,
                 "last_use": dict(last_use) if last_use else None}
     finally:
@@ -2774,9 +2778,10 @@ def day_save(request: Request, date: str, body: dict):
                     nm = con.execute("SELECT name FROM material WHERE id=?", (r["material_id"],)).fetchone()
                     raise HTTPException(400, f"'{nm['name'] if nm else r['material_id']}' 입고량에 "
                                         "음수는 저장할 수 없습니다")
-                con.execute("""INSERT INTO material_in(date, material_id, qty, expiry, note)
-                    VALUES(?,?,?,?,?)""",
-                            (date, r["material_id"], q, r.get("expiry") or "", r.get("note") or ""))
+                con.execute("""INSERT INTO material_in(date, material_id, qty, made_date, expiry, note)
+                    VALUES(?,?,?,?,?,?)""",
+                            (date, r["material_id"], q, r.get("made") or "",
+                             r.get("expiry") or "", r.get("note") or ""))
                 in_totals[r["material_id"]] = in_totals.get(r["material_id"], 0.0) + q
         else:  # 이 저장에 입고가 없으면 기존 저장분 사용
             for r in con.execute("SELECT material_id, SUM(qty) q FROM material_in WHERE date=? GROUP BY material_id", (date,)):

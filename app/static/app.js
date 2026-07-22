@@ -1064,11 +1064,11 @@ async function loadDay(date) {
   E.mat = d.materials.filter(r => r.src !== "auto")
     .map(r => ({ material_id: r.material_id, prev_qty: r.prev_qty, in_qty: r.in_qty || "", real_qty: r.real_qty, order_date: r.order_date || "", order_qty: r.order_qty || "" }));
   E.autoMat = d.materials.filter(r => r.src === "auto");
-  E.matIn = (d.mat_in || []).map(r => ({ material_id: r.material_id, qty: r.qty, expiry: r.expiry || "", note: r.note || "" }));
+  E.matIn = (d.mat_in || []).map(r => ({ material_id: r.material_id, qty: r.qty, made: r.made_date || "", expiry: r.expiry || "", note: r.note || "" }));
   // 발주됐는데 아직 입고 안 된 자재 → 입고 카드에 자동 제안 (입고량 비워두면 저장 안 됨)
   (d.pending_orders || []).forEach(o => {
     if (!E.matIn.some(x => x.material_id === o.material_id))
-      E.matIn.push({ material_id: o.material_id, qty: "", expiry: "",
+      E.matIn.push({ material_id: o.material_id, qty: "", made: "", expiry: "",
         note: `발주 ${o.rec_date.slice(5)}${o.order_qty ? " · " + NF(o.order_qty) + (o.unit || "") : ""}${o.order_date ? " · " + o.order_date : ""}` });
   });
   E.lots = d.lots || [];
@@ -2176,10 +2176,11 @@ function renderMatIn() {
       <td>${matSel(r.material_id, 'data-f="material_id"', NEWMAT_OPTS)}</td>
       <td class="auto">${esc(m.unit || "")}</td>
       <td class="r"><input class="mini-input num" data-f="qty" value="${r.qty ?? ""}"></td>
+      <td><input class="mini-input datepick" type="text" readonly data-f="made" value="${esc(r.made || "")}" placeholder="📅 제조일자" style="width:135px"></td>
       <td><input class="mini-input datepick" type="text" readonly data-f="expiry" value="${esc(r.expiry || "")}" placeholder="📅 유통기한" style="width:135px"></td>
       <td><input class="mini-input w num" style="text-align:left" data-f="note" value="${esc(r.note || "")}" placeholder="메모 (공급처 등)"></td>
       <td><button class="btn ghost sm" data-del>삭제</button></td></tr>`;
-  }).join("") || `<tr><td colspan="6" class="auto">+ 입고 행 추가 — 재고 실사 카드에 발주량·발주일을 적어두면 입고 전까지 여기 자동으로 나타납니다</td></tr>`;
+  }).join("") || `<tr><td colspan="7" class="auto">+ 입고 행 추가 — 재고 실사 카드에 발주량·발주일을 적어두면 입고 전까지 여기 자동으로 나타납니다</td></tr>`;
 }
 // 이날 기록된 제품별 사용 합 (실사 사용량과의 차이 = 로스/조정)
 function usageSumOf(mid) {
@@ -2449,9 +2450,9 @@ wireQuickAdd("qaMat", "qaMaterials", () => M.raw.concat(M.sub), hit => {
   renderMat();
 }, "addMat", () => { E.mat.push({ material_id: null, prev_qty: "", in_qty: "", real_qty: "", order_date: "", order_qty: "" }); renderMat(); });
 wireQuickAdd("qaMatIn", "qaMaterials", () => M.raw.concat(M.sub), hit => {
-  E.matIn.push({ material_id: hit.id, qty: "", expiry: "", note: "" });
+  E.matIn.push({ material_id: hit.id, qty: "", made: "", expiry: "", note: "" });
   renderMatIn(); renderMat();
-}, "addMatIn", () => { E.matIn.push({ material_id: null, qty: "", expiry: "", note: "" }); renderMatIn(); });
+}, "addMatIn", () => { E.matIn.push({ material_id: null, qty: "", made: "", expiry: "", note: "" }); renderMatIn(); });
 // 기록조회·분석의 제품 검색창도 클릭 시 전체 제품 드롭다운 (datalist 공유, 포커스 때 최신화)
 ["lkSearch", "anaRotFilter"].forEach(id => {
   $(id).addEventListener("focus", () => {
@@ -3060,7 +3061,7 @@ const MHEALTH = {
 const QE_COLS = {
   product: { 3: "unit_price", 4: "shelf_days", 5: "safety_stock" },
   raw: { 4: "unit_price", 5: "safety_stock" },
-  sub: { 3: "unit_price", 4: "safety_stock" },
+  sub: { 2: "pack_count", 3: "unit_price", 4: "safety_stock" },
   staff: { 3: "wage" },
 };
 let mQuick = false;      // 빠른 편집 모드
@@ -3591,6 +3592,8 @@ async function loadBom(pid) {
   BOM.rows = (await api("/api/bom/" + pid)).map(r => ({
     material_id: r.material_id, qty_per_unit: r.qty_per_unit, unit: r.unit || "g",
     block: r.block || "", batch_qty: r.batch_qty || 0, block_yield: r.block_yield || 0,
+    // 납품처 지정도 함께 실어야 재열람 후 저장 시 지정이 지워지지 않는다
+    partner_id: r.partner_id || null, partner_ids: r.partner_ids || "",
     note: r.note || "" }));
   BOM.w = {};   // 블록별 분할 무게(1개당 g) — 전체무게 ÷ 수율로 역산해 초기 표시
   BOM.loadedFor = pid;
@@ -3772,9 +3775,11 @@ function renderBomRows() {
   const rowHtml = (r, i) => {
     const m = materialById(r.material_id) || {};
     const ry = rowYield(r);
-    // 1배합당 값이 있으면 그대로, 없고 1개당만 있으면(옛 데이터·실측 계산) 역산해 보여준다
+    // 1배합당 값이 있으면 그대로, 없고 1개당만 있으면(옛 데이터·실측 계산) 역산해 보여준다.
+    // 저장된 0은 '0'으로 표시 (빈칸이면 저장 안 된 걸로 오해) — 새로 추가한 행(batch_qty="")만 빈칸
     const pb = Number(r.batch_qty) > 0 ? Math.round(Number(r.batch_qty) * 10) / 10
-      : (r.qty_per_unit && ry > 0 ? Math.round(r.qty_per_unit * ry * 10) / 10 : "");
+      : (r.qty_per_unit && ry > 0 ? Math.round(r.qty_per_unit * ry * 10) / 10
+      : (r.batch_qty === "" || r.batch_qty == null ? "" : 0));
     const qtyCells = isCountMat(m)
       ? `<td class="r auto" colspan="3" style="text-align:left">📦 개수 자재 · 개입수 ${NF(m.pack_count)} → 소모 = 생산수량 ÷ 개입수 (자동)</td>`
       : `<td class="r"><input class="mini-input num w" data-bf="per_batch" value="${pb}"
@@ -4285,9 +4290,10 @@ async function loadLookup(date) {
     .map(r => `<tr><td><b>${esc(r.name)}</b></td><td class="r">${NF(r.prev_qty)}</td>
       <td class="r">${NF(r.in_qty)}</td><td class="r">${NF(r.real_qty)}</td>
       <td class="r"><button class="uselink num" onclick="openUseLk(${r.material_id},'${date}')">${NF(r.used_qty)}</button></td></tr>`).join("");
-  // 원부자재 입고 (유통기한 포함)
+  // 원부자재 입고 (제조일자·유통기한 포함)
   const inRows = (d.mat_in || []).map(r => `<tr><td><b>${esc(r.name)}</b></td>
     <td class="r">${NF(r.qty)} ${esc(r.unit || "")}</td>
+    <td class="auto">${r.made_date || "—"}</td>
     <td class="auto">${r.expiry || "—"}</td><td class="auto">${esc(r.note || "")}</td></tr>`).join("");
   // 인원·가동 — 같은 라인(공정 여럿)은 한 줄로 묶고, 클릭하면 공정별로 펼침(드롭다운)
   const hcOf = r => (Number(r.headcount) || 0) + (Number(r.agency_count) || 0);
@@ -4341,7 +4347,7 @@ async function loadLookup(date) {
     ${d.shipment.length ? sec("🚚 완제품 출고",
       tbl('<th>제품명</th><th>거래처</th><th class="r">출고량</th><th>생산LOT</th>', shipRows)) : ""}
     ${sec("📥 원부자재 입고", inRows
-      ? tbl('<th>자재명</th><th class="r">입고량</th><th>유통기한</th><th>비고</th>', inRows) : "")}
+      ? tbl('<th>자재명</th><th class="r">입고량</th><th>제조일자</th><th>유통기한</th><th>비고</th>', inRows) : "")}
     ${matRows ? sec("🧾 원부자재 사용 상위 15",
       tbl('<th>자재명</th><th class="r">전일</th><th class="r">입고</th><th class="r">실재고</th><th class="r">사용량</th>', matRows)) : ""}
     ${sec("👷 인원 · 가동", stRows
@@ -4964,7 +4970,9 @@ async function openMatHistory(mid) {
     <tbody class="num">${d.rows.map(r => `<tr ${r.in_qty > 0 ? 'style="background:var(--ok-soft)"' : ""}>
       <td>${r.date}${r.src === "auto" ? ' <span class="chip cat">자동</span>' : ""}</td>
       <td class="r">${NF(r.prev_qty)}</td>
-      <td class="r" ${r.in_qty > 0 ? 'style="color:var(--ok); font-weight:700"' : ""}>${r.in_qty ? "+" + NF(r.in_qty) + (d.in_expiry && d.in_expiry[r.date] ? ` <span class="auto" style="font-weight:400">(유통 ${esc(d.in_expiry[r.date])})</span>` : "") : "·"}</td>
+      <td class="r" ${r.in_qty > 0 ? 'style="color:var(--ok); font-weight:700"' : ""}>${r.in_qty ? "+" + NF(r.in_qty)
+        + (d.in_made && d.in_made[r.date] ? ` <span class="auto" style="font-weight:400">(제조 ${esc(d.in_made[r.date])})</span>` : "")
+        + (d.in_expiry && d.in_expiry[r.date] ? ` <span class="auto" style="font-weight:400">(유통 ${esc(d.in_expiry[r.date])})</span>` : "") : "·"}</td>
       <td class="r">${r.used_qty ? NF(r.used_qty) : "·"}</td>
       <td class="r" style="font-weight:700">${NF(r.real_qty)}</td>
       <td class="auto">${esc(r.order_date || "")}${r.order_qty ? " (" + NF(r.order_qty) + ")" : ""}</td></tr>`).join("")
