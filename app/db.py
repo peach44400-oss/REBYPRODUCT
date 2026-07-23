@@ -205,10 +205,18 @@ CREATE TABLE IF NOT EXISTS purchase_order (
 );
 CREATE INDEX IF NOT EXISTS idx_po_date ON purchase_order(date);
 
--- 앱 설정 (SMTP 등 — 관리 팝업에서 편집)
+-- 앱 설정 (전역 키-값)
 CREATE TABLE IF NOT EXISTS app_setting (
   key TEXT PRIMARY KEY,
   value TEXT DEFAULT ''
+);
+
+-- 사용자별 설정 (개인 메일 계정 등 — [내 설정]에서 편집)
+CREATE TABLE IF NOT EXISTS user_setting (
+  username TEXT NOT NULL,
+  key TEXT NOT NULL,
+  value TEXT DEFAULT '',
+  PRIMARY KEY(username, key)
 );
 
 -- 자재 사용처: 자재×제품×일 실측 사용량 (원료수불부 매트릭스)

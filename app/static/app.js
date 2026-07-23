@@ -6010,12 +6010,12 @@ document.addEventListener("input", e => {
 });
 
 /* ── 모달 공통 닫기 ─────────────────── */
-["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "dispOverlay", "lotSplitOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay"].forEach(id => {
+["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "dispOverlay", "lotSplitOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay", "meOverlay"].forEach(id => {
   $(id).addEventListener("click", e => { if (e.target.id === id) $(id).classList.remove("on"); });
 });
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") {
-    ["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay"].forEach(id => $(id).classList.remove("on"));
+    ["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay", "meOverlay"].forEach(id => $(id).classList.remove("on"));
     hidePad();
   }
 });
@@ -6030,16 +6030,15 @@ async function openAdmin() {
   $("updMsg").textContent = "";
   UPD.latest = null;
   loadBackups();
-  loadSmtp();
   updCheck(true);   // 열 때 조용히 현재 버전 표시(있으면 새 버전도)
 }
 window.closeAdmin = () => $("adminOverlay").classList.remove("on");
 $("btnAdmin").onclick = openAdmin;
 
-/* ── 메일(SMTP) 설정 — 발주서 메일 발송용 (admin) ── */
+/* ── 내 메일(SMTP) 설정 — 발주서 메일이 각자 자기 계정으로 발송된다 ([내 설정] > 메일) ── */
 async function loadSmtp() {
   try {
-    const s = await api("/api/smtp");
+    const s = await api("/api/mysmtp");
     $("smtpHost").value = s.host || "";
     $("smtpPort").value = s.port || "";
     $("smtpUser").value = s.user || "";
@@ -6052,10 +6051,10 @@ async function loadSmtp() {
 }
 $("smtpSave").onclick = async () => {
   try {
-    await api("/api/smtp", { method: "POST", headers: { "Content-Type": "application/json" },
+    await api("/api/mysmtp", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ host: $("smtpHost").value, port: $("smtpPort").value,
         user: $("smtpUser").value, pass: $("smtpPass").value, from: $("smtpFrom").value }) });
-    toast("메일 설정 저장됨");
+    toast("내 메일 설정 저장됨");
     loadSmtp();
   } catch (e) { /* api가 토스트 */ }
 };
@@ -6467,11 +6466,29 @@ $("loginBtn").onclick = doLogin;
 $("loginPw").addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); });
 $("loginId").addEventListener("keydown", e => { if (e.key === "Enter") $("loginPw").focus(); });
 $("btnLogout").onclick = async () => { await fetch("/api/logout", { method: "POST" }); location.reload(); };
-$("btnPw").onclick = () => { $("pwOld").value = ""; $("pwNew").value = ""; $("pwOverlay").classList.add("on"); };
+/* ── 내 설정 — 아이디별 상세 설정 (탭: 개인정보 / 메일 · 이후 탭 추가 대비) ── */
+function openMe(tab) {
+  $("pwOld").value = ""; $("pwNew").value = "";
+  $("meWho").textContent = $("userLbl").textContent;   // 아이디 · 역할 · 담당 그대로 표시
+  meTab(tab || "info");
+  loadSmtp();
+  $("meOverlay").classList.add("on");
+}
+window.closeMe = () => $("meOverlay").classList.remove("on");
+function meTab(t) {
+  document.querySelectorAll("#meTabs button").forEach(b => b.classList.toggle("on", b.dataset.metab === t));
+  document.querySelectorAll("[id^='mePane_']").forEach(p => { p.style.display = p.id === "mePane_" + t ? "" : "none"; });
+}
+$("meTabs").addEventListener("click", e => {
+  const b = e.target.closest("button[data-metab]");
+  if (b) meTab(b.dataset.metab);
+});
+$("btnPw").onclick = () => openMe("info");
+$("userLbl").onclick = () => openMe("info");
 $("pwSaveBtn").onclick = async () => {
   await api("/api/password", { method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ old: $("pwOld").value, new: $("pwNew").value }) });
-  $("pwOverlay").classList.remove("on");
+  $("pwOld").value = ""; $("pwNew").value = "";
   toast("비밀번호가 변경되었습니다");
 };
 

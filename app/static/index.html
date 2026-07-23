@@ -562,9 +562,10 @@
     <div class="side-foot">
       <div><span class="dot"></span><span id="dbStatus">DB 연결됨</span></div>
       <div id="userBox" style="margin-top:8px; display:none;">
-        <span id="userLbl" style="color:var(--side-ink); font-weight:700;"></span>
+        <span id="userLbl" style="color:var(--side-ink); font-weight:700; cursor:pointer; text-decoration:underline dotted; text-underline-offset:3px;"
+              title="클릭하면 내 설정(개인정보·메일)이 열립니다"></span>
         <div style="display:flex; gap:5px; margin-top:6px;">
-          <button class="btn sm sfbtn" id="btnPw">비밀번호</button>
+          <button class="btn sm sfbtn" id="btnPw" title="개인정보(비밀번호)·메일 계정 설정">내 설정</button>
           <button class="btn sm sfbtn" id="btnAdmin" style="display:none;" title="백업/복원 · 데이터 점검">관리</button>
           <button class="btn sm sfbtn" id="btnLogout">로그아웃</button>
         </div>
@@ -1297,21 +1298,6 @@
       <span class="auto" id="updMsg" style="font-size:12px;"></span>
     </div>
     <div id="updNotes" style="font-size:11.5px; color:var(--muted); white-space:pre-wrap; line-height:1.5; margin-bottom:6px;"></div>
-    <div style="font-size:12.5px; font-weight:800; color:var(--muted); margin:16px 0 6px;">📧 메일(SMTP) 설정 — 발주서 메일 발송용</div>
-    <p class="hint" style="margin:0 0 8px;">발송용 계정 하나만 등록하면 됩니다. 네이버: smtp.naver.com·465 / 구글: smtp.gmail.com·465 — 각 메일 설정에서 <b>앱 비밀번호</b>를 발급받아 입력하세요.</p>
-    <div style="display:grid; grid-template-columns:1fr 90px; gap:6px; margin-bottom:6px;">
-      <input class="mini-input" id="smtpHost" placeholder="SMTP 서버 (예: smtp.naver.com)" style="text-align:left;">
-      <input class="mini-input num" id="smtpPort" placeholder="포트 (465)">
-    </div>
-    <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:6px;">
-      <input class="mini-input" id="smtpUser" placeholder="계정 (메일 주소)" style="text-align:left;" autocomplete="off">
-      <input class="mini-input" id="smtpPass" type="password" placeholder="앱 비밀번호" style="text-align:left;" autocomplete="new-password">
-    </div>
-    <div style="display:flex; gap:6px; align-items:center; margin-bottom:6px;">
-      <input class="mini-input" id="smtpFrom" placeholder="표시 발신 주소 (비우면 계정 주소)" style="text-align:left; flex:1;">
-      <button class="btn sm" id="smtpSave">저장</button>
-      <span class="auto" id="smtpState" style="font-size:11.5px;"></span>
-    </div>
     <div style="font-size:12.5px; font-weight:800; color:var(--muted); margin:16px 0 6px;">💾 백업 / 복원</div>
     <p class="hint" style="margin:0 0 8px;">매일 자동 백업됩니다 (백업 폴더 · 최근 30개 보관). 복원하면 현재 DB가 그 시점으로 되돌아가며, 복원 직전 상태도 자동 백업됩니다.</p>
     <div style="margin-bottom:8px;"><button class="btn sm" id="bkNow">💾 지금 백업</button></div>
@@ -1511,15 +1497,40 @@
   </div>
 </div>
 
-<!-- 비밀번호 변경 -->
-<div class="overlay" id="pwOverlay">
-  <div class="modal" style="width:340px;">
-    <h3>비밀번호 변경</h3>
-    <div class="fld"><label>현재 비밀번호</label><input type="password" id="pwOld"></div>
-    <div class="fld"><label>새 비밀번호</label><input type="password" id="pwNew"></div>
+<!-- 내 설정 — 아이디별 상세 설정 (탭 구조: 이후 항목 추가 대비) -->
+<div class="overlay" id="meOverlay">
+  <div class="modal" style="max-width:460px;">
+    <h3>👤 내 설정</h3>
+    <p class="hint" id="meWho" style="margin:0 0 10px;"></p>
+    <div class="tabs" id="meTabs" style="margin:0 0 12px;">
+      <button class="on" data-metab="info">개인정보</button>
+      <button data-metab="mail">📧 메일</button>
+    </div>
+    <div id="mePane_info">
+      <div style="font-size:12.5px; font-weight:800; color:var(--muted); margin:0 0 6px;">비밀번호 변경</div>
+      <div class="fld"><label>현재 비밀번호</label><input type="password" id="pwOld" autocomplete="current-password"></div>
+      <div class="fld" style="margin-top:6px;"><label>새 비밀번호</label><input type="password" id="pwNew" autocomplete="new-password"></div>
+      <div style="margin-top:10px;"><button class="btn sm primary" id="pwSaveBtn">비밀번호 변경</button></div>
+    </div>
+    <div id="mePane_mail" style="display:none;">
+      <p class="hint" style="margin:0 0 8px;">발주서 메일이 <b>내 메일 계정</b>으로 발송됩니다 (보낸 사람 = 내 이름·직급).
+        네이버: smtp.naver.com·465 / 구글: smtp.gmail.com·465 — 메일 설정에서 <b>앱 비밀번호</b>를 발급받아 입력하세요.</p>
+      <div style="display:grid; grid-template-columns:1fr 90px; gap:6px; margin-bottom:6px;">
+        <input class="mini-input" id="smtpHost" placeholder="SMTP 서버 (예: smtp.naver.com)" style="text-align:left;">
+        <input class="mini-input num" id="smtpPort" placeholder="포트 (465)">
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:6px;">
+        <input class="mini-input" id="smtpUser" placeholder="계정 (메일 주소)" style="text-align:left;" autocomplete="off">
+        <input class="mini-input" id="smtpPass" type="password" placeholder="앱 비밀번호" style="text-align:left;" autocomplete="new-password">
+      </div>
+      <div style="display:flex; gap:6px; align-items:center;">
+        <input class="mini-input" id="smtpFrom" placeholder="표시 발신 주소 (비우면 계정 주소)" style="text-align:left; flex:1;">
+        <button class="btn sm primary" id="smtpSave">저장</button>
+        <span class="auto" id="smtpState" style="font-size:11.5px;"></span>
+      </div>
+    </div>
     <div class="modal-foot">
-      <button class="btn" onclick="document.getElementById('pwOverlay').classList.remove('on')">취소</button>
-      <button class="btn primary" id="pwSaveBtn">변경</button>
+      <button class="btn" onclick="closeMe()">닫기</button>
     </div>
   </div>
 </div>

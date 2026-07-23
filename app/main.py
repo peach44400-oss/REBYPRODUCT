@@ -40,7 +40,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.10.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.10.1"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -1681,22 +1681,23 @@ def po_delete(request: Request, po_id: int):
         con.close()
 
 
-# ── 메일(SMTP) 설정 + 발주서 메일 발송 ──────────────────────
+# ── 메일(SMTP) 설정 (사용자별) + 발주서 메일 발송 ──────────────
 SMTP_KEYS = ("smtp_host", "smtp_port", "smtp_user", "smtp_pass", "smtp_from")
 
 
-def get_settings(con, keys):
+def get_user_settings(con, username, keys):
     got = {r["key"]: r["value"] for r in con.execute(
-        f"SELECT key, value FROM app_setting WHERE key IN ({','.join('?' * len(keys))})", keys)}
+        f"SELECT key, value FROM user_setting WHERE username=? AND key IN ({','.join('?' * len(keys))})",
+        (username, *keys))}
     return {k: got.get(k, "") for k in keys}
 
 
-@app.get("/api/smtp")
-def smtp_get(request: Request):
-    require_admin(request)
+@app.get("/api/mysmtp")
+def mysmtp_get(request: Request):
+    """내 메일 계정 설정 조회 — 각 사용자(아이디)마다 자기 계정으로 발송."""
     con = connect()
     try:
-        s = get_settings(con, SMTP_KEYS)
+        s = get_user_settings(con, request.state.user.get("username", ""), SMTP_KEYS)
         return {"host": s["smtp_host"], "port": s["smtp_port"], "user": s["smtp_user"],
                 "from": s["smtp_from"], "has_pass": bool(s["smtp_pass"]),
                 "configured": bool(s["smtp_host"] and s["smtp_user"] and s["smtp_pass"])}
@@ -1704,9 +1705,9 @@ def smtp_get(request: Request):
         con.close()
 
 
-@app.post("/api/smtp")
-def smtp_save(request: Request, body: dict):
-    require_admin(request)
+@app.post("/api/mysmtp")
+def mysmtp_save(request: Request, body: dict):
+    username = request.state.user.get("username", "")
     con = connect()
     try:
         vals = {"smtp_host": (body.get("host") or "").strip(),
@@ -1716,26 +1717,26 @@ def smtp_save(request: Request, body: dict):
         if body.get("pass"):   # 비밀번호는 입력했을 때만 교체 (빈칸 = 기존 유지)
             vals["smtp_pass"] = str(body["pass"]).strip()
         for k, v in vals.items():
-            con.execute("INSERT INTO app_setting(key, value) VALUES(?,?)"
-                        " ON CONFLICT(key) DO UPDATE SET value=excluded.value", (k, v))
-        audit(con, "smtp_set", "메일(SMTP) 설정 변경")
+            con.execute("INSERT INTO user_setting(username, key, value) VALUES(?,?,?)"
+                        " ON CONFLICT(username, key) DO UPDATE SET value=excluded.value", (username, k, v))
+        audit(con, "smtp_set", f"{username} — 내 메일(SMTP) 설정 변경")
         con.commit()
         return {"ok": True}
     finally:
         con.close()
 
 
-def send_mail(con, to_list, subject, html, attachments, sender_label):
-    """SMTP 발송 — 포트 465는 SSL, 그 외 STARTTLS. attachments=[{name, data(base64)}]."""
+def send_mail(con, username, to_list, subject, html, attachments, sender_label):
+    """개인 SMTP 발송 — 로그인 사용자의 메일 계정 사용. 포트 465는 SSL, 그 외 STARTTLS."""
     import smtplib
     import base64 as b64
     from email.mime.multipart import MIMEMultipart
     from email.mime.text import MIMEText
     from email.mime.application import MIMEApplication
     from email.utils import formataddr
-    s = get_settings(con, SMTP_KEYS)
+    s = get_user_settings(con, username, SMTP_KEYS)
     if not (s["smtp_host"] and s["smtp_user"] and s["smtp_pass"]):
-        raise HTTPException(400, "메일(SMTP)이 설정되지 않았습니다 — [관리] > 메일 설정에서 계정을 등록해주세요")
+        raise HTTPException(400, "내 메일 계정이 설정되지 않았습니다 — 화면 왼쪽 아래 [내 설정] > 메일에서 등록해주세요")
     port = int(s["smtp_port"] or 465)
     msg = MIMEMultipart()
     msg["From"] = formataddr((sender_label, s["smtp_from"] or s["smtp_user"]))
@@ -1792,8 +1793,9 @@ def po_send(request: Request, body: dict):
     html = body.get("html") or ""
     con = connect()
     try:
-        send_mail(con, to, subject, html, body.get("attachments") or [],
-                  sender_label_of(con, request.state.user.get("username", "")))
+        username = request.state.user.get("username", "")
+        send_mail(con, username, to, subject, html, body.get("attachments") or [],
+                  sender_label_of(con, username))
         po_id = body.get("po_id")
         if po_id:
             con.execute("UPDATE purchase_order SET sent_at=datetime('now','localtime'), sent_to=? WHERE id=?",
