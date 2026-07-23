@@ -40,7 +40,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.13.2"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.14.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -3491,8 +3491,10 @@ def bom_save(product_id: int, body: dict):
 
 @app.post("/api/bom_replace")   # ※ /api/bom/{product_id}와 경로가 겹치지 않게 별도 경로 사용
 def bom_replace_material(request: Request, body: dict):
-    """자재 일괄 교체 — 모든 제품 배합비에서 from 자재를 to 자재로 바꾼다 (수량·구분·납품처 유지)."""
-    require_admin(request)
+    """자재 일괄 교체 — 모든 제품 배합비에서 from 자재를 to 자재로 바꾼다 (수량·구분·납품처 유지).
+    권한: 배합비 저장과 동일 — 게스트만 불가 (일반 사용자 허용)."""
+    if request.state.user["role"] == "guest":
+        raise HTTPException(403, "보기 전용 계정은 사용할 수 없습니다")
     frm, to = body.get("from"), body.get("to")
     if not frm or not to:
         raise HTTPException(400, "교체할 자재를 선택해주세요")

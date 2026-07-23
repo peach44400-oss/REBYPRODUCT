@@ -5273,9 +5273,12 @@ async function openMatHistory(mid) {
         <span class="auto" style="font-weight:500">— ${usedProds.length ? `${usedProds.length}개 제품에 들어 있습니다` : "배합비에 사용되지 않습니다"}</span></div>
       ${usedProds.length ? `<div style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:${ROLE === "admin" ? "10px" : "0"};">
         ${usedProds.map(p => `<span class="chip cat">${esc(p.name)}</span>`).join("")}</div>` : ""}
-      ${ROLE === "admin" && usedProds.length ? `<div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+      ${ROLE !== "guest" && usedProds.length ? `<div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
         <span style="font-size:12px; font-weight:700;">이 자재를</span>
-        <select class="mini-sel" id="mhRepSel" style="max-width:220px;"><option value="">— 교체할 자재 선택 —</option>${matOptGroups(null)}</select>
+        <input class="mini-input" id="mhRepSel" list="mhRepDl" placeholder="🔍 자재 이름 검색"
+          style="width:220px; text-align:left;" autocomplete="off">
+        <datalist id="mhRepDl">${M.raw.concat(M.sub).filter(m => m.id !== mid)
+          .map(m => `<option value="${esc(m.name)}">${m.kind === "raw" ? "원재료" : "부재료"}</option>`).join("")}</datalist>
         <span style="font-size:12px; font-weight:700;">(으)로 모든 배합에서</span>
         <button class="btn sm" id="mhRepBtn" style="color:var(--warn); border-color:var(--warn);">🔁 일괄 교체</button>
       </div>` : ""}
@@ -5300,10 +5303,20 @@ async function openMatHistory(mid) {
   // 배합비 자재 일괄 교체 (admin) — 확인창에 대상 제품 수·이름 표시 후 실행
   const repBtn = $("mhRepBtn");
   if (repBtn) repBtn.onclick = async () => {
-    const to = +$("mhRepSel").value;
-    if (!to) return toast("교체할 자재를 선택해주세요");
+    const q = $("mhRepSel").value.trim();
+    if (!q) return toast("교체할 자재 이름을 입력해주세요");
+    // 이름으로 자재 찾기: 정확 일치 우선, 없으면 부분 일치가 1건일 때만 인정
+    const all = M.raw.concat(M.sub);
+    let tm = all.find(m => m.name === q);
+    if (!tm) {
+      const cands = all.filter(m => m.name.toLowerCase().includes(q.toLowerCase()));
+      if (cands.length === 1) tm = cands[0];
+      else if (cands.length > 1) return toast(`'${q}'와(과) 비슷한 자재가 ${cands.length}개 있습니다 — 목록에서 정확한 이름을 선택해주세요`);
+    }
+    if (!tm) return toast(`'${q}' — 등록된 자재가 아닙니다`);
+    const to = tm.id;
     if (to === mid) return toast("같은 자재로는 교체할 수 없습니다");
-    const toName = (materialById(to) || {}).name || "?";
+    const toName = tm.name;
     const pNames = usedProds.map(p => p.name);
     const preview = pNames.slice(0, 8).join(", ") + (pNames.length > 8 ? ` 외 ${pNames.length - 8}개` : "");
     if (!confirm(`'${d.name}' → '${toName}' 교체\n\n${pNames.length}개 제품 배합비에서 바뀝니다:\n${preview}\n\n수량·구분·납품처는 그대로 유지됩니다. 진행할까요?`)) return;
