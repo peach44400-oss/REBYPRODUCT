@@ -4779,10 +4779,16 @@ $("pmSend").onclick = async () => {
   $("pmSend").disabled = true;
   $("pmSend").textContent = "보내는 중…";
   try {
+    // 메일 클라이언트가 표를 읽기창 전체 폭으로 늘리지 않게 — 문서 폭 680px 고정 (테이블 래퍼가 호환성 가장 좋음)
+    const mailHtml = `<table style="width:680px; max-width:100%; border-collapse:collapse;"><tr><td>
+        <p style="font-size:14px; line-height:1.7; margin:0 0 12px;">${msgHtml}</p>
+        <hr style="margin:14px 0; border:none; border-top:1px solid #ccc;">
+        ${buildPoDoc()}
+      </td></tr></table>`;
     await api("/api/po/send", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ po_id: PO.id, to: to.join(","), cc: cc.join(","),
         subject: $("pmSubject").value.trim(),
-        html: `<p style="font-size:14px; line-height:1.7;">${msgHtml}</p><hr style="margin:14px 0; border:none; border-top:1px solid #ccc;">` + buildPoDoc(),
+        html: mailHtml,
         attachments: POMAIL.files.map(f => ({ name: f.name, data: f.data })) }) });
     // 등록 거래처인데 이메일이 없었으면 지금 보낸 주소를 저장 (다음부터 자동 입력)
     const pa = M.partner.find(p => p.id === b.partner_id);
