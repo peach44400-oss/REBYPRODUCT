@@ -40,7 +40,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.10.3"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.11.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -3476,6 +3476,35 @@ def bom_save(product_id: int, body: dict):
         bump_masters()
         con.commit()
         return {"ok": True}
+    finally:
+        con.close()
+
+
+@app.post("/api/bom_replace")   # ※ /api/bom/{product_id}와 경로가 겹치지 않게 별도 경로 사용
+def bom_replace_material(request: Request, body: dict):
+    """자재 일괄 교체 — 모든 제품 배합비에서 from 자재를 to 자재로 바꾼다 (수량·구분·납품처 유지)."""
+    require_admin(request)
+    frm, to = body.get("from"), body.get("to")
+    if not frm or not to:
+        raise HTTPException(400, "교체할 자재를 선택해주세요")
+    if int(frm) == int(to):
+        raise HTTPException(400, "같은 자재로는 교체할 수 없습니다")
+    con = connect()
+    try:
+        names = {r["id"]: r["name"] for r in con.execute(
+            "SELECT id, name FROM material WHERE id IN (?,?)", (frm, to))}
+        if len(names) < 2:
+            raise HTTPException(404, "자재를 찾을 수 없습니다")
+        prods = [r["name"] for r in con.execute("""
+            SELECT DISTINCT p.name FROM bom b JOIN product p ON p.id=b.product_id
+            WHERE b.material_id=? ORDER BY p.sort, p.id""", (frm,))]
+        if not prods:
+            raise HTTPException(400, "이 자재가 들어간 배합비가 없습니다")
+        con.execute("UPDATE bom SET material_id=? WHERE material_id=?", (to, frm))
+        audit(con, "replace_bom_mat", f"배합비 자재 교체: {names[int(frm)]} → {names[int(to)]} ({len(prods)}개 제품)")
+        bump_masters()
+        con.commit()
+        return {"ok": True, "products": len(prods), "names": prods}
     finally:
         con.close()
 

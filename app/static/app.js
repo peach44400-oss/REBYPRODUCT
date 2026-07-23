@@ -5221,12 +5221,30 @@ $("anaPBody").addEventListener("change", async e => {
 /* 자재 입·출고 이력 팝업 (기준정보 자재명 클릭) */
 async function openMatHistory(mid) {
   const d = await api("/api/mathistory/" + mid);
+  // 배합비 사용처 — 이 자재가 어느 제품 배합에 들어가 있는지 (교체 대상 파악용)
+  let bomUse = [];
+  try { bomUse = (await api("/api/bom")).filter(b => b.material_id === mid); } catch (e) { }
+  const usedProds = [...new Set(bomUse.map(b => b.product_id))]
+    .map(pid => productById(pid)).filter(Boolean);
+  const bomSec = `
+    <div style="border:1px solid var(--line-soft); border-radius:10px; padding:10px 12px; margin-bottom:12px;">
+      <div style="font-size:12.5px; font-weight:800; margin-bottom:6px;">📋 배합비 사용처
+        <span class="auto" style="font-weight:500">— ${usedProds.length ? `${usedProds.length}개 제품에 들어 있습니다` : "배합비에 사용되지 않습니다"}</span></div>
+      ${usedProds.length ? `<div style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:${ROLE === "admin" ? "10px" : "0"};">
+        ${usedProds.map(p => `<span class="chip cat">${esc(p.name)}</span>`).join("")}</div>` : ""}
+      ${ROLE === "admin" && usedProds.length ? `<div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+        <span style="font-size:12px; font-weight:700;">이 자재를</span>
+        <select class="mini-sel" id="mhRepSel" style="max-width:220px;"><option value="">— 교체할 자재 선택 —</option>${matOptGroups(null)}</select>
+        <span style="font-size:12px; font-weight:700;">(으)로 모든 배합에서</span>
+        <button class="btn sm" id="mhRepBtn" style="color:var(--warn); border-color:var(--warn);">🔁 일괄 교체</button>
+      </div>` : ""}
+    </div>`;
   $("anaPTitle").textContent = d.name;
   $("anaPHint").textContent =
     `${d.kind === "raw" ? "원재료" : "부재료"} · 최근 ${d.rows.length}일` +
     ` · 마지막 입고 ${d.last_in ? d.last_in.date + " (+" + NF(d.last_in.in_qty) + d.unit + ")" : "기록 없음"}` +
     ` · 마지막 사용 ${d.last_use ? d.last_use.date + " (" + NF(d.last_use.used_qty) + d.unit + ")" : "기록 없음"}`;
-  $("anaPBody").innerHTML = `<div class="tbl-wrap"><table>
+  $("anaPBody").innerHTML = bomSec + `<div class="tbl-wrap"><table>
     <thead><tr><th>날짜</th><th class="r">전일</th><th class="r">입고</th><th class="r">사용</th><th class="r">실재고</th><th>발주</th></tr></thead>
     <tbody class="num">${d.rows.map(r => `<tr ${r.in_qty > 0 ? 'style="background:var(--ok-soft)"' : ""}>
       <td>${r.date}${r.src === "auto" ? ' <span class="chip cat">자동</span>' : ""}</td>
@@ -5238,6 +5256,24 @@ async function openMatHistory(mid) {
       <td class="r" style="font-weight:700">${NF(r.real_qty)}</td>
       <td class="auto">${esc(r.order_date || "")}${r.order_qty ? " (" + NF(r.order_qty) + ")" : ""}</td></tr>`).join("")
       || '<tr><td colspan="6" class="auto">기록 없음</td></tr>'}</tbody></table></div>`;
+  // 배합비 자재 일괄 교체 (admin) — 확인창에 대상 제품 수·이름 표시 후 실행
+  const repBtn = $("mhRepBtn");
+  if (repBtn) repBtn.onclick = async () => {
+    const to = +$("mhRepSel").value;
+    if (!to) return toast("교체할 자재를 선택해주세요");
+    if (to === mid) return toast("같은 자재로는 교체할 수 없습니다");
+    const toName = (materialById(to) || {}).name || "?";
+    const pNames = usedProds.map(p => p.name);
+    const preview = pNames.slice(0, 8).join(", ") + (pNames.length > 8 ? ` 외 ${pNames.length - 8}개` : "");
+    if (!confirm(`'${d.name}' → '${toName}' 교체\n\n${pNames.length}개 제품 배합비에서 바뀝니다:\n${preview}\n\n수량·구분·납품처는 그대로 유지됩니다. 진행할까요?`)) return;
+    try {
+      const r = await api("/api/bom_replace", { method: "POST",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ from: mid, to }) });
+      BOMALL = null; COSTS = null;   // 배합 캐시 무효화 (일일 입력 자동 채움·원가)
+      toast(`🔁 ${r.products}개 제품 배합비에서 '${d.name}' → '${toName}' 교체 완료`);
+      openMatHistory(to);   // 교체된 자재 기준으로 사용처 다시 표시
+    } catch (e) { /* api()가 오류 토스트 표시 */ }
+  };
   $("anaOverlay").classList.add("on");
 }
 
