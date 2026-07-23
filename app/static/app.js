@@ -3029,7 +3029,9 @@ function chip(s) {
   return `<span class="chip ${bad ? "warn" : "ok"}">${esc(s || "—")}</span>`;
 }
 function stockCell(r) {
-  const low = (r.safety_stock > 0 && r.stock < r.safety_stock) || (r.stock != null && r.stock <= 0);
+  // 빨간 표시 = 안전재고 설정 자재의 미달, 또는 음수 재고(데이터 이상 신호).
+  // 재고 0 + 안전재고 미설정은 강조하지 않음 — 부족 판단 기준이 없음 (대시보드·사이드바와 동일)
+  const low = (r.safety_stock > 0 && r.stock < r.safety_stock) || (r.stock != null && r.stock < 0);
   return `<span class="num" style="${low ? "color:var(--crit); font-weight:700" : ""}">${NF(r.stock)}</span>`;
 }
 function stockDaysCell(r) {   // 재고일수 = 현재고 ÷ 최근 30일 일평균 사용량 (사용 기록 없으면 —)
@@ -4454,11 +4456,7 @@ async function loadLowStock() {
       <span class="nm">${x.ordered ? "✓ " : ""}${esc(x.name)}</span>
       <span class="qt">${x.ordered ? "발주함" : NF(x.shortfall) + " " + esc(x.unit)}</span></button>`).join("")
     || '<div style="font-size:11px; color:var(--side-muted); padding:2px 6px">안전재고 미달 자재 없음</div>';
-  // 안전재고 미설정은 판단 기준이 없어 목록에 넣지 않고 안내만 — 설정하면 알림이 정확해진다
-  $("lowpNote").innerHTML = d.unset
-    ? `재고 0 이하인데 <b>안전재고 미설정</b> ${d.unset}종<br>
-       <button data-lowsetup>기준정보에서 설정하기</button>`
-    : "";
+  $("lowpNote").innerHTML = "";   // 안전재고 미설정 자재는 판단 기준이 없어 안내하지 않음 (대시보드와 동일 기준)
 }
 $("lowPanel").addEventListener("click", e => {
   if (e.target.closest("[data-lowsetup]")) {          // 안전재고 설정하러 가기
@@ -4581,21 +4579,61 @@ async function loadPoHistory() {
     </div>`).join("") || '<div class="auto" style="padding:10px;">저장된 발주서가 없습니다</div>';
   PO.hist = hist;
 }
+function applyPoRecord(h) {   // 저장된 발주서를 작성 폼에 불러오기 (재인쇄·재발송용)
+  PO.id = h.id;
+  $("poPartner").value = h.partner === "거래처 미지정" ? "" : h.partner;
+  $("poDate").value = h.date; $("poDue").value = h.due || ""; $("poNote").value = h.note || "";
+  PO.items = h.items.map(it => ({ material_id: it.material_id, qty: it.qty }));
+  renderPoItems();
+  toast(`발주서 #${h.id} 불러옴 — [🖨 인쇄]·[📧 메일 보내기]로 다시 보낼 수 있습니다`);
+}
 $("poHistory").addEventListener("click", async e => {
   const ld = e.target.closest("[data-poload]");
   if (ld) {
-    const h = (PO.hist || []).find(x => x.id === +ld.dataset.poload); if (!h) return;
-    PO.id = h.id;
-    $("poPartner").value = h.partner === "거래처 미지정" ? "" : h.partner;
-    $("poDate").value = h.date; $("poDue").value = h.due || ""; $("poNote").value = h.note || "";
-    PO.items = h.items.map(it => ({ material_id: it.material_id, qty: it.qty }));
-    renderPoItems();
-    toast(`발주서 #${h.id} 불러옴 — [🖨 인쇄]로 다시 출력할 수 있습니다`);
+    const h = (PO.hist || []).find(x => x.id === +ld.dataset.poload);
+    if (h) applyPoRecord(h);
     return;
   }
   const del = e.target.closest("[data-podelhist]");
   if (del && confirm(`발주서 #${del.dataset.podelhist}를 삭제할까요?`)) {
     try { await api("/api/po/" + del.dataset.podelhist, { method: "DELETE" }); loadPoHistory(); } catch (err) { }
+  }
+});
+
+/* ── 발주서 이력 목록 (사이드바 [📑 이력]) — 발송 여부까지 한눈에, 열기=재인쇄·재발송 ── */
+async function openPoList() {
+  let hist = [];
+  try { hist = await api("/api/po?limit=100"); } catch (e) { }
+  PO.listHist = hist;
+  $("poListBody").innerHTML = hist.map(h => `<tr>
+    <td class="r">#${h.id}</td>
+    <td>${h.date}</td>
+    <td style="max-width:170px; overflow:hidden; text-overflow:ellipsis;"><b>${esc(h.partner)}</b></td>
+    <td class="r" title="${esc(h.items.map(i => i.name).join(", "))}">${h.items.length}종</td>
+    <td class="auto">${esc(h.created_by || "—")}</td>
+    <td style="font-size:11.5px;">${h.sent_at
+      ? `<span style="color:var(--ok); font-weight:700">📧 발송됨</span><br><span class="auto">${esc(h.sent_to || "")} · ${esc(h.sent_at.slice(0, 16))}</span>`
+      : '<span class="auto">—</span>'}</td>
+    <td style="white-space:nowrap;">
+      <button class="btn ghost sm" data-plopen="${h.id}">열기</button>
+      <button class="btn ghost sm" data-pldel="${h.id}" style="color:var(--crit)">삭제</button></td></tr>`).join("")
+    || '<tr><td colspan="7" class="auto">저장된 발주서가 없습니다 — [📋 발주서]에서 저장하면 여기 쌓입니다</td></tr>';
+  $("poListOverlay").classList.add("on");
+}
+window.closePoList = () => $("poListOverlay").classList.remove("on");
+$("lowpPoList").addEventListener("click", e => { e.stopPropagation(); openPoList(); });
+$("poListBody").addEventListener("click", async e => {
+  const op = e.target.closest("[data-plopen]");
+  if (op) {
+    const h = (PO.listHist || []).find(x => x.id === +op.dataset.plopen); if (!h) return;
+    closePoList();
+    await openPo(false);      // 작성 모달 열고
+    applyPoRecord(h);         // 해당 발주서 불러오기
+    return;
+  }
+  const del = e.target.closest("[data-pldel]");
+  if (del && confirm(`발주서 #${del.dataset.pldel}를 삭제할까요?`)) {
+    try { await api("/api/po/" + del.dataset.pldel, { method: "DELETE" }); openPoList(); } catch (err) { }
   }
 });
 /* 발주서 문서 HTML — 인쇄·메일 본문 공용. 메일은 CSS 클래스가 안 먹어서 전부 인라인 스타일 */
@@ -6100,12 +6138,12 @@ document.addEventListener("input", e => {
 });
 
 /* ── 모달 공통 닫기 ─────────────────── */
-["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "dispOverlay", "lotSplitOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay", "meOverlay"].forEach(id => {
+["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "dispOverlay", "lotSplitOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay", "meOverlay", "poListOverlay"].forEach(id => {
   $(id).addEventListener("click", e => { if (e.target.id === id) $(id).classList.remove("on"); });
 });
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") {
-    ["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay", "meOverlay"].forEach(id => $(id).classList.remove("on"));
+    ["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay", "meOverlay", "poListOverlay"].forEach(id => $(id).classList.remove("on"));
     hidePad();
   }
 });

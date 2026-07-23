@@ -47,9 +47,9 @@
   .lowp-h{display:flex; align-items:center; justify-content:space-between; gap:6px;
     font-size:11.5px; color:#FFB4AE; margin-bottom:6px;}
   .lowp-h b{font-size:12px; color:#FFD5D1;}
-  #lowpPo{background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.25); color:#FFD5D1;
+  #lowpPo, #lowpPoList{background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.25); color:#FFD5D1;
     font-size:10.5px; padding:2px 8px; border-radius:6px; cursor:pointer;}
-  #lowpPo:hover{background:rgba(255,255,255,.2);}
+  #lowpPo:hover, #lowpPoList:hover{background:rgba(255,255,255,.2);}
   /* 기준정보 목록 인쇄 — 열 잘림 방지: 표 축소 + 편집 열·도구 숨김 */
   @media print{
     #scr-items table{font-size:8.5px !important;}
@@ -566,7 +566,10 @@
     <!-- 부족 자재 알림 — 자재 담당·admin에게만. 팝업 대신 사이드바에 상주해 흐름을 막지 않는다 -->
     <div id="lowPanel" style="display:none;">
       <div class="lowp-h"><b>⚠ 발주 필요</b><span id="lowpCnt"></span>
-        <button id="lowpPo" title="부족 자재로 발주서를 만들어 인쇄합니다">📋 발주서</button></div>
+        <span style="display:flex; gap:4px;">
+          <button id="lowpPo" title="부족 자재로 발주서를 만들어 인쇄·메일 발송합니다">📋 발주서</button>
+          <button id="lowpPoList" title="지금까지 만든 발주서 목록 — 발송 여부·재인쇄·재발송">📑 이력</button>
+        </span></div>
       <div id="lowpList"></div>
       <div id="lowpNote"></div>
     </div>
@@ -1236,6 +1239,21 @@
       <button class="btn" id="poSaveBtn">저장</button>
       <button class="btn" id="poMailBtn" title="발주서를 거래처 이메일로 보냅니다 (관리 > 메일 설정 필요)">📧 메일 보내기</button>
       <button class="btn primary" id="poPrintBtn">🖨 인쇄</button>
+    </div>
+  </div>
+</div>
+
+<!-- 발주서 이력 목록 모달 -->
+<div class="overlay" id="poListOverlay">
+  <div class="modal" style="max-width:720px;">
+    <h3>📑 발주서 이력</h3>
+    <p class="hint">지금까지 만든 발주서 목록입니다 · [열기]로 불러와 재인쇄·재발송할 수 있습니다 · 메일을 보낸 발주서는 수신 주소·발송 시각이 남습니다.</p>
+    <div class="tbl-wrap" style="max-height:420px; overflow-y:auto;"><table>
+      <thead><tr><th>번호</th><th>발주일</th><th>거래처</th><th class="r">품목</th><th>작성자</th><th>메일 발송</th><th></th></tr></thead>
+      <tbody class="num" id="poListBody"></tbody>
+    </table></div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closePoList()">닫기</button>
     </div>
   </div>
 </div>
