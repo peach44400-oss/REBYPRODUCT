@@ -678,6 +678,25 @@ function applyProdFilter() {
 $("prodFilter").addEventListener("input", applyProdFilter);
 
 /* 표 → CSV(엑셀) 다운로드 — 검색으로 숨긴 행은 제외, 한글 엑셀용 BOM 포함 */
+/* 페이지네이션 공통 — 데이터가 많은 표에 ≪ ‹ 1 2 3 … › ≫ 버튼 줄 생성.
+   클릭 처리는 각 화면에서 [data-pg] 위임으로 (표시는 최대 10개 페이지 버튼 창). */
+function pagerHtml(total, page, per) {
+  const pages = Math.ceil(total / per);
+  if (pages <= 1) return "";
+  const win = 10;
+  const start = Math.floor((page - 1) / win) * win + 1;
+  const end = Math.min(start + win - 1, pages);
+  let h = `<div class="pager">`;
+  h += `<button data-pg="1" ${page === 1 ? "disabled" : ""} title="처음">&laquo;</button>`;
+  h += `<button data-pg="${page - 1}" ${page === 1 ? "disabled" : ""} title="이전">&lsaquo;</button>`;
+  for (let i = start; i <= end; i++)
+    h += `<button data-pg="${i}" class="${i === page ? "on" : ""}">${i}</button>`;
+  h += `<button data-pg="${page + 1}" ${page === pages ? "disabled" : ""} title="다음">&rsaquo;</button>`;
+  h += `<button data-pg="${pages}" ${page === pages ? "disabled" : ""} title="끝">&raquo;</button></div>`;
+  return h;
+}
+function pageSlice(arr, page, per) { return arr.slice((page - 1) * per, page * per); }
+
 function tableToCsv(headEl, bodyEl, filename) {
   const cell = td => `"${td.textContent.replace(/\s+/g, " ").trim().replace(/"/g, '""')}"`;
   const lines = [];
@@ -4665,10 +4684,11 @@ $("poViewPrint").onclick = () => {
 };
 
 /* ══ 발주 현황 — 목록·검색·입고 처리·거래처별 정산 (자재 담당·admin) ═════ */
-const POSTAT = { mode: "m", date: "", q: "", data: null };
+const POSTAT = { mode: "m", date: "", q: "", data: null, page: 1, per: 20 };
 async function loadPoStat() {
-  const d = await api(`/api/postatus?mode=${POSTAT.mode}&date=${POSTAT.date}&q=${encodeURIComponent(POSTAT.q)}&limit=50`);
+  const d = await api(`/api/postatus?mode=${POSTAT.mode}&date=${POSTAT.date}&q=${encodeURIComponent(POSTAT.q)}&limit=100000`);
   POSTAT.data = d; POSTAT.date = d.date;
+  POSTAT.page = 1;   // 기간·검색이 바뀌면 첫 페이지부터
   const [a, b] = d.range;
   $("postLbl").textContent = POSTAT.mode === "all" ? "전체 기간"
     : POSTAT.mode === "d" ? `${d.date} (${dowOf(d.date)})`
@@ -4696,9 +4716,10 @@ function renderPoStat() {
       ${money ? `<td class="r" style="font-weight:700">${p.amount ? NF(Math.round(p.amount)) : "—"}</td>` : ""}
       <td class="auto">${p.unpriced ? p.unpriced + "품목" : "—"}</td></tr>`).join("")
       || `<tr><td colspan="6" class="auto">이 기간 발주가 없습니다</td></tr>`}</tbody></table></div>`;
-  // 2) 발주 목록
+  // 2) 발주 목록 — 20건씩 페이지네이션 (집계·정산 표는 전체 기준 그대로)
   const sum = it => it.map(x => x.name).join(", ");
-  const listRows = d.pos.map(h => {
+  const pagePos = pageSlice(d.pos, POSTAT.page, POSTAT.per);
+  const listRows = pagePos.map(h => {
     const first = h.items[0] ? h.items[0].name : "—";
     const extra = h.items.length > 1 ? ` 외 ${h.items.length - 1}건` : "";
     return `<tr>
@@ -4721,7 +4742,7 @@ function renderPoStat() {
     <thead><tr><th>번호</th><th>발주일</th><th>거래처</th><th>품목</th><th>상태</th><th>발송</th><th>작성자</th>${money ? '<th class="r">금액(원)</th>' : ""}<th></th></tr></thead>
     <tbody class="num" style="font-size:12.5px;">${listRows
       || `<tr><td colspan="9" class="auto">발주서가 없습니다 — [+ 발주서 작성]으로 만드세요</td></tr>`}</tbody></table></div>`
-    + (d.total > d.shown ? `<p class="hint">최근 ${d.shown}건 표시 (전체 ${d.total}건) — 기간이나 검색으로 좁혀보세요</p>` : "");
+    + pagerHtml(d.pos.length, POSTAT.page, POSTAT.per);
   $("postBody").innerHTML =
     `<div style="font-size:12.5px; font-weight:700; color:var(--muted); margin:2px 0 6px;">거래처별 정산 <span class="auto" style="font-weight:400">— 금액 = 입고 처리 때 입력한 실제 단가 기준</span></div>` + partTbl +
     `<div style="font-size:12.5px; font-weight:700; color:var(--muted); margin:16px 0 6px;">발주 목록</div>` + listTbl;
@@ -4793,6 +4814,8 @@ $("poCsvGo").onclick = () => {
   closePoCsv();
 };
 $("postBody").addEventListener("click", async e => {
+  const pg = e.target.closest("[data-pg]");
+  if (pg && !pg.disabled) { POSTAT.page = +pg.dataset.pg; renderPoStat(); return; }
   const findPo = id => (POSTAT.data.pos || []).find(x => x.id === +id);
   const op = e.target.closest("[data-psopen]");
   if (op) {
@@ -5817,10 +5840,11 @@ document.addEventListener("click", e => {
 });
 
 /* ══ 인원 관리 (사람별 근무시간·노무비 — admin 전용) ═════════════ */
-const STAFF = { mode: "m", date: "", q: "", data: null };
+const STAFF = { mode: "m", date: "", q: "", data: null, page: 1, per: 20 };
 async function loadStaff() {
   const d = await api(`/api/staffhours?mode=${STAFF.mode}&date=${STAFF.date}`);
   STAFF.data = d; STAFF.date = d.date;
+  STAFF.page = 1;   // 기간이 바뀌면 첫 페이지부터
   const [a, b] = d.range;
   $("staffLbl").textContent = STAFF.mode === "d" ? `${d.date} (${dowOf(d.date)})`
     : STAFF.mode === "y" ? d.date.slice(0, 4) + "년"
@@ -5843,9 +5867,10 @@ function renderStaffMgmt() {
     ...(money && d.agency.length ? [["용역 노무비", NF(Math.round(d.agency_labor)) + "원"]] : []),
   ].map(([t, v]) => `<span class="pchip num">${t} <b style="margin-left:4px">${v}</b></span>`).join("");
   const laborCol = money ? '<th class="r">시급</th><th class="r">노무비(원)</th>' : "";
+  const memPage = pageSlice(mem, STAFF.page, STAFF.per);   // 인원이 많아지면 20명씩 페이지
   const memberTbl = `<div class="tbl-wrap"><table id="staffTbl">
     <thead><tr><th>이름</th><th class="r">근무시간(h)</th><th class="r">근무일수</th><th class="r">일평균(h)</th>${laborCol}</tr></thead>
-    <tbody class="num">${mem.map(r => `<tr>
+    <tbody class="num">${memPage.map(r => `<tr>
       <td><b class="namecell" data-staffid="${r.id}" title="클릭 = 이 사람의 출근일 상세">${esc(r.name)}</b></td>
       <td class="r" style="font-weight:700">${h1(r.hours)}</td>
       <td class="r">${r.days}일</td>
@@ -5856,7 +5881,7 @@ function renderStaffMgmt() {
         <td>합계 (${mem.length}명)</td>
         <td class="r">${h1(mem.reduce((s, r) => s + (r.hours || 0), 0))}</td><td></td><td></td>
         ${money ? `<td></td><td class="r">${NF(Math.round(mem.reduce((s, r) => s + (r.labor || 0), 0)))}</td>` : ""}</tr>` : ""}
-    </tbody></table></div>`;
+    </tbody></table></div>` + pagerHtml(mem.length, STAFF.page, STAFF.per);
   const agTbl = d.agency.length ? `<div class="tbl-wrap"><table>
     <thead><tr><th>용역 업체</th><th class="r">연인원</th><th class="r">근무일수</th><th class="r">시간(h)</th>${money ? '<th class="r">노무비(원)</th>' : ""}</tr></thead>
     <tbody class="num">${d.agency.map(r => `<tr>
@@ -5885,36 +5910,66 @@ function staffStep(dir) {
 }
 $("staffPrev").onclick = () => staffStep(-1);
 $("staffNext").onclick = () => staffStep(1);
-$("staffFilter").addEventListener("input", e => { STAFF.q = e.target.value.trim(); renderStaffMgmt(); });
-$("staffCsv").onclick = () => {
-  const t = $("staffTbl"); if (!t) return;
-  tableToCsv(t.tHead, t.tBodies[0], csvName("인원관리", $("staffLbl").textContent));
+$("staffFilter").addEventListener("input", e => { STAFF.q = e.target.value.trim(); STAFF.page = 1; renderStaffMgmt(); });
+$("staffCsv").onclick = () => {   // 페이지와 무관하게 전체(검색 반영) 데이터를 내보냄
+  const d = STAFF.data; if (!d) return;
+  const money = canM("labor");
+  const q = STAFF.q.toLowerCase();
+  const mem = d.members.filter(r => !q || r.name.toLowerCase().includes(q));
+  if (!mem.length) return toast("내보낼 데이터가 없습니다");
+  const cell = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const head = ["이름", "근무시간(h)", "근무일수", "일평균(h)", ...(money ? ["시급", "노무비(원)"] : [])];
+  const lines = [head.map(cell).join(",")]
+    .concat(mem.map(r => [r.name, Math.round((r.hours || 0) * 10) / 10, r.days,
+      Math.round((r.avg || 0) * 10) / 10,
+      ...(money ? [r.wage || "", r.labor ? Math.round(r.labor) : ""] : [])].map(cell).join(",")));
+  const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = csvName("인원관리", $("staffLbl").textContent);
+  a.click();
+  URL.revokeObjectURL(a.href);
 };
-// 이름 클릭 → 그 사람의 출근일 상세 팝업 (현재 선택된 기간 기준)
+// 이름 클릭 → 출근일 상세 팝업 · 페이지 버튼 → 해당 페이지
 $("staffBody").addEventListener("click", e => {
+  const pg = e.target.closest("[data-pg]");
+  if (pg && !pg.disabled) { STAFF.page = +pg.dataset.pg; renderStaffMgmt(); return; }
   const n = e.target.closest("[data-staffid]"); if (!n) return;
   openStaffDays(+n.dataset.staffid);
 });
+const SDAYS = { d: null, page: 1, per: 12 };
 async function openStaffDays(id) {
   const d = await api(`/api/staffdays/${id}?mode=${STAFF.mode}&date=${STAFF.date}`);
+  SDAYS.d = d; SDAYS.page = 1;
   const money = canM("labor");
   const [a, b] = d.range;
-  const h2 = n => Math.round((n || 0) * 100) / 100;
   $("staffDayTitle").textContent = `${d.name} · 근무 상세`;
   $("staffDaySub").textContent = `${a} ~ ${b} · 출근 ${d.days}일 · 총 ${Math.round(d.total_hours * 10) / 10}h`
     + (money && d.total_labor ? ` · 노무비 ${NF(Math.round(d.total_labor))}원` : "");
-  $("staffDayBody").innerHTML = d.rows.length ? `<div class="tbl-wrap"><table>
+  renderStaffDays();
+  $("staffDayOverlay").classList.add("on");
+}
+function renderStaffDays() {
+  const d = SDAYS.d; if (!d) return;
+  const money = canM("labor");
+  const h2 = n => Math.round((n || 0) * 100) / 100;
+  const rows_ = pageSlice(d.rows, SDAYS.page, SDAYS.per);
+  $("staffDayBody").innerHTML = d.rows.length ? `<table style="width:100%;">
     <thead><tr><th>날짜</th><th>라인/공정</th><th class="r">출근</th><th class="r">퇴근</th><th class="r">휴게</th><th class="r">근무(h)</th>${money ? '<th class="r">노무비(원)</th>' : ""}</tr></thead>
-    <tbody class="num">${d.rows.map(r => `<tr>
+    <tbody class="num">${rows_.map(r => `<tr>
       <td>${r.date} <span class="auto" style="font-size:10px">(${dowOf(r.date)})</span></td>
       <td>${esc(r.line)}${r.process ? ` <span class="auto" style="font-size:11px">${esc(r.process)}</span>` : ""}</td>
       <td class="r">${r.start || "—"}</td><td class="r">${r.end || "—"}</td>
       <td class="r auto">${r.brk ? NF(r.brk) + "분" : "—"}</td>
       <td class="r" style="font-weight:700">${h2(r.hours)}</td>
-      ${money ? `<td class="r">${NF(r.labor)}</td>` : ""}</tr>`).join("")}</tbody></table></div>`
+      ${money ? `<td class="r">${NF(r.labor)}</td>` : ""}</tr>`).join("")}</tbody></table>`
+    + pagerHtml(d.rows.length, SDAYS.page, SDAYS.per)
     : `<div class="auto" style="padding:10px 0;">이 기간 출근 기록이 없습니다</div>`;
-  $("staffDayOverlay").classList.add("on");
 }
+$("staffDayBody").addEventListener("click", e => {
+  const b = e.target.closest("[data-pg]");
+  if (b && !b.disabled) { SDAYS.page = +b.dataset.pg; renderStaffDays(); }
+});
 window.closeStaffDays = () => $("staffDayOverlay").classList.remove("on");
 
 /* ══ LOT 관리 ═════════════════════════ */
