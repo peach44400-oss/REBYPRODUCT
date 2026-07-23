@@ -4600,7 +4600,7 @@ function buildPoDoc() {
     <div style="display:flex; justify-content:space-between; gap:16px; margin-bottom:14px;">
       ${meta([["수신", esc(pa.name || "________________") + " 귀중"], ["사업자번호", esc(pa.biz_no || "")],
               ["대표자", esc(pa.ceo || "")], ["연락처", esc(pa.phone || pa.mobile || "")]])}
-      ${meta([["발주일", esc(b.date)], ["납기 희망일", esc(b.due || "협의")],
+      ${meta([["발주일", esc(b.date)], ["납기 희망일", esc(b.due || "가능한 빠른 날")],
               ["발신", "리바이프로덕트 (REBYPRODUCT)"], ["발주번호", PO.id ? "#" + PO.id : "-"]])}
     </div>
     <table style="border-collapse:collapse; width:100%;">
