@@ -1,5 +1,5 @@
 {
-  "version": "1.11.1",
+  "version": "1.12.0",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· 발주서 납기 희망일을 비우면 '가능한 빠른 날'로 표시 (인쇄·메일 공통)"
+  "notes": "· 발주서 거래처를 검색으로 선택 — 미등록 거래처도 이름만 적으면 발주 가능\n· 메일 보내기에 참조(CC) 추가 · 받는/참조 칸에 거래처 이름만 넣어도 저장된 메일로 자동 변환 (메일이 없으면 안내)\n· 새 거래처 등록 시 직접 만든 유형도 유형 목록에 나타남"
 }

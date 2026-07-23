@@ -40,7 +40,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.11.1"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.12.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -1623,7 +1623,7 @@ def po_list(request: Request, limit: int = 30):
     con = connect()
     try:
         out = rows(con.execute("""
-            SELECT po.*, COALESCE(pa.name,'거래처 미지정') partner
+            SELECT po.*, COALESCE(pa.name, NULLIF(po.partner_name,''), '거래처 미지정') partner
             FROM purchase_order po LEFT JOIN partner pa ON pa.id=po.partner_id
             ORDER BY po.id DESC LIMIT ?""", (limit,)))
         for r in out:
@@ -1655,10 +1655,12 @@ def po_save(request: Request, body: dict):
                           "unit": m["unit"] or "", "qty": float(it.get("qty") or 0)})
         if not clean:
             raise HTTPException(400, "발주 품목이 없습니다 — 자재를 추가해주세요")
-        cur = con.execute("""INSERT INTO purchase_order(date, partner_id, due, note, items, created_by)
-            VALUES(?,?,?,?,?,?)""",
+        cur = con.execute("""INSERT INTO purchase_order(date, partner_id, partner_name, due, note, items, created_by)
+            VALUES(?,?,?,?,?,?,?)""",
                           (body.get("date") or dt.date.today().isoformat(),
-                           body.get("partner_id") or None, body.get("due") or "",
+                           body.get("partner_id") or None,
+                           (body.get("partner_name") or "").strip(),
+                           body.get("due") or "",
                            body.get("note") or "", json.dumps(clean, ensure_ascii=False),
                            request.state.user.get("username", "")))
         audit(con, "save_po", f"발주서 #{cur.lastrowid} — 품목 {len(clean)}종")
@@ -1745,7 +1747,7 @@ def mysmtp_test(request: Request):
         con.close()
 
 
-def send_mail(con, username, to_list, subject, html, attachments, sender_label):
+def send_mail(con, username, to_list, subject, html, attachments, sender_label, cc=None):
     """개인 SMTP 발송 — 로그인 사용자의 메일 계정 사용. 포트 465는 SSL, 그 외 STARTTLS."""
     import smtplib
     import base64 as b64
@@ -1760,6 +1762,8 @@ def send_mail(con, username, to_list, subject, html, attachments, sender_label):
     msg = MIMEMultipart()
     msg["From"] = formataddr((sender_label, s["smtp_from"] or s["smtp_user"]))
     msg["To"] = ", ".join(to_list)
+    if cc:
+        msg["Cc"] = ", ".join(cc)   # send_message가 To+Cc 헤더의 모든 수신자에게 전달
     msg["Subject"] = subject
     msg.attach(MIMEText(html, "html", "utf-8"))
     total = 0
@@ -1819,10 +1823,15 @@ def sender_label_of(con, username):
 def po_send(request: Request, body: dict):
     """발주서 메일 발송 — 본문 HTML(발주서 표) + 첨부. 발송하면 발주서에 발송 기록."""
     require_stock_duty(request)
-    to = [t.strip() for t in str(body.get("to") or "").replace(";", ",").split(",") if t.strip()]
+
+    def parse_addrs(v):
+        return [t.strip() for t in str(v or "").replace(";", ",").split(",") if t.strip()]
+
+    to = parse_addrs(body.get("to"))
+    cc = parse_addrs(body.get("cc"))
     if not to:
         raise HTTPException(400, "받는 메일 주소를 입력해주세요")
-    if any("@" not in t for t in to):
+    if any("@" not in t for t in to + cc):
         raise HTTPException(400, "메일 주소 형식이 올바르지 않습니다")
     subject = (body.get("subject") or "").strip() or "[리바이프로덕트] 발주서"
     html = body.get("html") or ""
@@ -1830,12 +1839,13 @@ def po_send(request: Request, body: dict):
     try:
         username = request.state.user.get("username", "")
         send_mail(con, username, to, subject, html, body.get("attachments") or [],
-                  sender_label_of(con, username))
+                  sender_label_of(con, username), cc=cc)
         po_id = body.get("po_id")
         if po_id:
             con.execute("UPDATE purchase_order SET sent_at=datetime('now','localtime'), sent_to=? WHERE id=?",
-                        (", ".join(to), po_id))
-        audit(con, "send_po", f"발주서{'#' + str(po_id) if po_id else ''} 메일 발송 → {', '.join(to)}")
+                        (", ".join(to + cc), po_id))
+        audit(con, "send_po", f"발주서{'#' + str(po_id) if po_id else ''} 메일 발송 → {', '.join(to)}"
+              + (f" (참조 {', '.join(cc)})" if cc else ""))
         con.commit()
         return {"ok": True}
     finally:

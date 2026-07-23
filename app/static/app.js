@@ -4185,6 +4185,10 @@ function openMaster(type, row) {
       opts = [["", "— (독립 라인 / 대표)"]].concat(
         (M.line || []).filter(l => !l.parent_id && (!row || l.id !== row.id))
           .map(l => [l.id, l.name + (l.process ? " / " + l.process : "")]));
+    // 거래처 '유형' 콤보 옵션 = 기본 유형 + 이미 등록된 유형 (직접 입력한 새 유형도 다음부터 목록에 나타남)
+    if (type === "partner" && f === "type")
+      opts = [...new Set(["판매처", "자재 공급처", "용역업체"]
+        .concat((M.partner || []).map(p => p.type).filter(Boolean)))];
     // 인원 '직책' 콤보 옵션 = 기본 직책 + 이미 등록된 직책 (직접 입력도 가능)
     if (type === "staff" && f === "position")
       opts = [...new Set(["사장", "부장", "차장", "과장", "대리", "주임", "사원", "반장", "팀장", "이사"]
@@ -4488,9 +4492,11 @@ async function gotoLowMaterial(mid) {
 const PO = { items: [], id: null };
 async function openPo(prefillLow) {
   PO.items = []; PO.id = null;
-  // 거래처: 전체를 유형별 그룹으로 — 발주 대상은 대개 자재 공급처라 맨 앞 그룹으로
-  const list = M.partner.filter(p => p.status !== "중지");
-  $("poPartner").innerHTML = '<option value="">— 거래처 선택 —</option>' + partnerOptGroups(null, list, "자재 공급처");
+  // 거래처: 검색 입력(datalist) — 자재 공급처를 먼저, 미등록 이름 직접 입력도 허용
+  const list = M.partner.filter(p => p.status !== "중지")
+    .sort((a, b) => (b.type === "자재 공급처") - (a.type === "자재 공급처") || a.name.localeCompare(b.name, "ko"));
+  $("poPartnerDl").innerHTML = list.map(p => `<option value="${esc(p.name)}">${esc(p.type || "")}</option>`).join("");
+  $("poPartner").value = "";
   $("poDate").value = todayISO();
   $("poDue").value = ""; $("poNote").value = "";
   if (prefillLow) await poFillFromLow();
@@ -4535,7 +4541,11 @@ $("poItems").addEventListener("click", e => {
 $("poAddItem").onclick = () => { PO.items.push({ material_id: null, qty: "" }); renderPoItems(); };
 $("poFillLow").onclick = async () => { await poFillFromLow(); renderPoItems(); };
 function poBody() {
-  return { date: $("poDate").value || todayISO(), partner_id: +$("poPartner").value || null,
+  // 입력한 이름이 등록 거래처와 정확히 일치하면 그 거래처로, 아니면 이름만 저장(미등록 거래처 허용)
+  const pname = $("poPartner").value.trim();
+  const pa = M.partner.find(p => p.name === pname);
+  return { date: $("poDate").value || todayISO(),
+    partner_id: pa ? pa.id : null, partner_name: pname,
     due: $("poDue").value || "", note: $("poNote").value.trim(),
     items: PO.items.filter(it => it.material_id)
       .map(it => ({ material_id: it.material_id, qty: Number(String(it.qty ?? "").replace(/,/g, "")) || 0 })) };
@@ -4569,7 +4579,7 @@ $("poHistory").addEventListener("click", async e => {
   if (ld) {
     const h = (PO.hist || []).find(x => x.id === +ld.dataset.poload); if (!h) return;
     PO.id = h.id;
-    $("poPartner").value = h.partner_id || "";
+    $("poPartner").value = h.partner === "거래처 미지정" ? "" : h.partner;
     $("poDate").value = h.date; $("poDue").value = h.due || ""; $("poNote").value = h.note || "";
     PO.items = h.items.map(it => ({ material_id: it.material_id, qty: it.qty }));
     renderPoItems();
@@ -4584,7 +4594,7 @@ $("poHistory").addEventListener("click", async e => {
 /* 발주서 문서 HTML — 인쇄·메일 본문 공용. 메일은 CSS 클래스가 안 먹어서 전부 인라인 스타일 */
 function buildPoDoc() {
   const b = poBody();
-  const pa = M.partner.find(p => p.id === b.partner_id) || {};
+  const pa = M.partner.find(p => p.id === b.partner_id) || { name: b.partner_name };   // 미등록 = 이름만
   const TD = "border:1px solid #333; padding:6px 9px; font-size:13px;";
   const TH = TD + " background:#f0f0f0; font-weight:700; text-align:left;";
   const meta = (rows_) => `<table style="border-collapse:collapse; min-width:46%;">${rows_.map(([k, v]) =>
@@ -4628,16 +4638,35 @@ const POMAIL = { files: [] };
 $("poMailBtn").onclick = () => {
   const b = poBody();
   if (!b.items.length) return toast("발주 품목을 추가해주세요");
-  const pa = M.partner.find(p => p.id === b.partner_id);
-  if (!pa) return toast("거래처를 먼저 선택해주세요");
-  $("pmTo").value = pa.email || "";
+  if (!b.partner_name) return toast("거래처 이름을 입력해주세요");
+  const pa = M.partner.find(p => p.id === b.partner_id);   // 미등록이면 undefined (발송은 가능)
+  // 자동완성 목록: 이메일이 저장된 거래처 전부 — 이름으로 검색해 주소 선택
+  $("pmMailDl").innerHTML = M.partner.filter(p => p.email)
+    .map(p => `<option value="${esc(p.email)}">${esc(p.name)}</option>`).join("");
+  $("pmTo").value = (pa && pa.email) || "";
+  $("pmCc").value = "";
   $("pmSubject").value = `[리바이프로덕트] 발주서 (${b.date})${PO.id ? " #" + PO.id : ""}`;
-  $("pmMsg").value = `안녕하세요, ${pa.name} 담당자님.\n\n아래와 같이 발주드립니다. 확인 부탁드립니다.\n감사합니다.`;
+  $("pmMsg").value = `안녕하세요, ${b.partner_name} 담당자님.\n\n아래와 같이 발주드립니다. 확인 부탁드립니다.\n감사합니다.`;
   POMAIL.files = [];
   renderPmFiles();
-  $("pmHint").textContent = pa.email ? "" : "이 거래처에 저장된 이메일이 없습니다 — 주소를 입력하면 거래처 정보에도 저장됩니다";
+  $("pmHint").textContent = pa
+    ? (pa.email ? "" : "이 거래처에 저장된 이메일이 없습니다 — 주소를 입력하면 거래처 정보에도 저장됩니다")
+    : "등록되지 않은 거래처입니다 — 메일 주소를 직접 입력해주세요";
   $("poMailOverlay").classList.add("on");
 };
+/* 받는/참조 칸의 항목을 메일 주소로 해석 — 거래처 이름만 넣으면 저장된 메일로 변환.
+   이름이 맞는데 메일이 없으면 그 사실을 알려준다. */
+function resolveMailTokens(raw, label) {
+  const toks = String(raw || "").replace(/;/g, ",").split(",").map(t => t.trim()).filter(Boolean);
+  const out = [];
+  for (const t of toks) {
+    if (t.includes("@")) { const m = t.match(/<([^>]+)>/); out.push(m ? m[1] : t); continue; }
+    const pa = M.partner.find(p => p.name === t) || M.partner.find(p => p.name.includes(t));
+    if (pa && pa.email) out.push(pa.email);
+    else throw new Error(`${label} '${t}' — ${pa ? `'${pa.name}' 거래처에 저장된 메일이 없습니다` : "등록된 거래처가 아닙니다"}. 메일 주소를 직접 입력해주세요`);
+  }
+  return out;
+}
 window.closePoMail = () => $("poMailOverlay").classList.remove("on");
 function renderPmFiles() {
   $("pmFiles").innerHTML = POMAIL.files.map((f, i) => `
@@ -4664,27 +4693,32 @@ $("pmFile").addEventListener("change", async e => {
   renderPmFiles();
 });
 $("pmSend").onclick = async () => {
-  const to = $("pmTo").value.trim();
-  if (!to) return toast("받는 메일 주소를 입력해주세요");
+  let to, cc;
+  try {
+    to = resolveMailTokens($("pmTo").value, "받는 메일");
+    cc = resolveMailTokens($("pmCc").value, "참조");
+  } catch (e) { return toast("⚠ " + e.message); }
+  if (!to.length) return toast("받는 메일 주소를 입력해주세요");
   const b = poBody();
   const msgHtml = $("pmMsg").value.trim().split("\n").map(l => esc(l) || "&nbsp;").join("<br>");
   $("pmSend").disabled = true;
   $("pmSend").textContent = "보내는 중…";
   try {
     await api("/api/po/send", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ po_id: PO.id, to, subject: $("pmSubject").value.trim(),
+      body: JSON.stringify({ po_id: PO.id, to: to.join(","), cc: cc.join(","),
+        subject: $("pmSubject").value.trim(),
         html: `<p style="font-size:14px; line-height:1.7;">${msgHtml}</p><hr style="margin:14px 0; border:none; border-top:1px solid #ccc;">` + buildPoDoc(),
         attachments: POMAIL.files.map(f => ({ name: f.name, data: f.data })) }) });
-    // 거래처에 이메일이 없었으면 지금 입력한 주소를 저장 (다음부터 자동 입력)
+    // 등록 거래처인데 이메일이 없었으면 지금 보낸 주소를 저장 (다음부터 자동 입력)
     const pa = M.partner.find(p => p.id === b.partner_id);
     if (pa && !pa.email) {
       try {
         await api("/api/masters/partner/" + pa.id, { method: "PUT",
-          headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: to.split(",")[0].trim() }) });
-        pa.email = to.split(",")[0].trim();
+          headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: to[0] }) });
+        pa.email = to[0];
       } catch (e2) { }
     }
-    toast("📧 발주서 메일을 보냈습니다");
+    toast("📧 발주서 메일을 보냈습니다" + (cc.length ? ` (참조 ${cc.length}명)` : ""));
     closePoMail();
     loadPoHistory();
   } catch (err) { /* api()가 오류 토스트 표시 */ }

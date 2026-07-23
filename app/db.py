@@ -195,6 +195,7 @@ CREATE TABLE IF NOT EXISTS purchase_order (
   id INTEGER PRIMARY KEY,
   date TEXT NOT NULL,                  -- 발주일
   partner_id INTEGER REFERENCES partner(id),
+  partner_name TEXT DEFAULT '',        -- 미등록 거래처 직접 입력 시 이름 (partner_id 없이도 발주 가능)
   due TEXT DEFAULT '',                 -- 납기 희망일
   note TEXT DEFAULT '',
   items TEXT DEFAULT '[]',             -- [{material_id, name, spec, unit, qty}]
@@ -581,9 +582,9 @@ def init_db() -> None:
     for col in ("biz_no", "ceo", "mobile", "email"):
         if col not in pcols:
             con.execute(f"ALTER TABLE partner ADD COLUMN {col} TEXT DEFAULT ''")
-    # 발주서 메일 발송 기록
+    # 발주서 메일 발송 기록 + 미등록 거래처명
     pocols = [r[1] for r in con.execute("PRAGMA table_info(purchase_order)")]
-    for col in ("sent_at", "sent_to"):
+    for col in ("sent_at", "sent_to", "partner_name"):
         if col not in pocols:
             con.execute(f"ALTER TABLE purchase_order ADD COLUMN {col} TEXT DEFAULT ''")
     # 용역도 출근·퇴근·휴게 입력 지원 (정직원 staffing_member와 동일)

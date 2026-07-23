@@ -1196,7 +1196,9 @@
     <h3>📋 발주서</h3>
     <p class="hint">부족 자재를 거래처에 주문하는 발주서를 만들고 인쇄합니다. 저장하면 아래 최근 발주서에 남습니다.</p>
     <div class="fgrid">
-      <div class="fld"><label>거래처 (수신)</label><select id="poPartner"></select></div>
+      <div class="fld"><label>거래처 (수신) — 검색 또는 직접 입력 (미등록 거래처도 가능)</label>
+        <input id="poPartner" list="poPartnerDl" placeholder="🔍 거래처 이름 검색" autocomplete="off">
+        <datalist id="poPartnerDl"></datalist></div>
       <div class="fld"><label>발주일</label>
         <input class="datepick" type="text" readonly id="poDate" placeholder="📅 발주일"></div>
       <div class="fld"><label>납기 희망일</label>
@@ -1232,7 +1234,11 @@
     <h3>📧 발주서 메일 보내기</h3>
     <p class="hint">발주서 표가 메일 본문에 자동으로 들어갑니다 · 보낸 사람은 로그인 사용자 이름·직급으로 표시됩니다.</p>
     <div class="fgrid">
-      <div class="fld full"><label>받는 메일 (쉼표로 여러 명)</label><input id="pmTo" placeholder="예: order@company.co.kr"></div>
+      <div class="fld full"><label>받는 메일 (쉼표로 여러 명 · 거래처 이름만 넣어도 저장된 메일로 자동 변환)</label>
+        <input id="pmTo" list="pmMailDl" placeholder="예: order@company.co.kr 또는 거래처명" autocomplete="off"></div>
+      <div class="fld full"><label>참조 (CC · 쉼표로 여러 명)</label>
+        <input id="pmCc" list="pmMailDl" placeholder="참조로 받을 주소 (없으면 비워두세요)" autocomplete="off"></div>
+      <datalist id="pmMailDl"></datalist>
       <div class="fld full"><label>제목</label><input id="pmSubject"></div>
       <div class="fld full"><label>메시지</label><textarea id="pmMsg" rows="4" style="width:100%; resize:vertical; font:inherit; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:var(--surface); color:var(--ink);"></textarea></div>
       <div class="fld full"><label>첨부 (이미지·파일 · 개당 10MB, 합계 20MB)</label>
