@@ -1,5 +1,5 @@
 {
-  "version": "1.18.0",
+  "version": "1.18.1",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· 발주서 메일 작성창이 리치 에디터로 — 글꼴·크기·굵게/기울임/밑줄·글자색·정렬·목록·이미지 삽입(본문 내장)\n· 작성한 서식·이미지가 받는 쪽 메일에 그대로 표시됩니다"
+  "notes": "· 메일 보내기 창 확대·정리 — 받는/참조 나란히, 글꼴·크기 버튼 크기 정상화\n· 창 안에 발주서 미리보기 표시 — 발송될 내용이 그대로 보입니다"
 }

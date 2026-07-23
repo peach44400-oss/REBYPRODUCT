@@ -5022,6 +5022,7 @@ $("poMailBtn").onclick = () => {
   $("pmHint").textContent = pa
     ? (pa.email ? "" : "이 거래처에 저장된 이메일이 없습니다 — 주소를 입력하면 거래처 정보에도 저장됩니다")
     : "등록되지 않은 거래처입니다 — 메일 주소를 직접 입력해주세요";
+  $("pmPreview").innerHTML = buildPoDoc();   // 발송될 발주서 그대로 미리보기
   $("poMailOverlay").classList.add("on");
 };
 /* 받는/참조 칸의 항목을 메일 주소로 해석 — 거래처 이름만 넣으면 저장된 메일로 변환.

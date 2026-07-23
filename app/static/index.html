@@ -262,7 +262,7 @@
     background:var(--surface); color:var(--ink); font-size:12px; cursor:pointer;}
   #pmToolbar button:hover{background:var(--bg);}
   #pmToolbar select{height:26px; font-size:12px; border:1px solid var(--line); border-radius:5px;
-    background:var(--surface); color:var(--ink);}
+    background:var(--surface); color:var(--ink); width:auto !important; max-width:110px;}
   #pmToolbar input[type=color]{width:30px; height:26px; padding:1px; border:1px solid var(--line);
     border-radius:5px; background:var(--surface); cursor:pointer;}
   #pmMsg{min-height:130px; max-height:280px; overflow-y:auto; padding:10px 12px;
@@ -1391,13 +1391,13 @@
 
 <!-- 발주서 메일 작성 모달 -->
 <div class="overlay" id="poMailOverlay">
-  <div class="modal" style="max-width:560px;">
+  <div class="modal" style="width:min(840px, 96vw);">
     <h3>📧 발주서 메일 보내기</h3>
-    <p class="hint">발주서 표가 메일 본문에 자동으로 들어갑니다 · 보낸 사람은 로그인 사용자 이름·직급으로 표시됩니다.</p>
+    <p class="hint">보낸 사람은 로그인 사용자 이름·직급으로 표시됩니다 · 아래 <b>발주서 미리보기</b>가 메시지 뒤에 자동으로 붙어 발송됩니다.</p>
     <div class="fgrid">
-      <div class="fld full"><label>받는 메일 (쉼표로 여러 명 · 거래처 이름만 넣어도 저장된 메일로 자동 변환)</label>
+      <div class="fld"><label>받는 메일 (쉼표로 여러 명 · 거래처 이름만 넣어도 자동 변환)</label>
         <input id="pmTo" list="pmMailDl" placeholder="예: order@company.co.kr 또는 거래처명" autocomplete="off"></div>
-      <div class="fld full"><label>참조 (CC · 쉼표로 여러 명)</label>
+      <div class="fld"><label>참조 (CC · 쉼표로 여러 명)</label>
         <input id="pmCc" list="pmMailDl" placeholder="참조로 받을 주소 (없으면 비워두세요)" autocomplete="off"></div>
       <datalist id="pmMailDl"></datalist>
       <div class="fld full"><label>제목</label><input id="pmSubject"></div>
@@ -1427,6 +1427,9 @@
           <input type="file" id="pmFile" multiple style="display:none;">
           <span id="pmFiles" style="flex:1;"></span>
         </div></div>
+      <div class="fld full"><label>📋 발주서 미리보기 — 이 내용이 메시지 아래에 붙어 발송됩니다</label>
+        <div id="pmPreview" style="max-height:240px; overflow-y:auto; border:1px solid var(--line-soft);
+             border-radius:8px; padding:12px; background:#fff;"></div></div>
     </div>
     <p class="hint" id="pmHint" style="color:var(--warn);"></p>
     <div class="modal-foot">
