@@ -5016,7 +5016,7 @@ $("poMailBtn").onclick = () => {
   $("pmTo").value = (pa && pa.email) || "";
   $("pmCc").value = "";
   $("pmSubject").value = `[리바이프로덕트] 발주서 (${b.date})${PO.id ? " #" + PO.id : ""}`;
-  $("pmMsg").value = `안녕하세요, ${b.partner_name} 담당자님.\n\n아래와 같이 발주드립니다. 확인 부탁드립니다.\n감사합니다.`;
+  $("pmMsg").innerHTML = `안녕하세요, ${esc(b.partner_name)} 담당자님.<br><br>아래와 같이 발주드립니다. 확인 부탁드립니다.<br>감사합니다.`;
   POMAIL.files = [];
   renderPmFiles();
   $("pmHint").textContent = pa
@@ -5062,6 +5062,39 @@ $("pmFile").addEventListener("change", async e => {
   e.target.value = "";
   renderPmFiles();
 });
+/* 메일 리치 에디터 툴바 — 서식(execCommand)·글자색·이미지 삽입(본문 내장) */
+$("pmToolbar").addEventListener("mousedown", e => {
+  if (e.target.closest("button")) e.preventDefault();   // 클릭해도 본문 선택 영역 유지
+});
+$("pmToolbar").addEventListener("click", e => {
+  const b = e.target.closest("button[data-cmd]");
+  if (!b) return;
+  $("pmMsg").focus();
+  document.execCommand(b.dataset.cmd, false, null);
+});
+$("pmToolbar").addEventListener("change", e => {
+  const sel = e.target.closest("select[data-cmd]");
+  if (sel && sel.value) {
+    $("pmMsg").focus();
+    document.execCommand(sel.dataset.cmd, false, sel.value);
+    sel.value = "";
+  }
+});
+$("pmColor").addEventListener("input", e => {
+  $("pmMsg").focus();
+  document.execCommand("foreColor", false, e.target.value);
+});
+$("pmImgBtn").onclick = () => $("pmImgFile").click();
+$("pmImgFile").addEventListener("change", async e => {
+  const f = e.target.files[0]; e.target.value = "";
+  if (!f) return;
+  if (f.size > 5 * 1024 * 1024) return toast("본문 이미지는 5MB 이하만 넣을 수 있습니다");
+  const data = await new Promise((res, rej) => {
+    const rd = new FileReader(); rd.onload = () => res(rd.result); rd.onerror = rej; rd.readAsDataURL(f);
+  });
+  $("pmMsg").focus();
+  document.execCommand("insertImage", false, data);   // 본문에 내장(base64) — 수신 메일에서 바로 보임
+});
 $("pmSend").onclick = async () => {
   let to, cc;
   try {
@@ -5070,13 +5103,13 @@ $("pmSend").onclick = async () => {
   } catch (e) { return toast("⚠ " + e.message); }
   if (!to.length) return toast("받는 메일 주소를 입력해주세요");
   const b = poBody();
-  const msgHtml = $("pmMsg").value.trim().split("\n").map(l => esc(l) || "&nbsp;").join("<br>");
+  const msgHtml = $("pmMsg").innerHTML;   // 리치 에디터 본문 HTML 그대로 (서식·이미지 포함)
   $("pmSend").disabled = true;
   $("pmSend").textContent = "보내는 중…";
   try {
     // 메일 클라이언트가 표를 읽기창 전체 폭으로 늘리지 않게 — 문서 폭 680px 고정 (테이블 래퍼가 호환성 가장 좋음)
     const mailHtml = `<table style="width:680px; max-width:100%; border-collapse:collapse;"><tr><td>
-        <p style="font-size:14px; line-height:1.7; margin:0 0 12px;">${msgHtml}</p>
+        <div style="font-size:14px; line-height:1.7; margin:0 0 12px;">${msgHtml}</div>
         <hr style="margin:14px 0; border:none; border-top:1px solid #ccc;">
         ${buildPoDoc()}
       </td></tr></table>`;

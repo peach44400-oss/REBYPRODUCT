@@ -1,5 +1,5 @@
 {
-  "version": "1.17.0",
+  "version": "1.18.0",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· 발주 정산서를 화면에서 바로 확인 — 거래처 선택 → 정산서(품목별 상세·합계) 표시\n· A4 인쇄 최적화(행 잘림 방지·머리행 반복) · [PDF 저장](인쇄 창에서 'PDF로 저장') · CSV 저장 유지"
+  "notes": "· 발주서 메일 작성창이 리치 에디터로 — 글꼴·크기·굵게/기울임/밑줄·글자색·정렬·목록·이미지 삽입(본문 내장)\n· 작성한 서식·이미지가 받는 쪽 메일에 그대로 표시됩니다"
 }

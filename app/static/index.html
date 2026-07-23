@@ -255,6 +255,20 @@
     padding:4px 8px; vertical-align:middle; line-height:1.5;}
   /* 출퇴근 시각 드롭다운 [시]:[분] — 인원 칩 안에서 컴팩트하게 */
   .tsel{width:46px; min-width:46px; font-size:11px; padding:1px 2px; text-align:center;}
+  /* 메일 리치 에디터 — 툴바 + contenteditable 본문 */
+  #pmToolbar{display:flex; gap:3px; flex-wrap:wrap; align-items:center; padding:5px 6px;
+    border:1px solid var(--line); border-bottom:0; border-radius:8px 8px 0 0; background:var(--bg);}
+  #pmToolbar button{min-width:28px; height:26px; padding:0 7px; border:1px solid var(--line); border-radius:5px;
+    background:var(--surface); color:var(--ink); font-size:12px; cursor:pointer;}
+  #pmToolbar button:hover{background:var(--bg);}
+  #pmToolbar select{height:26px; font-size:12px; border:1px solid var(--line); border-radius:5px;
+    background:var(--surface); color:var(--ink);}
+  #pmToolbar input[type=color]{width:30px; height:26px; padding:1px; border:1px solid var(--line);
+    border-radius:5px; background:var(--surface); cursor:pointer;}
+  #pmMsg{min-height:130px; max-height:280px; overflow-y:auto; padding:10px 12px;
+    border:1px solid var(--line); border-radius:0 0 8px 8px; background:var(--surface); color:var(--ink);
+    font-size:13.5px; line-height:1.7; outline:none;}
+  #pmMsg img{max-width:100%; height:auto;}
   /* 페이지네이션 — 데이터가 많은 표 공통 (≪ ‹ 1 2 3 … › ≫) */
   .pager{display:flex; gap:3px; justify-content:center; align-items:center; margin:10px 0 2px; flex-wrap:wrap;}
   .pager button{min-width:28px; height:26px; padding:0 7px; border:1px solid var(--line); border-radius:6px;
@@ -1387,7 +1401,26 @@
         <input id="pmCc" list="pmMailDl" placeholder="참조로 받을 주소 (없으면 비워두세요)" autocomplete="off"></div>
       <datalist id="pmMailDl"></datalist>
       <div class="fld full"><label>제목</label><input id="pmSubject"></div>
-      <div class="fld full"><label>메시지</label><textarea id="pmMsg" rows="4" style="width:100%; resize:vertical; font:inherit; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:var(--surface); color:var(--ink);"></textarea></div>
+      <div class="fld full"><label>메시지</label>
+        <div id="pmToolbar">
+          <select data-cmd="fontName" title="글꼴">
+            <option value="">글꼴</option><option>맑은 고딕</option><option>굴림</option><option>돋움</option><option>바탕</option><option>Arial</option>
+          </select>
+          <select data-cmd="fontSize" title="크기">
+            <option value="">크기</option><option value="2">작게</option><option value="3">보통</option><option value="4">크게</option><option value="5">아주 크게</option>
+          </select>
+          <button type="button" data-cmd="bold" title="굵게"><b>가</b></button>
+          <button type="button" data-cmd="italic" title="기울임"><i>가</i></button>
+          <button type="button" data-cmd="underline" title="밑줄"><u>가</u></button>
+          <input type="color" id="pmColor" value="#c2372c" title="글자색">
+          <button type="button" data-cmd="justifyLeft" title="왼쪽 정렬">⯇</button>
+          <button type="button" data-cmd="justifyCenter" title="가운데 정렬">☰</button>
+          <button type="button" data-cmd="insertUnorderedList" title="목록">•≡</button>
+          <button type="button" id="pmImgBtn" title="이미지 삽입 (본문에 들어감)">🖼 이미지</button>
+          <input type="file" id="pmImgFile" accept="image/*" style="display:none;">
+          <button type="button" data-cmd="removeFormat" title="서식 지우기">지움</button>
+        </div>
+        <div id="pmMsg" contenteditable="true"></div></div>
       <div class="fld full"><label>첨부 (이미지·파일 · 개당 10MB, 합계 20MB)</label>
         <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
           <button class="btn sm" id="pmAttach">📎 파일 첨부</button>
