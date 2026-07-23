@@ -543,6 +543,10 @@
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M1.5 5.5h8v6h-8zM9.5 7.5h3l2 2.5v1.5h-5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><circle cx="4" cy="12.5" r="1.2" stroke="currentColor" stroke-width="1.2"/><circle cx="11.5" cy="12.5" r="1.2" stroke="currentColor" stroke-width="1.2"/></svg>
         <em>출고 현황</em>
       </button>
+      <button data-scr="postat" id="navPoStat" style="display:none;" title="발주서 목록·검색·입고 처리·거래처별 정산">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="3" y="2.5" width="10" height="11" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M5.5 5.5h5M5.5 8h5M5.5 10.5h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M10.2 11.6l1 1 1.8-2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <em>발주 현황</em>
+      </button>
       <button data-scr="lot">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2 13.5 4.7v6.6L8 14 2.5 11.3V4.7L8 2Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M2.7 4.8 8 7.4l5.3-2.6M8 7.4V14" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
         <em>LOT 관리</em><span class="cnt" id="navLotCnt" style="display:none">0</span>
@@ -746,6 +750,35 @@
           </div>
         </div>
         <div id="shipSections"></div>
+      </div>
+    </section>
+
+    <!-- 발주 현황 (자재 담당·관리자) -->
+    <section class="screen" id="scr-postat">
+      <div class="card">
+        <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+          <div class="tabs" id="postTabs" style="border-bottom:0; margin-bottom:0;">
+            <button data-pot="all">전체</button>
+            <button data-pot="d">일별</button>
+            <button data-pot="w">주별</button>
+            <button class="on" data-pot="m">월별</button>
+            <button data-pot="y">년별</button>
+          </div>
+          <span class="spacer"></span>
+          <button class="btn sm primary" id="postNew">+ 발주서 작성</button>
+          <button class="btn sm" id="postCsv" title="거래처별 정산 표를 CSV(엑셀)로 저장">📄 정산 CSV</button>
+          <button class="btn sm" onclick="window.print()">인쇄</button>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px; margin:12px 0;">
+          <button class="btn ghost sm" id="postPrev">◀</button>
+          <b class="num" style="font-size:14.5px;" id="postLbl">-</b>
+          <button class="btn ghost sm" id="postNext">▶</button>
+          <span class="spacer"></span>
+          <input class="mini-input" id="postFilter" autocomplete="off"
+                 placeholder="🔍 품목명·거래처명으로 검색" style="text-align:left; width:230px;">
+        </div>
+        <div id="postKpis" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;"></div>
+        <div id="postBody"></div>
       </div>
     </section>
 
@@ -1252,13 +1285,37 @@
 <div class="overlay" id="poListOverlay">
   <div class="modal" style="width:min(780px, 94vw);">
     <h3>📑 발주서 이력</h3>
-    <p class="hint">발송 전 발주서는 [열기]로 불러와 수정·발송하고, 이미 보낸 발주서는 [보기]로 보낸 내용을 그대로 확인합니다 (발송분은 수정·재발송 불가).</p>
+    <p class="hint">최근 20건만 표시합니다 — 전체 목록·검색·입고 처리·거래처별 정산은 <button class="uselink" data-goscr="postat" onclick="closePoList()" style="font-weight:700;">발주 현황</button> 화면에서. 발송 전 발주서는 [열기]로 수정·발송, 보낸 발주서는 [보기]로 확인만 됩니다.</p>
     <div style="max-height:440px; overflow-y:auto;"><table style="width:100%; table-layout:auto;">
       <thead><tr><th>번호</th><th>발주일</th><th>거래처</th><th class="r">품목</th><th>작성자</th><th>메일 발송</th><th></th></tr></thead>
       <tbody class="num" id="poListBody" style="font-size:12.5px;"></tbody>
     </table></div>
     <div class="modal-foot">
       <button class="btn" onclick="closePoList()">닫기</button>
+    </div>
+  </div>
+</div>
+
+<!-- 발주서 입고 처리 모달 -->
+<div class="overlay" id="poRecvOverlay">
+  <div class="modal" style="width:min(560px, 94vw);">
+    <h3 id="poRecvTitle">📥 입고 처리</h3>
+    <p class="hint">실제 입고된 수량을 확인하고 확정하면 <b>원부자재 입고에 자동 기록</b>되어 재고에 바로 반영됩니다 (일일 입력의 입고 카드에도 나타나며 거기서 수정 가능). 실제 단가를 입력하면 거래처별 정산 금액이 계산됩니다.</p>
+    <div class="fgrid">
+      <div class="fld"><label>입고일</label>
+        <input class="datepick" type="text" readonly id="poRecvDate" placeholder="📅 입고일"></div>
+      <div class="fld"><label>제조일자 (선택)</label>
+        <input class="datepick" type="text" readonly id="poRecvMade" placeholder="📅 제조일자"></div>
+      <div class="fld"><label>유통기한 (선택)</label>
+        <input class="datepick" type="text" readonly id="poRecvExpiry" placeholder="📅 유통기한"></div>
+    </div>
+    <div class="tbl-wrap" style="max-height:300px; overflow-y:auto;"><table>
+      <thead><tr><th>자재명</th><th class="r">발주 수량</th><th class="r">실제 입고</th><th class="r" id="poRecvPriceTh">실제 단가(원)</th></tr></thead>
+      <tbody class="num" id="poRecvItems"></tbody>
+    </table></div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closePoRecv()">취소</button>
+      <button class="btn primary" id="poRecvSave">📥 입고 확정</button>
     </div>
   </div>
 </div>

@@ -202,7 +202,9 @@ CREATE TABLE IF NOT EXISTS purchase_order (
   created_at TEXT DEFAULT (datetime('now','localtime')),
   created_by TEXT DEFAULT '',
   sent_at TEXT DEFAULT '',             -- 메일 발송 시각
-  sent_to TEXT DEFAULT ''              -- 발송 수신 주소
+  sent_to TEXT DEFAULT '',             -- 발송 수신 주소
+  received_at TEXT DEFAULT '',         -- 입고 처리 시각 (자재 입고 자동 반영됨)
+  received_by TEXT DEFAULT ''          -- 입고 처리한 사용자
 );
 CREATE INDEX IF NOT EXISTS idx_po_date ON purchase_order(date);
 
@@ -582,9 +584,9 @@ def init_db() -> None:
     for col in ("biz_no", "ceo", "mobile", "email"):
         if col not in pcols:
             con.execute(f"ALTER TABLE partner ADD COLUMN {col} TEXT DEFAULT ''")
-    # 발주서 메일 발송 기록 + 미등록 거래처명
+    # 발주서 메일 발송 기록 + 미등록 거래처명 + 입고 처리 기록
     pocols = [r[1] for r in con.execute("PRAGMA table_info(purchase_order)")]
-    for col in ("sent_at", "sent_to", "partner_name"):
+    for col in ("sent_at", "sent_to", "partner_name", "received_at", "received_by"):
         if col not in pocols:
             con.execute(f"ALTER TABLE purchase_order ADD COLUMN {col} TEXT DEFAULT ''")
     # 용역도 출근·퇴근·휴게 입력 지원 (정직원 staffing_member와 동일)

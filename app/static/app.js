@@ -74,7 +74,7 @@ async function reloadMaster(t) {
 }
 
 /* ── 네비게이션 ─────────────────────── */
-const TITLES = { dash: "대시보드", prod: "생산 현황", ship: "출고 현황", entry: "일일 입력", lot: "LOT 관리", items: "기준정보 관리", ana: "분석", lookup: "기록 조회", staff: "인원 관리" };
+const TITLES = { dash: "대시보드", prod: "생산 현황", ship: "출고 현황", postat: "발주 현황", entry: "일일 입력", lot: "LOT 관리", items: "기준정보 관리", ana: "분석", lookup: "기록 조회", staff: "인원 관리" };
 /* 표 검색(필터)은 화면·탭을 옮기면 초기화한다.
    남아 있으면 다른 화면에서 '등록된 항목이 없습니다'만 보여 데이터가 없는 것처럼 오해하게 된다.
    ※ 행 추가용 검색(qaProd 등)은 필터가 아니라 입력칸이므로 대상 아님. */
@@ -87,6 +87,7 @@ function resetSearches() {
    ["dispHistFilter", () => { LOT.dispQ = ""; }],
    ["shipFilter", () => { SHIP.q = ""; }],
    ["staffFilter", () => { STAFF.q = ""; }],
+   ["postFilter", () => { POSTAT.q = ""; }],
    ["prodFilter", null], ["anaRotFilter", null],
   ].forEach(([id, clear]) => {
     const el = $(id);
@@ -101,6 +102,7 @@ $("nav").addEventListener("click", e => {
   $("scrTitle").textContent = TITLES[b.dataset.scr];
   resetSearches();
   const fn = { dash: loadDash, prod: loadProd, ship: loadShip, entry: openEntry, lot: loadLot, items: renderMasters, ana: loadAna, lookup: () => lkCal.render(),
+    postat: loadPoStat,
     staff: () => { STAFF.mode = "d"; STAFF.date = todayISO();   // 진입 시 항상 일별·오늘로 초기화
       document.querySelectorAll("#staffTabs button").forEach(x => x.classList.toggle("on", x.dataset.sh === "d"));
       loadStaff(); } }[b.dataset.scr];
@@ -4606,7 +4608,7 @@ $("poHistory").addEventListener("click", async e => {
 /* ── 발주서 이력 목록 (사이드바 [📑 이력]) — 발송 여부까지 한눈에, 열기=재인쇄·재발송 ── */
 async function openPoList() {
   let hist = [];
-  try { hist = await api("/api/po?limit=100"); } catch (e) { }
+  try { hist = await api("/api/po?limit=20"); } catch (e) { }   // 빠른 확인용 — 전체는 발주 현황에서
   PO.listHist = hist;
   $("poListBody").innerHTML = hist.map(h => `<tr>
     <td class="r">#${h.id}</td>
@@ -4658,6 +4660,152 @@ $("poViewPrint").onclick = () => {
   window.addEventListener("afterprint", done);
   window.print();
   setTimeout(done, 1500);
+};
+
+/* ══ 발주 현황 — 목록·검색·입고 처리·거래처별 정산 (자재 담당·admin) ═════ */
+const POSTAT = { mode: "m", date: "", q: "", data: null };
+async function loadPoStat() {
+  const d = await api(`/api/postatus?mode=${POSTAT.mode}&date=${POSTAT.date}&q=${encodeURIComponent(POSTAT.q)}&limit=50`);
+  POSTAT.data = d; POSTAT.date = d.date;
+  const [a, b] = d.range;
+  $("postLbl").textContent = POSTAT.mode === "all" ? "전체 기간"
+    : POSTAT.mode === "d" ? `${d.date} (${dowOf(d.date)})`
+    : POSTAT.mode === "y" ? d.date.slice(0, 4) + "년"
+    : POSTAT.mode === "m" ? d.date.slice(0, 7).replace("-", "년 ") + "월"
+    : `${a} ~ ${b}`;
+  renderPoStat();
+}
+function renderPoStat() {
+  const d = POSTAT.data; if (!d) return;
+  const money = canM("mat");
+  $("postKpis").innerHTML = [
+    ["발주", NF(d.total) + "건"],
+    ["입고완료", NF(d.recv_cnt) + "건"],
+    ...(money && d.total_amount ? [["정산 금액", NF(Math.round(d.total_amount)) + "원"]] : []),
+    ...(d.unpriced ? [["단가 미입력", NF(d.unpriced) + "품목"]] : []),
+  ].map(([t, v]) => `<span class="pchip num">${t} <b style="margin-left:4px">${v}</b></span>`).join("");
+  // 1) 거래처별 정산 (월별로 보면 곧 월말 정산표)
+  const amtCol = money ? '<th class="r">금액(원)</th>' : "";
+  const partTbl = `<div class="tbl-wrap"><table id="postPartTbl">
+    <thead><tr><th>거래처</th><th class="r">발주 건수</th><th class="r">입고완료</th><th class="r">품목 수</th>${amtCol}<th>단가 미입력</th></tr></thead>
+    <tbody class="num">${d.by_partner.map(p => `<tr>
+      <td><b>${esc(p.partner)}</b></td>
+      <td class="r">${NF(p.cnt)}</td><td class="r">${NF(p.recv)}</td><td class="r">${NF(p.items)}</td>
+      ${money ? `<td class="r" style="font-weight:700">${p.amount ? NF(Math.round(p.amount)) : "—"}</td>` : ""}
+      <td class="auto">${p.unpriced ? p.unpriced + "품목" : "—"}</td></tr>`).join("")
+      || `<tr><td colspan="6" class="auto">이 기간 발주가 없습니다</td></tr>`}</tbody></table></div>`;
+  // 2) 발주 목록
+  const sum = it => it.map(x => x.name).join(", ");
+  const listRows = d.pos.map(h => {
+    const first = h.items[0] ? h.items[0].name : "—";
+    const extra = h.items.length > 1 ? ` 외 ${h.items.length - 1}건` : "";
+    return `<tr>
+      <td class="r">#${h.id}</td><td>${h.date}</td>
+      <td style="max-width:150px; overflow:hidden; text-overflow:ellipsis;"><b>${esc(h.partner)}</b></td>
+      <td style="max-width:180px; overflow:hidden; text-overflow:ellipsis;" title="${esc(sum(h.items))}">${esc(first)}${extra}</td>
+      <td>${h.received_at
+        ? `<span style="color:var(--ok); font-weight:700" title="입고 ${esc(h.received_at.slice(0, 16))} · ${esc(h.received_by || "")}">✅ 입고완료</span>`
+        : '<span style="color:#B45309; font-weight:700">⏳ 진행중</span>'}</td>
+      <td>${h.sent_at ? `<span class="auto" title="${esc(h.sent_to || "")}">📧</span>` : '<span class="auto">—</span>'}</td>
+      <td class="auto">${esc(h.created_by || "—")}</td>
+      ${money ? `<td class="r">${h.amount ? NF(Math.round(h.amount)) : "—"}</td>` : ""}
+      <td style="white-space:nowrap;">
+        <button class="btn ghost sm" data-psopen="${h.id}">${h.sent_at ? "보기" : "열기"}</button>
+        ${!h.received_at ? `<button class="btn ghost sm" data-psrecv="${h.id}" style="color:var(--ok); border-color:var(--ok)">📥 입고</button>` : ""}
+        <button class="btn ghost sm" data-psdel="${h.id}" style="color:var(--crit)">삭제</button></td></tr>`;
+  }).join("");
+  const listTbl = `<div class="tbl-wrap"><table>
+    <thead><tr><th>번호</th><th>발주일</th><th>거래처</th><th>품목</th><th>상태</th><th>발송</th><th>작성자</th>${money ? '<th class="r">금액(원)</th>' : ""}<th></th></tr></thead>
+    <tbody class="num" style="font-size:12.5px;">${listRows
+      || `<tr><td colspan="9" class="auto">발주서가 없습니다 — [+ 발주서 작성]으로 만드세요</td></tr>`}</tbody></table></div>`
+    + (d.total > d.shown ? `<p class="hint">최근 ${d.shown}건 표시 (전체 ${d.total}건) — 기간이나 검색으로 좁혀보세요</p>` : "");
+  $("postBody").innerHTML =
+    `<div style="font-size:12.5px; font-weight:700; color:var(--muted); margin:2px 0 6px;">거래처별 정산 <span class="auto" style="font-weight:400">— 금액 = 입고 처리 때 입력한 실제 단가 기준</span></div>` + partTbl +
+    `<div style="font-size:12.5px; font-weight:700; color:var(--muted); margin:16px 0 6px;">발주 목록</div>` + listTbl;
+}
+$("postTabs").addEventListener("click", e => {
+  const b = e.target.closest("button[data-pot]"); if (!b) return;
+  document.querySelectorAll("#postTabs button").forEach(x => x.classList.toggle("on", x === b));
+  POSTAT.mode = b.dataset.pot; loadPoStat();
+});
+function postStep(dir) {
+  if (POSTAT.mode === "all") return;
+  const dd = new Date((POSTAT.date || todayISO()) + "T00:00:00");
+  if (POSTAT.mode === "d") dd.setDate(dd.getDate() + dir);
+  else if (POSTAT.mode === "w") dd.setDate(dd.getDate() + dir * 7);
+  else if (POSTAT.mode === "m") dd.setMonth(dd.getMonth() + dir);
+  else dd.setFullYear(dd.getFullYear() + dir);
+  POSTAT.date = fmtISO(dd); loadPoStat();
+}
+$("postPrev").onclick = () => postStep(-1);
+$("postNext").onclick = () => postStep(1);
+let _postT = null;
+$("postFilter").addEventListener("input", e => {
+  POSTAT.q = e.target.value.trim();
+  clearTimeout(_postT); _postT = setTimeout(loadPoStat, 250);   // 타이핑 멈추면 검색
+});
+$("postNew").onclick = () => openPo(false);
+$("postCsv").onclick = () => {
+  const t = $("postPartTbl"); if (!t) return;
+  tableToCsv(t.tHead, t.tBodies[0], csvName("발주정산", $("postLbl").textContent));
+};
+$("postBody").addEventListener("click", async e => {
+  const findPo = id => (POSTAT.data.pos || []).find(x => x.id === +id);
+  const op = e.target.closest("[data-psopen]");
+  if (op) {
+    const h = findPo(op.dataset.psopen); if (!h) return;
+    if (h.sent_at) { openPoView(h); return; }
+    await openPo(false); applyPoRecord(h);
+    return;
+  }
+  const rc = e.target.closest("[data-psrecv]");
+  if (rc) { const h = findPo(rc.dataset.psrecv); if (h) openPoRecv(h); return; }
+  const del = e.target.closest("[data-psdel]");
+  if (del && confirm(`발주서 #${del.dataset.psdel}를 삭제할까요?${findPo(del.dataset.psdel)?.received_at ? "\n(입고 기록(원부자재 입고)은 남고 발주서만 삭제됩니다)" : ""}`)) {
+    try { await api("/api/po/" + del.dataset.psdel, { method: "DELETE" }); loadPoStat(); } catch (err) { }
+  }
+});
+
+/* ── 입고 처리 — 발주 품목을 원부자재 입고로 자동 기록 (재고 반영) ── */
+const PORECV = { h: null };
+function openPoRecv(h) {
+  PORECV.h = h;
+  const money = canM("mat");
+  $("poRecvTitle").textContent = `📥 입고 처리 — 발주서 #${h.id} (${h.partner})`;
+  $("poRecvDate").value = todayISO();
+  $("poRecvMade").value = ""; $("poRecvExpiry").value = "";
+  $("poRecvPriceTh").style.display = money ? "" : "none";
+  $("poRecvItems").innerHTML = h.items.map((it, i) => `<tr data-pri="${i}">
+    <td><b>${esc(it.name)}</b> <span class="auto" style="font-size:11px">${esc(it.spec || "")}</span></td>
+    <td class="r auto">${NF(it.qty)} ${esc(it.unit || "")}</td>
+    <td class="r"><input class="mini-input num" data-prf="qty" value="${it.qty ?? ""}" style="width:80px" inputmode="decimal"></td>
+    ${money ? `<td class="r"><input class="mini-input num" data-prf="price" value="" placeholder="정산용 (선택)" style="width:100px" inputmode="decimal"></td>` : ""}
+  </tr>`).join("");
+  $("poRecvOverlay").classList.add("on");
+}
+window.closePoRecv = () => $("poRecvOverlay").classList.remove("on");
+$("poRecvSave").onclick = async () => {
+  const h = PORECV.h; if (!h) return;
+  const items = [...document.querySelectorAll("#poRecvItems tr[data-pri]")].map(tr => {
+    const it = h.items[+tr.dataset.pri];
+    const qEl = tr.querySelector('[data-prf="qty"]'), pEl = tr.querySelector('[data-prf="price"]');
+    return { material_id: it.material_id,
+      qty: Number(String(qEl.value).replace(/,/g, "")) || 0,
+      price: pEl ? (Number(String(pEl.value).replace(/,/g, "")) || 0) : 0 };
+  }).filter(x => x.qty > 0);
+  if (!items.length) return toast("입고 수량을 1개 이상 입력해주세요");
+  $("poRecvSave").disabled = true;
+  try {
+    const r = await api(`/api/po/${h.id}/receive`, { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ date: $("poRecvDate").value, made: $("poRecvMade").value,
+        expiry: $("poRecvExpiry").value, items }) });
+    toast(`📥 발주서 #${h.id} 입고 완료 — ${r.date} 재고에 반영됐습니다`);
+    closePoRecv();
+    loadPoStat();
+    loadLowStock();   // 부족 알림 갱신 (입고로 해소됐을 수 있음)
+  } catch (e) { /* api가 토스트 */ }
+  finally { $("poRecvSave").disabled = false; }
 };
 /* 발주서 문서 HTML — 인쇄·메일 본문·발송분 보기 공용. 메일은 CSS 클래스가 안 먹어서 전부 인라인 스타일 */
 function buildPoDocData(d) {   // d = {id, date, due, note, partner:{name,biz_no,ceo,phone,mobile}, items:[{name,spec,unit,qty}]}
@@ -6174,12 +6322,12 @@ document.addEventListener("input", e => {
 });
 
 /* ── 모달 공통 닫기 ─────────────────── */
-["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "dispOverlay", "lotSplitOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay", "meOverlay", "poListOverlay", "poViewOverlay"].forEach(id => {
+["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "dispOverlay", "lotSplitOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay", "meOverlay", "poListOverlay", "poViewOverlay", "poRecvOverlay"].forEach(id => {
   $(id).addEventListener("click", e => { if (e.target.id === id) $(id).classList.remove("on"); });
 });
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") {
-    ["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay", "meOverlay", "poListOverlay", "poViewOverlay"].forEach(id => $(id).classList.remove("on"));
+    ["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay", "meOverlay", "poListOverlay", "poViewOverlay", "poRecvOverlay"].forEach(id => $(id).classList.remove("on"));
     hidePad();
   }
 });
@@ -6367,6 +6515,7 @@ async function startApp(me) {
   await loadMasters();
   await loadDash();
   loadLowStock();   // 사이드바 '발주 필요' 알림 (자재 담당·admin)
+  $("navPoStat").style.display = canStock ? "" : "none";   // 발주 현황 탭 — 자재 담당·admin
   $("dbStatus").textContent = `DB 연결됨 · 제품 ${M.product.length} · 자재 ${M.raw.length + M.sub.length}`;
   // 권한 실시간 반영: admin이 권한을 바꾸면(서버 세션은 즉시 교체됨) 화면도 20초 내 자동 새로고침
   setInterval(async () => {

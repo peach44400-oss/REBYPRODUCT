@@ -40,7 +40,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.15.2"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.16.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -1646,7 +1646,8 @@ def po_save(request: Request, body: dict):
             if not m:
                 continue
             clean.append({"material_id": mid, "name": m["name"], "spec": m["spec"] or "",
-                          "unit": m["unit"] or "", "qty": float(it.get("qty") or 0)})
+                          "unit": m["unit"] or "", "qty": float(it.get("qty") or 0),
+                          "price": float(it.get("price") or 0)})   # 발주 단가 스냅샷 (월말 정산용)
         if not clean:
             raise HTTPException(400, "발주 품목이 없습니다 — 자재를 추가해주세요")
         cur = con.execute("""INSERT INTO purchase_order(date, partner_id, partner_name, due, note, items, created_by)
@@ -1660,6 +1661,150 @@ def po_save(request: Request, body: dict):
         audit(con, "save_po", f"발주서 #{cur.lastrowid} — 품목 {len(clean)}종")
         con.commit()
         return {"ok": True, "id": cur.lastrowid}
+    finally:
+        con.close()
+
+
+@app.get("/api/postatus")
+def po_status(request: Request, mode: str = "m", date: str = "", q: str = "", limit: int = 50):
+    """발주 현황 — 기간(전체/일/주/월/년) + 검색(품목명·거래처명)으로 발주서 목록·거래처별 정산 집계.
+    금액 = 입고 처리 때 입력한 실제 단가 × 수량 (미입력 품목은 집계 제외, '미입력'으로 표시).
+    집계는 검색·기간에 걸린 전체 기준, 목록은 최근 limit건만 (수량이 많아져도 화면 유지)."""
+    require_stock_duty(request)
+    money = mcan(request, "mat")   # 자재 단가·금액 열람 권한
+    con = connect()
+    try:
+        if mode == "all":
+            a, b = "0000-01-01", "9999-12-31"
+            if not date:
+                date = dt.date.today().isoformat()
+        else:
+            if not date:
+                date = con.execute("SELECT MAX(date) d FROM purchase_order").fetchone()["d"] \
+                    or dt.date.today().isoformat()
+            a, b = period_range(mode, date)
+        pos = rows(con.execute("""
+            SELECT po.*, COALESCE(pa.name, NULLIF(po.partner_name,''), '거래처 미지정') partner
+            FROM purchase_order po LEFT JOIN partner pa ON pa.id=po.partner_id
+            WHERE po.date BETWEEN ? AND ? ORDER BY po.id DESC""", (a, b)))
+        ql = (q or "").strip().lower()
+        out_pos, by_part = [], {}
+        total_amt, unpriced, recv_cnt = 0.0, 0, 0
+        for po in pos:
+            try:
+                po["items"] = json.loads(po["items"] or "[]")
+            except ValueError:
+                po["items"] = []
+            # 검색: 거래처명 또는 품목명에 걸리는 발주서만
+            if ql and ql not in po["partner"].lower() \
+               and not any(ql in (it.get("name") or "").lower() for it in po["items"]):
+                continue
+            amt = 0.0
+            for it in po["items"]:
+                qn = float(it.get("recv") if it.get("recv") is not None else (it.get("qty") or 0))
+                pr = float(it.get("price") or 0)
+                it["amount"] = qn * pr if pr > 0 else None
+                if pr > 0:
+                    amt += qn * pr
+                else:
+                    unpriced += 1
+            po["amount"] = amt
+            total_amt += amt
+            if po["received_at"]:
+                recv_cnt += 1
+            bp = by_part.setdefault(po["partner"], {"partner": po["partner"], "cnt": 0, "recv": 0,
+                                                    "items": 0, "amount": 0.0, "unpriced": 0})
+            bp["cnt"] += 1
+            bp["recv"] += 1 if po["received_at"] else 0
+            bp["items"] += len(po["items"])
+            bp["amount"] += amt
+            bp["unpriced"] += sum(1 for it in po["items"] if not (it.get("price") or 0) > 0)
+            out_pos.append(po)
+        total = len(out_pos)
+        out_pos = out_pos[:max(1, int(limit))]
+        if not money:   # 금액 열람 권한 없으면 마스킹
+            total_amt = None
+            for po in out_pos:
+                po["amount"] = None
+                for it in po["items"]:
+                    it["price"] = None
+                    it["amount"] = None
+            for v in by_part.values():
+                v["amount"] = None
+        return {"date": date, "mode": mode, "range": [a, b], "pos": out_pos,
+                "total": total, "shown": len(out_pos),
+                "by_partner": sorted(by_part.values(), key=lambda x: (-(x["amount"] or 0), -x["cnt"])),
+                "total_amount": total_amt, "recv_cnt": recv_cnt, "unpriced": unpriced}
+    finally:
+        con.close()
+
+
+@app.post("/api/po/{po_id}/receive")
+def po_receive(request: Request, po_id: int, body: dict):
+    """발주서 입고 처리 — 품목별 실제 입고 수량(+실제 단가)을 원부자재 입고(material_in)에 자동 기록.
+    재고 반영은 일일 입력의 입고와 완전히 같은 경로(자동 행 재계산 + 이후 날짜 체인)로 처리된다."""
+    require_stock_duty(request)
+    con = connect()
+    try:
+        po = con.execute("SELECT * FROM purchase_order WHERE id=?", (po_id,)).fetchone()
+        if not po:
+            raise HTTPException(404, "발주서가 없습니다")
+        if po["received_at"]:
+            raise HTTPException(400, "이미 입고 처리된 발주서입니다")
+        rdate = (body.get("date") or "").strip() or dt.date.today().isoformat()
+        made = (body.get("made") or "").strip()
+        expiry = (body.get("expiry") or "").strip()
+        recvs = [it for it in (body.get("items") or [])
+                 if it.get("material_id") and float(it.get("qty") or 0) > 0]
+        if not recvs:
+            raise HTTPException(400, "입고 수량을 1개 이상 입력해주세요")
+        pa = con.execute("SELECT name FROM partner WHERE id=?", (po["partner_id"],)).fetchone() \
+            if po["partner_id"] else None
+        pname = (pa["name"] if pa else "") or (po["partner_name"] or "")
+        note = f"발주 #{po_id}" + (f" · {pname}" if pname else "")
+        con.execute("INSERT OR IGNORE INTO day_record(date) VALUES(?)", (rdate,))
+        for it in recvs:
+            con.execute("""INSERT INTO material_in(date, material_id, qty, made_date, expiry, note)
+                VALUES(?,?,?,?,?,?)""",
+                        (rdate, it["material_id"], float(it["qty"]), made, expiry, note))
+        # 자재별 재고 자동 반영 — day_save의 자동 행 로직과 동일 규칙
+        for mid in {it["material_id"] for it in recvs}:
+            in_total = con.execute("SELECT COALESCE(SUM(qty),0) q FROM material_in WHERE date=? AND material_id=?",
+                                   (rdate, mid)).fetchone()["q"]
+            used = con.execute("SELECT COALESCE(SUM(qty),0) q FROM material_usage WHERE date=? AND material_id=?",
+                               (rdate, mid)).fetchone()["q"]
+            manual = con.execute("SELECT 1 FROM material_daily WHERE date=? AND material_id=? AND src!='auto'",
+                                 (rdate, mid)).fetchone()
+            if manual:   # 실사 행 = 실재고(측정값) 유지, 입고·사용량만 재계산
+                con.execute("""UPDATE material_daily SET in_qty=?, used_qty=prev_qty+?-real_qty
+                    WHERE date=? AND material_id=? AND src!='auto'""", (in_total, in_total, rdate, mid))
+            else:
+                prev_row = con.execute("""SELECT real_qty FROM material_daily
+                    WHERE material_id=? AND date<? ORDER BY date DESC LIMIT 1""", (mid, rdate)).fetchone()
+                prev = float(prev_row["real_qty"]) if prev_row else 0.0
+                con.execute("""INSERT OR REPLACE INTO material_daily
+                    (date, material_id, prev_qty, in_qty, real_qty, used_qty, src)
+                    VALUES(?,?,?,?,?,?,'auto')""",
+                            (rdate, mid, prev, in_total, prev + in_total - used, used))
+            ripple_material(con, mid, rdate)   # 이후 날짜 전일재고 체인 재계산
+        # 발주서 품목에 입고 수량·실제 단가 스냅샷 기록 (정산 = 이 단가 기준)
+        try:
+            items = json.loads(po["items"] or "[]")
+        except ValueError:
+            items = []
+        rmap = {it["material_id"]: it for it in recvs}
+        for it in items:
+            r = rmap.get(it.get("material_id"))
+            if r:
+                it["recv"] = float(r.get("qty") or 0)
+                if float(r.get("price") or 0) > 0:
+                    it["price"] = float(r["price"])
+        con.execute("""UPDATE purchase_order SET items=?, received_at=datetime('now','localtime'), received_by=?
+            WHERE id=?""",
+                    (json.dumps(items, ensure_ascii=False), request.state.user.get("username", ""), po_id))
+        audit(con, "receive_po", f"발주서 #{po_id} 입고 처리 → {rdate} · {len(recvs)}품목 (재고 자동 반영)")
+        con.commit()
+        return {"ok": True, "date": rdate}
     finally:
         con.close()
 
