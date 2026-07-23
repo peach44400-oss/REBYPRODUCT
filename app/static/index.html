@@ -262,10 +262,13 @@
     background:var(--surface); color:var(--ink); font-size:12px; cursor:pointer;}
   #pmToolbar button:hover{background:var(--bg);}
   #pmToolbar select{height:26px; font-size:12px; border:1px solid var(--line); border-radius:5px;
-    background:var(--surface); color:var(--ink); width:auto !important; max-width:110px;}
+    background:var(--surface); color:var(--ink); width:auto !important; min-width:88px; padding:0 4px;}
+  #pmImgSize{display:none;}
+  #pmImgSize.on{display:inline-flex !important;}
+  #pmMsg img.sel{outline:2px solid var(--warn); outline-offset:1px;}
   #pmToolbar input[type=color]{width:30px; height:26px; padding:1px; border:1px solid var(--line);
     border-radius:5px; background:var(--surface); cursor:pointer;}
-  #pmMsg{min-height:130px; max-height:280px; overflow-y:auto; padding:10px 12px;
+  #pmMsg{min-height:200px; max-height:46vh; overflow-y:auto; padding:10px 12px;
     border:1px solid var(--line); border-radius:0 0 8px 8px; background:var(--surface); color:var(--ink);
     font-size:13.5px; line-height:1.7; outline:none;}
   #pmMsg img{max-width:100%; height:auto;}
@@ -1412,13 +1415,24 @@
           <button type="button" data-cmd="bold" title="굵게"><b>가</b></button>
           <button type="button" data-cmd="italic" title="기울임"><i>가</i></button>
           <button type="button" data-cmd="underline" title="밑줄"><u>가</u></button>
-          <input type="color" id="pmColor" value="#c2372c" title="글자색">
+          <button type="button" data-color="#111111" title="검정" style="color:#111; font-weight:800;">가</button>
+          <button type="button" data-color="#C2372C" title="빨강" style="color:#C2372C; font-weight:800;">가</button>
+          <button type="button" data-color="#1D4ED8" title="파랑" style="color:#1D4ED8; font-weight:800;">가</button>
+          <input type="color" id="pmColor" value="#c2372c" title="다른 색 직접 선택">
           <button type="button" data-cmd="justifyLeft" title="왼쪽 정렬">⯇</button>
           <button type="button" data-cmd="justifyCenter" title="가운데 정렬">☰</button>
           <button type="button" data-cmd="insertUnorderedList" title="목록">•≡</button>
           <button type="button" id="pmImgBtn" title="이미지 삽입 (본문에 들어감)">🖼 이미지</button>
           <input type="file" id="pmImgFile" accept="image/*" style="display:none;">
           <button type="button" data-cmd="removeFormat" title="서식 지우기">지움</button>
+          <span id="pmImgSize" style="display:none; gap:3px; align-items:center;">
+            <span class="auto" style="font-size:11px; margin:0 2px 0 6px;">이미지 크기</span>
+            <button type="button" data-imgw="25">25%</button>
+            <button type="button" data-imgw="50">50%</button>
+            <button type="button" data-imgw="75">75%</button>
+            <button type="button" data-imgw="100">100%</button>
+            <button type="button" data-imgdel style="color:var(--crit);">삭제</button>
+          </span>
         </div>
         <div id="pmMsg" contenteditable="true"></div></div>
       <div class="fld full"><label>첨부 (이미지·파일 · 개당 10MB, 합계 20MB)</label>
@@ -1427,9 +1441,6 @@
           <input type="file" id="pmFile" multiple style="display:none;">
           <span id="pmFiles" style="flex:1;"></span>
         </div></div>
-      <div class="fld full"><label>📋 발주서 미리보기 — 이 내용이 메시지 아래에 붙어 발송됩니다</label>
-        <div id="pmPreview" style="max-height:240px; overflow-y:auto; border:1px solid var(--line-soft);
-             border-radius:8px; padding:12px; background:#fff;"></div></div>
     </div>
     <p class="hint" id="pmHint" style="color:var(--warn);"></p>
     <div class="modal-foot">

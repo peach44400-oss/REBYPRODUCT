@@ -5016,13 +5016,15 @@ $("poMailBtn").onclick = () => {
   $("pmTo").value = (pa && pa.email) || "";
   $("pmCc").value = "";
   $("pmSubject").value = `[리바이프로덕트] 발주서 (${b.date})${PO.id ? " #" + PO.id : ""}`;
-  $("pmMsg").innerHTML = `안녕하세요, ${esc(b.partner_name)} 담당자님.<br><br>아래와 같이 발주드립니다. 확인 부탁드립니다.<br>감사합니다.`;
+  // 발주서를 본문 안에 직접 넣음 — 보면서 수정 가능 (보낼 때 본문 그대로 발송)
+  $("pmMsg").innerHTML = `안녕하세요, ${esc(b.partner_name)} 담당자님.<br><br>아래와 같이 발주드립니다. 확인 부탁드립니다.<br>감사합니다.`
+    + `<hr style="margin:14px 0; border:none; border-top:1px solid #ccc;">` + buildPoDoc();
   POMAIL.files = [];
   renderPmFiles();
   $("pmHint").textContent = pa
     ? (pa.email ? "" : "이 거래처에 저장된 이메일이 없습니다 — 주소를 입력하면 거래처 정보에도 저장됩니다")
     : "등록되지 않은 거래처입니다 — 메일 주소를 직접 입력해주세요";
-  $("pmPreview").innerHTML = buildPoDoc();   // 발송될 발주서 그대로 미리보기
+  pmClearImgSel();
   $("poMailOverlay").classList.add("on");
 };
 /* 받는/참조 칸의 항목을 메일 주소로 해석 — 거래처 이름만 넣으면 저장된 메일로 변환.
@@ -5085,6 +5087,41 @@ $("pmColor").addEventListener("input", e => {
   $("pmMsg").focus();
   document.execCommand("foreColor", false, e.target.value);
 });
+// 자주 쓰는 색 원클릭 (검정/빨강/파랑)
+$("pmToolbar").addEventListener("click", e => {
+  const c = e.target.closest("button[data-color]");
+  if (!c) return;
+  $("pmMsg").focus();
+  document.execCommand("foreColor", false, c.dataset.color);
+});
+/* 본문 이미지 크기 조절 — 이미지를 클릭하면 툴바에 크기 버튼(25~100%)·삭제가 나타난다 */
+function pmClearImgSel() {
+  POMAIL.selImg = null;
+  $("pmImgSize").classList.remove("on");
+  document.querySelectorAll("#pmMsg img.sel").forEach(i => i.classList.remove("sel"));
+}
+$("pmMsg").addEventListener("click", e => {
+  if (e.target.tagName === "IMG") {
+    pmClearImgSel();
+    POMAIL.selImg = e.target;
+    e.target.classList.add("sel");
+    $("pmImgSize").classList.add("on");
+  } else {
+    pmClearImgSel();
+  }
+});
+$("pmImgSize").addEventListener("click", e => {
+  const w = e.target.closest("[data-imgw]");
+  if (w && POMAIL.selImg) {
+    POMAIL.selImg.style.width = w.dataset.imgw + "%";
+    POMAIL.selImg.style.height = "auto";
+    return;
+  }
+  if (e.target.closest("[data-imgdel]") && POMAIL.selImg) {
+    POMAIL.selImg.remove();
+    pmClearImgSel();
+  }
+});
 $("pmImgBtn").onclick = () => $("pmImgFile").click();
 $("pmImgFile").addEventListener("change", async e => {
   const f = e.target.files[0]; e.target.value = "";
@@ -5104,15 +5141,17 @@ $("pmSend").onclick = async () => {
   } catch (e) { return toast("⚠ " + e.message); }
   if (!to.length) return toast("받는 메일 주소를 입력해주세요");
   const b = poBody();
-  const msgHtml = $("pmMsg").innerHTML;   // 리치 에디터 본문 HTML 그대로 (서식·이미지 포함)
+  // 본문(발주서 포함) 그대로 발송 — 이미지 선택 표시(sel)만 제거
+  const tmp = $("pmMsg").cloneNode(true);
+  tmp.querySelectorAll("img.sel").forEach(i => i.classList.remove("sel"));
+  const msgHtml = tmp.innerHTML;
   $("pmSend").disabled = true;
   $("pmSend").textContent = "보내는 중…";
   try {
     // 메일 클라이언트가 표를 읽기창 전체 폭으로 늘리지 않게 — 문서 폭 680px 고정 (테이블 래퍼가 호환성 가장 좋음)
+    // 발주서는 이미 본문 안에 들어 있으므로 그대로 발송
     const mailHtml = `<table style="width:680px; max-width:100%; border-collapse:collapse;"><tr><td>
-        <div style="font-size:14px; line-height:1.7; margin:0 0 12px;">${msgHtml}</div>
-        <hr style="margin:14px 0; border:none; border-top:1px solid #ccc;">
-        ${buildPoDoc()}
+        <div style="font-size:14px; line-height:1.7;">${msgHtml}</div>
       </td></tr></table>`;
     await api("/api/po/send", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ po_id: PO.id, to: to.join(","), cc: cc.join(","),
