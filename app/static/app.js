@@ -3033,11 +3033,14 @@ function stockCell(r) {
   return `<span class="num" style="${low ? "color:var(--crit); font-weight:700" : ""}">${NF(r.stock)}</span>`;
 }
 function stockDaysCell(r) {   // 재고일수 = 현재고 ÷ 최근 30일 일평균 사용량 (사용 기록 없으면 —)
-  if (!(r.avg_use > 0) || r.stock == null) return '<span class="auto">—</span>';
+  const formula = "재고일수 = 현재고 ÷ 일평균 사용량\n일평균 사용량 = 최근 30일 사용 합 ÷ 사용 기록일수 (생산 없던 날 제외)";
+  if (!(r.avg_use > 0) || r.stock == null)
+    return `<span class="auto" title="${formula}\n\n최근 30일 사용 기록이 없어 계산할 수 없습니다">—</span>`;
   const d = r.stock / r.avg_use;
   const disp = d >= 10 ? Math.round(d) : Math.round(d * 10) / 10;
+  const u = esc(r.unit || "");
   return `<span class="num" style="${d < 7 ? "color:var(--warn); font-weight:700" : ""}"
-    title="일평균 사용 ${NF(Math.round(r.avg_use * 100) / 100)} ${esc(r.unit || "")} 기준">${NF(disp)}일</span>`;
+    title="${formula}\n\n= ${NF(r.stock)}${u} ÷ ${NF(Math.round(r.avg_use * 100) / 100)}${u} ≈ ${NF(disp)}일\n(7일 미만이면 주황색 표시)">${NF(disp)}일</span>`;
 }
 let mTab = "product";
 $("itemTabs").addEventListener("click", e => {
@@ -3084,7 +3087,7 @@ const QE_COLS = {
 };
 let mQuick = false;      // 빠른 편집 모드
 let mMissing = "";       // 완성도 배너에서 선택한 '미등록만 보기' 필드
-const ACTIVE_OK = { product: "단종", raw: "중단", sub: "중단", staff: "퇴사" };   // 제외할 상태
+const ACTIVE_OK = { product: "단종", raw: "중단", sub: "중단", staff: "퇴사", partner: "중지", line: "중지" };   // 제외할 상태
 function mActive(r) { return r.status !== ACTIVE_OK[mTab]; }
 function mIsMissing(r, f) {
   if (f === "bom") return !(BOMALL && (BOMALL[r.id] || []).length);
@@ -3126,6 +3129,10 @@ function masterList() {   // 현재 탭의 표시 목록 (검색 + 미등록 필
   const full = M[mTab] || [];
   let list = mFilter ? full.filter(r => String(r.name || "").toLowerCase().includes(mFilter)) : full;
   if (mMissing) list = list.filter(r => mActive(r) && mIsMissing(r, mMissing));
+  // 중단·단종·퇴사·중지 항목은 맨 아래로 (순서 편집 모드에서는 실제 배열 순서와 맞춰야 하므로 제외)
+  const reorderMode = mQuick && QE_COLS[mTab] && !mFilter && !mMissing;
+  if (mTab !== "line" && !reorderMode)
+    list = [...list.filter(mActive), ...list.filter(r => !mActive(r))];
   if (mTab === "line") {   // 소속 공정이 대표 라인 바로 아래 오도록 정렬
     const sorted = [];
     list.filter(l => !l.parent_id).forEach(p => {
