@@ -1513,20 +1513,23 @@
       <div style="margin-top:10px;"><button class="btn sm primary" id="pwSaveBtn">비밀번호 변경</button></div>
     </div>
     <div id="mePane_mail" style="display:none;">
-      <p class="hint" style="margin:0 0 8px;">발주서 메일이 <b>내 메일 계정</b>으로 발송됩니다 (보낸 사람 = 내 이름·직급).
-        네이버: smtp.naver.com·465 / 구글: smtp.gmail.com·465 — 메일 설정에서 <b>앱 비밀번호</b>를 발급받아 입력하세요.</p>
-      <div style="display:grid; grid-template-columns:1fr 90px; gap:6px; margin-bottom:6px;">
-        <input class="mini-input" id="smtpHost" placeholder="SMTP 서버 (예: smtp.naver.com)" style="text-align:left;">
-        <input class="mini-input num" id="smtpPort" placeholder="포트 (465)">
+      <p class="hint" style="margin:0 0 12px;">발주서 메일이 <b>내 메일 계정</b>으로 발송됩니다 (보낸 사람 = 내 이름·직급).
+        네이버 <b>smtp.naver.com · 465</b> / 구글 <b>smtp.gmail.com · 465</b> — 각 메일 설정에서 <b>앱 비밀번호</b>를 발급받아 입력하세요.</p>
+      <div class="fgrid">
+        <div class="fld"><label>SMTP 서버</label>
+          <input id="smtpHost" placeholder="smtp.naver.com" autocomplete="off"></div>
+        <div class="fld"><label>포트</label>
+          <input id="smtpPort" placeholder="465" inputmode="numeric"></div>
+        <div class="fld"><label>계정 (메일 주소)</label>
+          <input id="smtpUser" placeholder="myid@naver.com" autocomplete="off"></div>
+        <div class="fld"><label>앱 비밀번호</label>
+          <input id="smtpPass" type="password" placeholder="앱 비밀번호" autocomplete="new-password"></div>
+        <div class="fld full"><label>표시 발신 주소 (비우면 계정 주소 사용)</label>
+          <input id="smtpFrom" placeholder="비워두면 계정 주소로 표시됩니다" autocomplete="off"></div>
       </div>
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:6px;">
-        <input class="mini-input" id="smtpUser" placeholder="계정 (메일 주소)" style="text-align:left;" autocomplete="off">
-        <input class="mini-input" id="smtpPass" type="password" placeholder="앱 비밀번호" style="text-align:left;" autocomplete="new-password">
-      </div>
-      <div style="display:flex; gap:6px; align-items:center;">
-        <input class="mini-input" id="smtpFrom" placeholder="표시 발신 주소 (비우면 계정 주소)" style="text-align:left; flex:1;">
-        <button class="btn sm primary" id="smtpSave">저장</button>
-        <span class="auto" id="smtpState" style="font-size:11.5px;"></span>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <button class="btn primary" id="smtpSave">저장</button>
+        <span class="auto" id="smtpState" style="font-size:12px;"></span>
       </div>
     </div>
     <div class="modal-foot">
