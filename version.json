@@ -1,5 +1,5 @@
 {
-  "version": "1.13.1",
+  "version": "1.13.2",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· 기준정보 인쇄 시 열이 잘리던 문제 — 표를 축소하고 수정/삭제 열·버튼을 숨겨 모든 열이 한 페이지 폭에 들어가게"
+  "notes": "· 대시보드 재고 부족 현황 — 안전재고를 설정한 자재만 표시 (재고 0·안전재고 미설정 자재는 목록에서 제외)"
 }

@@ -40,7 +40,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.13.1"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.13.2"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -2268,7 +2268,7 @@ def dashboard(request: Request):
               SELECT date, 0, qty FROM shipment)
             GROUP BY date ORDER BY date DESC LIMIT 14"""))
         trend.reverse()
-        # 자재 부족 (안전재고 설정된 것 우선, 미설정 시 재고 0/음수)
+        # 자재 부족 — 안전재고를 설정한 자재만 (미설정·재고 0 자재는 판단 기준이 없어 목록에서 제외)
         low = rows(con.execute("""
             SELECT m.id, m.kind, m.name, m.unit, m.safety_stock, md.real_qty AS stock,
                    md.order_date, md.date
@@ -2278,8 +2278,7 @@ def dashboard(request: Request):
                      ROW_NUMBER() OVER (PARTITION BY material_id ORDER BY date DESC) rn
               FROM material_daily) md ON md.material_id=m.id AND md.rn=1
             WHERE m.status!='중단'
-              AND ((m.safety_stock>0 AND md.real_qty<m.safety_stock)
-                   OR (m.safety_stock<=0 AND md.real_qty<=0))
+              AND m.safety_stock>0 AND md.real_qty<m.safety_stock
             ORDER BY (md.real_qty - m.safety_stock) LIMIT 30"""))
         lastday = {
             "date": last,
