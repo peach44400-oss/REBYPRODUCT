@@ -50,6 +50,17 @@
   #lowpPo{background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.25); color:#FFD5D1;
     font-size:10.5px; padding:2px 8px; border-radius:6px; cursor:pointer;}
   #lowpPo:hover{background:rgba(255,255,255,.2);}
+  /* 기준정보 목록 인쇄 — 열 잘림 방지: 표 축소 + 편집 열·도구 숨김 */
+  @media print{
+    #scr-items table{font-size:8.5px !important;}
+    #scr-items th, #scr-items td{padding:2px 3px !important; white-space:normal !important; word-break:break-word;}
+    #scr-items .tbl-wrap{overflow:visible !important; max-height:none !important;}
+    #scr-items #mHead th:last-child, #scr-items #mBody td:last-child{display:none;}   /* 수정/삭제 열 */
+    #scr-items .btn, #scr-items .mini-input, #mHealthBar, #mFilterCnt{display:none !important;}
+    #scr-items .chip{border:none !important; padding:0 !important; font-size:8.5px !important;}
+    #scr-items img{width:16px !important; height:16px !important;}
+    #scr-items .uselink{font-size:8.5px !important;}
+  }
   /* 발주서 인쇄 — 인쇄 시 발주서만 보이게 */
   #poPrintArea{display:none;}
   @media print{

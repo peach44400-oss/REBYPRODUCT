@@ -1,5 +1,5 @@
 {
-  "version": "1.13.0",
+  "version": "1.13.1",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· 재고일수에 마우스를 올리면 산출식 표시 — 현재고 ÷ 일평균 사용량 (실제 수치 포함)\n· 중단·단종·퇴사·중지 항목은 기준정보 목록 맨 아래로 정렬\n· 기준정보 관리에 [인쇄] 버튼 추가"
+  "notes": "· 기준정보 인쇄 시 열이 잘리던 문제 — 표를 축소하고 수정/삭제 열·버튼을 숨겨 모든 열이 한 페이지 폭에 들어가게"
 }
