@@ -4580,7 +4580,8 @@ async function loadPoHistory() {
       <span class="auto">${h.items.length}종</span>
       ${h.sent_at ? `<span class="auto" style="color:var(--ok); font-size:11px;" title="${esc(h.sent_to || "")} · ${esc(h.sent_at)}">📧 발송됨</span>` : ""}
       <span class="spacer"></span>
-      <button class="btn ghost sm" data-podelhist="${h.id}" style="color:var(--crit)">삭제</button>
+      ${(!h.sent_at && !h.received_at) || ROLE === "admin"
+        ? `<button class="btn ghost sm" data-podelhist="${h.id}" style="color:var(--crit)">삭제</button>` : ""}
     </div>`).join("") || '<div class="auto" style="padding:10px;">저장된 발주서가 없습니다</div>';
   PO.hist = hist;
 }
@@ -4621,7 +4622,8 @@ async function openPoList() {
       : '<span class="auto">—</span>'}</td>
     <td style="white-space:nowrap;">
       <button class="btn ghost sm" data-plopen="${h.id}">${h.sent_at ? "보기" : "열기"}</button>
-      <button class="btn ghost sm" data-pldel="${h.id}" style="color:var(--crit)">삭제</button></td></tr>`).join("")
+      ${(!h.sent_at && !h.received_at) || ROLE === "admin"
+        ? `<button class="btn ghost sm" data-pldel="${h.id}" style="color:var(--crit)">삭제</button>` : ""}</td></tr>`).join("")
     || '<tr><td colspan="7" class="auto">저장된 발주서가 없습니다 — [📋 발주서]에서 저장하면 여기 쌓입니다</td></tr>';
   $("poListOverlay").classList.add("on");
 }
@@ -4712,7 +4714,8 @@ function renderPoStat() {
       <td style="white-space:nowrap;">
         <button class="btn ghost sm" data-psopen="${h.id}">${h.sent_at ? "보기" : "열기"}</button>
         ${!h.received_at ? `<button class="btn ghost sm" data-psrecv="${h.id}" style="color:var(--ok); border-color:var(--ok)">📥 입고</button>` : ""}
-        <button class="btn ghost sm" data-psdel="${h.id}" style="color:var(--crit)">삭제</button></td></tr>`;
+        ${(!h.sent_at && !h.received_at) || ROLE === "admin"
+          ? `<button class="btn ghost sm" data-psdel="${h.id}" style="color:var(--crit)">삭제</button>` : ""}</td></tr>`;
   }).join("");
   const listTbl = `<div class="tbl-wrap"><table>
     <thead><tr><th>번호</th><th>발주일</th><th>거래처</th><th>품목</th><th>상태</th><th>발송</th><th>작성자</th>${money ? '<th class="r">금액(원)</th>' : ""}<th></th></tr></thead>
@@ -4745,9 +4748,49 @@ $("postFilter").addEventListener("input", e => {
   clearTimeout(_postT); _postT = setTimeout(loadPoStat, 250);   // 타이핑 멈추면 검색
 });
 $("postNew").onclick = () => openPo(false);
-$("postCsv").onclick = () => {
-  const t = $("postPartTbl"); if (!t) return;
-  tableToCsv(t.tHead, t.tBodies[0], csvName("발주정산", $("postLbl").textContent));
+/* ── 정산 CSV — 거래처 선택 후 품목별 상세로 저장 (기간·검색은 현재 화면 그대로, 건수 제한 없음) ── */
+const POCSV = { data: null };
+$("postCsv").onclick = async () => {
+  try {
+    POCSV.data = await api(`/api/postatus?mode=${POSTAT.mode}&date=${POSTAT.date}&q=${encodeURIComponent(POSTAT.q)}&limit=100000`);
+  } catch (e) { return; }
+  $("pcPartnerDl").innerHTML = POCSV.data.by_partner.map(p => `<option value="${esc(p.partner)}">`).join("");
+  $("pcPartner").value = "";
+  $("poCsvHint").innerHTML = `<b>${$("postLbl").textContent}</b> 기간의 발주 ${POCSV.data.total}건을 <b>품목별 상세</b>로 저장합니다. 거래처를 고르면 그 거래처만, 비워두면 전체가 저장됩니다.`;
+  $("poCsvOverlay").classList.add("on");
+};
+window.closePoCsv = () => $("poCsvOverlay").classList.remove("on");
+$("poCsvGo").onclick = () => {
+  const d = POCSV.data; if (!d) return;
+  const pname = $("pcPartner").value.trim();
+  const pos = pname ? d.pos.filter(p => p.partner === pname) : d.pos;
+  if (!pos.length) return toast(pname ? `'${pname}' — 이 기간에 발주가 없습니다` : "이 기간에 발주가 없습니다");
+  const money = canM("mat");
+  const head = ["발주번호", "발주일", "거래처", "품목명", "규격", "단위", "발주수량", "입고수량",
+    ...(money ? ["단가(원)", "금액(원)"] : []), "입고일", "메일발송", "작성자"];
+  const cell = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const lines = [head.map(cell).join(",")];
+  let tot = 0;
+  pos.forEach(h => (h.items || []).forEach(it => {
+    const amt = money && it.amount != null ? Math.round(it.amount) : "";
+    if (money && it.amount) tot += it.amount;
+    lines.push([
+      "#" + h.id, h.date, h.partner, it.name, it.spec || "", it.unit || "",
+      it.qty, it.recv != null ? it.recv : "",
+      ...(money ? [it.price || "", amt] : []),
+      (h.received_at || "").slice(0, 10), h.sent_at ? "발송" : "", h.created_by || "",
+    ].map(cell).join(","));
+  }));
+  if (money)   // 합계 행 — 단가 열에 '합계' 라벨, 금액 열에 합
+    lines.push(["", "", "", "", "", "", "", "", "합계", Math.round(tot), "", "", ""].map(cell).join(","));
+  const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = csvName("발주정산", (pname || "전체") + "_" + $("postLbl").textContent);
+  a.click();
+  URL.revokeObjectURL(a.href);
+  toast(`📄 ${pname || "전체"} 정산 CSV 저장됨 (품목 ${lines.length - 1 - (money ? 1 : 0)}행)`);
+  closePoCsv();
 };
 $("postBody").addEventListener("click", async e => {
   const findPo = id => (POSTAT.data.pos || []).find(x => x.id === +id);
@@ -4761,8 +4804,15 @@ $("postBody").addEventListener("click", async e => {
   const rc = e.target.closest("[data-psrecv]");
   if (rc) { const h = findPo(rc.dataset.psrecv); if (h) openPoRecv(h); return; }
   const del = e.target.closest("[data-psdel]");
-  if (del && confirm(`발주서 #${del.dataset.psdel}를 삭제할까요?${findPo(del.dataset.psdel)?.received_at ? "\n(입고 기록(원부자재 입고)은 남고 발주서만 삭제됩니다)" : ""}`)) {
-    try { await api("/api/po/" + del.dataset.psdel, { method: "DELETE" }); loadPoStat(); } catch (err) { }
+  if (del) {
+    const h = findPo(del.dataset.psdel);
+    const locked = h && (h.sent_at || h.received_at);
+    const msg = locked
+      ? `발주서 #${del.dataset.psdel}는 ${h.received_at ? "입고 처리" : "메일 발송"}된 기록입니다.\n관리자 권한으로 삭제합니다 (감사 이력에 남음).${h.received_at ? "\n※ 입고된 원부자재 입고 기록은 그대로 남습니다." : ""}\n\n정말 삭제할까요?`
+      : `발주서 #${del.dataset.psdel}를 삭제할까요?`;
+    if (confirm(msg)) {
+      try { await api("/api/po/" + del.dataset.psdel, { method: "DELETE" }); loadPoStat(); } catch (err) { }
+    }
   }
 });
 
@@ -6322,12 +6372,12 @@ document.addEventListener("input", e => {
 });
 
 /* ── 모달 공통 닫기 ─────────────────── */
-["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "dispOverlay", "lotSplitOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay", "meOverlay", "poListOverlay", "poViewOverlay", "poRecvOverlay"].forEach(id => {
+["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "dispOverlay", "lotSplitOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay", "meOverlay", "poListOverlay", "poViewOverlay", "poRecvOverlay", "poCsvOverlay"].forEach(id => {
   $(id).addEventListener("click", e => { if (e.target.id === id) $(id).classList.remove("on"); });
 });
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") {
-    ["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay", "meOverlay", "poListOverlay", "poViewOverlay", "poRecvOverlay"].forEach(id => $(id).classList.remove("on"));
+    ["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay", "meOverlay", "poListOverlay", "poViewOverlay", "poRecvOverlay", "poCsvOverlay"].forEach(id => $(id).classList.remove("on"));
     hidePad();
   }
 });

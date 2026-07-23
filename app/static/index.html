@@ -1296,6 +1296,21 @@
   </div>
 </div>
 
+<!-- 발주 정산 CSV 모달 (거래처 선택 → 품목별 상세) -->
+<div class="overlay" id="poCsvOverlay">
+  <div class="modal" style="width:min(420px, 94vw);">
+    <h3>📄 정산 CSV 저장</h3>
+    <p class="hint" id="poCsvHint">현재 기간의 발주 내역을 <b>품목별 상세</b>(발주번호·품목·수량·입고·단가·금액)로 저장합니다. 거래처를 고르면 그 거래처만, 비워두면 전체가 저장됩니다.</p>
+    <div class="fld"><label>거래처 (검색 · 비우면 전체)</label>
+      <input id="pcPartner" list="pcPartnerDl" placeholder="🔍 거래처 이름 검색 또는 전체" autocomplete="off">
+      <datalist id="pcPartnerDl"></datalist></div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closePoCsv()">취소</button>
+      <button class="btn primary" id="poCsvGo">📄 CSV 저장</button>
+    </div>
+  </div>
+</div>
+
 <!-- 발주서 입고 처리 모달 -->
 <div class="overlay" id="poRecvOverlay">
   <div class="modal" style="width:min(560px, 94vw);">

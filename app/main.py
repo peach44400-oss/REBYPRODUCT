@@ -40,7 +40,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.16.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.16.1"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -1814,8 +1814,16 @@ def po_delete(request: Request, po_id: int):
     require_stock_duty(request)
     con = connect()
     try:
+        po = con.execute("SELECT sent_at, received_at FROM purchase_order WHERE id=?", (po_id,)).fetchone()
+        if not po:
+            raise HTTPException(404, "발주서가 없습니다")
+        # 발송·입고된 발주서 = 거래 기록 — 일반 사용자는 삭제 불가, 관리자만 삭제 가능 (감사 이력에 남음)
+        locked = bool(po["sent_at"] or po["received_at"])
+        if locked and request.state.user["role"] != "admin":
+            raise HTTPException(403, "메일을 보냈거나 입고 처리된 발주서는 관리자만 삭제할 수 있습니다")
         con.execute("DELETE FROM purchase_order WHERE id=?", (po_id,))
-        audit(con, "delete_po", f"발주서 #{po_id} 삭제")
+        audit(con, "delete_po", f"발주서 #{po_id} 삭제"
+              + (" (발송/입고 기록 있음 — 관리자 삭제, 입고분 원부자재 기록은 유지)" if locked else ""))
         con.commit()
         return {"ok": True}
     finally:
