@@ -4448,6 +4448,9 @@ async function loadLowStock() {
   const items = d.items || [];
   const todo = items.filter(x => !x.ordered);          // 아직 발주 안 한 것 = 진짜 할 일
   panel.style.display = "flex";   // 부족이 없어도 표시 — [📋 발주서] 진입점 (목록엔 '미달 없음' 안내)
+  // 상태별 표기: 부족이 있으면 경고, 없으면 중립 톤의 '발주 관리'
+  panel.classList.toggle("ok", !todo.length);
+  $("lowpTitle").textContent = todo.length ? "⚠ 발주 필요" : "📋 발주 관리";
   $("lowpCnt").textContent = items.length
     ? (todo.length ? `${todo.length}종` : "발주 완료") : "";
   $("lowpList").innerHTML = items.map(x => `
@@ -4591,7 +4594,7 @@ $("poHistory").addEventListener("click", async e => {
   const ld = e.target.closest("[data-poload]");
   if (ld) {
     const h = (PO.hist || []).find(x => x.id === +ld.dataset.poload);
-    if (h) applyPoRecord(h);
+    if (h) h.sent_at ? openPoView(h) : applyPoRecord(h);   // 발송분은 보기만 (수정·재발송 불가)
     return;
   }
   const del = e.target.closest("[data-podelhist]");
@@ -4615,7 +4618,7 @@ async function openPoList() {
       ? `<span style="color:var(--ok); font-weight:700">📧 발송됨</span><br><span class="auto">${esc(h.sent_to || "")} · ${esc(h.sent_at.slice(0, 16))}</span>`
       : '<span class="auto">—</span>'}</td>
     <td style="white-space:nowrap;">
-      <button class="btn ghost sm" data-plopen="${h.id}">열기</button>
+      <button class="btn ghost sm" data-plopen="${h.id}">${h.sent_at ? "보기" : "열기"}</button>
       <button class="btn ghost sm" data-pldel="${h.id}" style="color:var(--crit)">삭제</button></td></tr>`).join("")
     || '<tr><td colspan="7" class="auto">저장된 발주서가 없습니다 — [📋 발주서]에서 저장하면 여기 쌓입니다</td></tr>';
   $("poListOverlay").classList.add("on");
@@ -4626,9 +4629,10 @@ $("poListBody").addEventListener("click", async e => {
   const op = e.target.closest("[data-plopen]");
   if (op) {
     const h = (PO.listHist || []).find(x => x.id === +op.dataset.plopen); if (!h) return;
+    if (h.sent_at) { openPoView(h); return; }   // 발송분 = 보낸 내용 그대로 보기만 (이력 목록 위에 표시)
     closePoList();
     await openPo(false);      // 작성 모달 열고
-    applyPoRecord(h);         // 해당 발주서 불러오기
+    applyPoRecord(h);         // 해당 발주서 불러오기 (수정·발송 가능)
     return;
   }
   const del = e.target.closest("[data-pldel]");
@@ -4636,27 +4640,43 @@ $("poListBody").addEventListener("click", async e => {
     try { await api("/api/po/" + del.dataset.pldel, { method: "DELETE" }); openPoList(); } catch (err) { }
   }
 });
-/* 발주서 문서 HTML — 인쇄·메일 본문 공용. 메일은 CSS 클래스가 안 먹어서 전부 인라인 스타일 */
-function buildPoDoc() {
-  const b = poBody();
-  const pa = M.partner.find(p => p.id === b.partner_id) || { name: b.partner_name };   // 미등록 = 이름만
+/* 발송된 발주서 보기 전용 — 저장 스냅샷 그대로 표시, 인쇄만 가능 */
+const POVIEW = { h: null };
+function openPoView(h) {
+  POVIEW.h = h;
+  $("poViewTitle").textContent = `📧 보낸 발주서 #${h.id}`;
+  $("poViewSub").textContent = `${h.partner} · 발송 ${(h.sent_at || "").slice(0, 16)} → ${h.sent_to || ""} · 작성 ${h.created_by || "—"}`;
+  $("poViewBody").innerHTML = buildPoDocFromRecord(h);
+  $("poViewOverlay").classList.add("on");
+}
+window.closePoView = () => $("poViewOverlay").classList.remove("on");
+$("poViewPrint").onclick = () => {
+  if (!POVIEW.h) return;
+  $("poPrintArea").innerHTML = buildPoDocFromRecord(POVIEW.h);
+  document.body.classList.add("po-print");
+  const done = () => { document.body.classList.remove("po-print"); window.removeEventListener("afterprint", done); };
+  window.addEventListener("afterprint", done);
+  window.print();
+  setTimeout(done, 1500);
+};
+/* 발주서 문서 HTML — 인쇄·메일 본문·발송분 보기 공용. 메일은 CSS 클래스가 안 먹어서 전부 인라인 스타일 */
+function buildPoDocData(d) {   // d = {id, date, due, note, partner:{name,biz_no,ceo,phone,mobile}, items:[{name,spec,unit,qty}]}
+  const pa = d.partner || {};
   const TD = "border:1px solid #333; padding:6px 9px; font-size:13px;";
   const TH = TD + " background:#f0f0f0; font-weight:700; text-align:left;";
   const meta = (rows_) => `<table style="border-collapse:collapse; min-width:46%;">${rows_.map(([k, v]) =>
     `<tr><th style="${TH} width:90px;">${k}</th><td style="${TD}">${v}</td></tr>`).join("")}</table>`;
-  const rowsHtml = b.items.map((it, i) => {
-    const m = materialById(it.material_id) || {};
-    return `<tr><td style="${TD} text-align:center;">${i + 1}</td><td style="${TD}">${esc(m.name || "")}</td>
-      <td style="${TD}">${esc(m.spec || "")}</td><td style="${TD} text-align:right;">${it.qty ? NF(it.qty) : ""}</td>
-      <td style="${TD} text-align:center;">${esc(m.unit || "")}</td><td style="${TD}"></td></tr>`;
-  }).join("");
+  const rowsHtml = d.items.map((it, i) => `<tr>
+      <td style="${TD} text-align:center;">${i + 1}</td><td style="${TD}">${esc(it.name || "")}</td>
+      <td style="${TD}">${esc(it.spec || "")}</td><td style="${TD} text-align:right;">${it.qty ? NF(it.qty) : ""}</td>
+      <td style="${TD} text-align:center;">${esc(it.unit || "")}</td><td style="${TD}"></td></tr>`).join("");
   return `<div style="font-family:'Malgun Gothic',sans-serif; color:#111;">
     <h1 style="font-size:25px; text-align:center; letter-spacing:13px; margin:0 0 18px;">발 주 서</h1>
     <div style="display:flex; justify-content:space-between; gap:16px; margin-bottom:14px;">
       ${meta([["수신", esc(pa.name || "________________") + " 귀중"], ["사업자번호", esc(pa.biz_no || "")],
               ["대표자", esc(pa.ceo || "")], ["연락처", esc(pa.phone || pa.mobile || "")]])}
-      ${meta([["발주일", esc(b.date)], ["납기 희망일", esc(b.due || "가능한 빠른 날")],
-              ["발신", "리바이프로덕트 (REBYPRODUCT)"], ["발주번호", PO.id ? "#" + PO.id : "-"]])}
+      ${meta([["발주일", esc(d.date)], ["납기 희망일", esc(d.due || "가능한 빠른 날")],
+              ["발신", "리바이프로덕트 (REBYPRODUCT)"], ["발주번호", d.id ? "#" + d.id : "-"]])}
     </div>
     <table style="border-collapse:collapse; width:100%;">
       <thead><tr><th style="${TH} width:40px; text-align:center;">No</th><th style="${TH}">품목명</th>
@@ -4664,8 +4684,18 @@ function buildPoDoc() {
         <th style="${TH} width:60px; text-align:center;">단위</th><th style="${TH} width:110px;">비고</th></tr></thead>
       <tbody>${rowsHtml}</tbody>
     </table>
-    ${b.note ? `<p style="margin-top:12px; font-size:13px;"><b>비고:</b> ${esc(b.note)}</p>` : ""}
-    <p style="margin-top:26px; font-size:13px; text-align:right;">위와 같이 발주합니다. &nbsp;&nbsp; ${esc(b.date)} &nbsp;&nbsp; 리바이프로덕트 &nbsp;(인)</p></div>`;
+    ${d.note ? `<p style="margin-top:12px; font-size:13px;"><b>비고:</b> ${esc(d.note)}</p>` : ""}
+    <p style="margin-top:26px; font-size:13px; text-align:right;">위와 같이 발주합니다. &nbsp;&nbsp; ${esc(d.date)} &nbsp;&nbsp; 리바이프로덕트 &nbsp;(인)</p></div>`;
+}
+function buildPoDoc() {   // 작성 중인 폼 기준
+  const b = poBody();
+  const pa = M.partner.find(p => p.id === b.partner_id) || { name: b.partner_name };   // 미등록 = 이름만
+  return buildPoDocData({ id: PO.id, date: b.date, due: b.due, note: b.note, partner: pa,
+    items: b.items.map(it => { const m = materialById(it.material_id) || {}; return { name: m.name, spec: m.spec, unit: m.unit, qty: it.qty }; }) });
+}
+function buildPoDocFromRecord(h) {   // 저장·발송된 발주서 스냅샷 기준 (자재 정보가 바뀌어도 당시 그대로)
+  const pa = M.partner.find(p => p.id === h.partner_id) || { name: h.partner === "거래처 미지정" ? "" : h.partner };
+  return buildPoDocData({ id: h.id, date: h.date, due: h.due, note: h.note, partner: pa, items: h.items });
 }
 $("poPrintBtn").onclick = () => {
   if (!poBody().items.length) return toast("발주 품목을 추가해주세요");
@@ -6138,12 +6168,12 @@ document.addEventListener("input", e => {
 });
 
 /* ── 모달 공통 닫기 ─────────────────── */
-["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "dispOverlay", "lotSplitOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay", "meOverlay", "poListOverlay"].forEach(id => {
+["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "dispOverlay", "lotSplitOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay", "meOverlay", "poListOverlay", "poViewOverlay"].forEach(id => {
   $(id).addEventListener("click", e => { if (e.target.id === id) $(id).classList.remove("on"); });
 });
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") {
-    ["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay", "meOverlay", "poListOverlay"].forEach(id => $(id).classList.remove("on"));
+    ["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay", "meOverlay", "poListOverlay", "poViewOverlay"].forEach(id => $(id).classList.remove("on"));
     hidePad();
   }
 });

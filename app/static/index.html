@@ -47,9 +47,14 @@
   .lowp-h{display:flex; align-items:center; justify-content:space-between; gap:6px;
     font-size:11.5px; color:#FFB4AE; margin-bottom:6px;}
   .lowp-h b{font-size:12px; color:#FFD5D1;}
-  #lowpPo, #lowpPoList{background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.25); color:#FFD5D1;
-    font-size:10.5px; padding:2px 8px; border-radius:6px; cursor:pointer;}
+  .lowp-btns{display:flex; gap:4px; margin-bottom:6px;}
+  #lowpPo, #lowpPoList{flex:1; background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.25); color:#FFD5D1;
+    font-size:11px; padding:3px 6px; border-radius:6px; cursor:pointer; white-space:nowrap;}
   #lowpPo:hover, #lowpPoList:hover{background:rgba(255,255,255,.2);}
+  /* 부족 자재가 없을 때 — 경고색 대신 중립 톤 */
+  #lowPanel.ok{background:rgba(255,255,255,.06); border-color:rgba(255,255,255,.18);}
+  #lowPanel.ok .lowp-h b, #lowPanel.ok .lowp-h, #lowPanel.ok #lowpCnt{color:var(--side-muted);}
+  #lowPanel.ok #lowpPo, #lowPanel.ok #lowpPoList{color:var(--side-ink);}
   /* 기준정보 목록 인쇄 — 열 잘림 방지: 표 축소 + 편집 열·도구 숨김 */
   @media print{
     #scr-items table{font-size:8.5px !important;}
@@ -565,11 +570,11 @@
     </nav>
     <!-- 부족 자재 알림 — 자재 담당·admin에게만. 팝업 대신 사이드바에 상주해 흐름을 막지 않는다 -->
     <div id="lowPanel" style="display:none;">
-      <div class="lowp-h"><b>⚠ 발주 필요</b><span id="lowpCnt"></span>
-        <span style="display:flex; gap:4px;">
-          <button id="lowpPo" title="부족 자재로 발주서를 만들어 인쇄·메일 발송합니다">📋 발주서</button>
-          <button id="lowpPoList" title="지금까지 만든 발주서 목록 — 발송 여부·재인쇄·재발송">📑 이력</button>
-        </span></div>
+      <div class="lowp-h"><b id="lowpTitle">⚠ 발주 필요</b><span id="lowpCnt"></span></div>
+      <div class="lowp-btns">
+        <button id="lowpPo" title="부족 자재로 발주서를 만들어 인쇄·메일 발송합니다">📋 발주서</button>
+        <button id="lowpPoList" title="지금까지 만든 발주서 목록 — 발송 기록 확인·재인쇄">📑 이력</button>
+      </div>
       <div id="lowpList"></div>
       <div id="lowpNote"></div>
     </div>
@@ -1245,15 +1250,28 @@
 
 <!-- 발주서 이력 목록 모달 -->
 <div class="overlay" id="poListOverlay">
-  <div class="modal" style="max-width:720px;">
+  <div class="modal" style="width:min(780px, 94vw);">
     <h3>📑 발주서 이력</h3>
-    <p class="hint">지금까지 만든 발주서 목록입니다 · [열기]로 불러와 재인쇄·재발송할 수 있습니다 · 메일을 보낸 발주서는 수신 주소·발송 시각이 남습니다.</p>
-    <div class="tbl-wrap" style="max-height:420px; overflow-y:auto;"><table>
+    <p class="hint">발송 전 발주서는 [열기]로 불러와 수정·발송하고, 이미 보낸 발주서는 [보기]로 보낸 내용을 그대로 확인합니다 (발송분은 수정·재발송 불가).</p>
+    <div style="max-height:440px; overflow-y:auto;"><table style="width:100%; table-layout:auto;">
       <thead><tr><th>번호</th><th>발주일</th><th>거래처</th><th class="r">품목</th><th>작성자</th><th>메일 발송</th><th></th></tr></thead>
-      <tbody class="num" id="poListBody"></tbody>
+      <tbody class="num" id="poListBody" style="font-size:12.5px;"></tbody>
     </table></div>
     <div class="modal-foot">
       <button class="btn" onclick="closePoList()">닫기</button>
+    </div>
+  </div>
+</div>
+
+<!-- 발송된 발주서 보기 전용 모달 -->
+<div class="overlay" id="poViewOverlay">
+  <div class="modal" style="width:min(720px, 94vw);">
+    <h3 id="poViewTitle">📧 보낸 발주서</h3>
+    <p class="hint" id="poViewSub"></p>
+    <div id="poViewBody" style="max-height:56vh; overflow-y:auto; border:1px solid var(--line-soft); border-radius:10px; padding:14px; background:#fff;"></div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closePoView()">닫기</button>
+      <button class="btn primary" id="poViewPrint">🖨 인쇄</button>
     </div>
   </div>
 </div>
