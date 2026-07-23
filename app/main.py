@@ -40,7 +40,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.8.0"     # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.9.0"     # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -1606,6 +1606,77 @@ def mat_history(mid: int, limit: int = 40):
                 "in_expiry": in_expiry, "in_made": in_made,
                 "last_in": dict(last_in) if last_in else None,
                 "last_use": dict(last_use) if last_use else None}
+    finally:
+        con.close()
+
+
+# ── 발주서 (자재 부족 → 거래처 주문) ──────────────────────
+def require_stock_duty(request: Request):
+    u = request.state.user
+    if u["role"] != "admin" and "stock" not in duty_set(u):
+        raise HTTPException(403, "자재(재고·입고) 담당 또는 관리자만 가능합니다")
+
+
+@app.get("/api/po")
+def po_list(request: Request, limit: int = 30):
+    require_stock_duty(request)
+    con = connect()
+    try:
+        out = rows(con.execute("""
+            SELECT po.*, COALESCE(pa.name,'거래처 미지정') partner
+            FROM purchase_order po LEFT JOIN partner pa ON pa.id=po.partner_id
+            ORDER BY po.id DESC LIMIT ?""", (limit,)))
+        for r in out:
+            try:
+                r["items"] = json.loads(r["items"] or "[]")
+            except ValueError:
+                r["items"] = []
+        return out
+    finally:
+        con.close()
+
+
+@app.post("/api/po")
+def po_save(request: Request, body: dict):
+    """발주서 저장 — 품목은 이름·규격·단위를 스냅샷으로 저장 (자재 정보가 나중에 바뀌어도 발주서는 그대로)."""
+    require_stock_duty(request)
+    items = body.get("items") or []
+    clean = []
+    con = connect()
+    try:
+        for it in items:
+            mid = it.get("material_id")
+            if not mid:
+                continue
+            m = con.execute("SELECT name, spec, unit FROM material WHERE id=?", (mid,)).fetchone()
+            if not m:
+                continue
+            clean.append({"material_id": mid, "name": m["name"], "spec": m["spec"] or "",
+                          "unit": m["unit"] or "", "qty": float(it.get("qty") or 0)})
+        if not clean:
+            raise HTTPException(400, "발주 품목이 없습니다 — 자재를 추가해주세요")
+        cur = con.execute("""INSERT INTO purchase_order(date, partner_id, due, note, items, created_by)
+            VALUES(?,?,?,?,?,?)""",
+                          (body.get("date") or dt.date.today().isoformat(),
+                           body.get("partner_id") or None, body.get("due") or "",
+                           body.get("note") or "", json.dumps(clean, ensure_ascii=False),
+                           request.state.user.get("username", "")))
+        audit(con, "save_po", f"발주서 #{cur.lastrowid} — 품목 {len(clean)}종")
+        con.commit()
+        return {"ok": True, "id": cur.lastrowid}
+    finally:
+        con.close()
+
+
+@app.delete("/api/po/{po_id}")
+def po_delete(request: Request, po_id: int):
+    require_stock_duty(request)
+    con = connect()
+    try:
+        con.execute("DELETE FROM purchase_order WHERE id=?", (po_id,))
+        audit(con, "delete_po", f"발주서 #{po_id} 삭제")
+        con.commit()
+        return {"ok": True}
     finally:
         con.close()
 

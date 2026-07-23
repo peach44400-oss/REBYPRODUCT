@@ -189,6 +189,19 @@ CREATE TABLE IF NOT EXISTS material_in (
 );
 CREATE INDEX IF NOT EXISTS idx_matin_date ON material_in(date);
 
+-- 발주서 — 자재 부족 시 거래처에 보내는 주문서 (품목은 작성 시점 스냅샷 JSON)
+CREATE TABLE IF NOT EXISTS purchase_order (
+  id INTEGER PRIMARY KEY,
+  date TEXT NOT NULL,                  -- 발주일
+  partner_id INTEGER REFERENCES partner(id),
+  due TEXT DEFAULT '',                 -- 납기 희망일
+  note TEXT DEFAULT '',
+  items TEXT DEFAULT '[]',             -- [{material_id, name, spec, unit, qty}]
+  created_at TEXT DEFAULT (datetime('now','localtime')),
+  created_by TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_po_date ON purchase_order(date);
+
 -- 자재 사용처: 자재×제품×일 실측 사용량 (원료수불부 매트릭스)
 -- product_id NULL = 기타 사용 (생산과 무관한 자재 사용 — 테스트/청소/타용도)
 CREATE TABLE IF NOT EXISTS material_usage (

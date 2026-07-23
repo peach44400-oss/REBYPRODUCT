@@ -47,6 +47,22 @@
   .lowp-h{display:flex; align-items:center; justify-content:space-between; gap:6px;
     font-size:11.5px; color:#FFB4AE; margin-bottom:6px;}
   .lowp-h b{font-size:12px; color:#FFD5D1;}
+  #lowpPo{background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.25); color:#FFD5D1;
+    font-size:10.5px; padding:2px 8px; border-radius:6px; cursor:pointer;}
+  #lowpPo:hover{background:rgba(255,255,255,.2);}
+  /* 발주서 인쇄 — 인쇄 시 발주서만 보이게 */
+  #poPrintArea{display:none;}
+  @media print{
+    body.po-print > :not(#poPrintArea){display:none !important;}
+    body.po-print #poPrintArea{display:block !important;}
+  }
+  #poPrintArea{font-family:inherit; color:#111; padding:10mm;}
+  #poPrintArea h1{font-size:26px; text-align:center; letter-spacing:14px; margin:0 0 18px;}
+  #poPrintArea table{width:100%; border-collapse:collapse; font-size:13px;}
+  #poPrintArea th, #poPrintArea td{border:1px solid #333; padding:6px 9px; text-align:left;}
+  #poPrintArea th{background:#f0f0f0; font-weight:700;}
+  .po-meta{display:flex; justify-content:space-between; gap:16px; margin-bottom:14px; font-size:13px;}
+  .po-meta table{width:auto; min-width:46%;}
   #lowpCnt{font-size:10.5px; color:#FFB4AE;}
   #lowpList{display:flex; flex-direction:column; gap:3px; overflow-y:auto; max-height:190px;}
   .lowp-item{display:flex; align-items:center; justify-content:space-between; gap:6px; width:100%;
@@ -538,7 +554,8 @@
     </nav>
     <!-- 부족 자재 알림 — 자재 담당·admin에게만. 팝업 대신 사이드바에 상주해 흐름을 막지 않는다 -->
     <div id="lowPanel" style="display:none;">
-      <div class="lowp-h"><b>⚠ 발주 필요</b><span id="lowpCnt"></span></div>
+      <div class="lowp-h"><b>⚠ 발주 필요</b><span id="lowpCnt"></span>
+        <button id="lowpPo" title="부족 자재로 발주서를 만들어 인쇄합니다">📋 발주서</button></div>
       <div id="lowpList"></div>
       <div id="lowpNote"></div>
     </div>
@@ -1172,6 +1189,41 @@
   </div>
 </div>
 
+<!-- 발주서 작성 모달 -->
+<div class="overlay" id="poOverlay">
+  <div class="modal" style="max-width:640px;">
+    <h3>📋 발주서</h3>
+    <p class="hint">부족 자재를 거래처에 주문하는 발주서를 만들고 인쇄합니다. 저장하면 아래 최근 발주서에 남습니다.</p>
+    <div class="fgrid">
+      <div class="fld"><label>거래처 (수신)</label><select id="poPartner"></select></div>
+      <div class="fld"><label>발주일</label>
+        <input class="datepick" type="text" readonly id="poDate" placeholder="📅 발주일"></div>
+      <div class="fld"><label>납기 희망일</label>
+        <input class="datepick" type="text" readonly id="poDue" placeholder="📅 납기 희망일"></div>
+      <div class="fld"><label>비고</label><input id="poNote" placeholder="예: 오전 입고 요청"></div>
+    </div>
+    <div style="display:flex; align-items:center; gap:8px; margin:10px 0 6px;">
+      <b style="font-size:13px;">발주 품목</b>
+      <span class="spacer"></span>
+      <button class="btn sm" id="poFillLow" title="안전재고 미달 자재를 부족량과 함께 채웁니다">⚠ 부족 자재 채우기</button>
+      <button class="btn sm" id="poAddItem">+ 품목 추가</button>
+    </div>
+    <div class="tbl-wrap" style="max-height:250px; overflow-y:auto;"><table>
+      <thead><tr><th>자재명</th><th class="r">수량</th><th>단위</th><th></th></tr></thead>
+      <tbody class="num" id="poItems"></tbody>
+    </table></div>
+    <div style="margin-top:12px;">
+      <b style="font-size:13px;">최근 발주서</b>
+      <div id="poHistory" style="max-height:140px; overflow-y:auto; margin-top:6px; border:1px solid var(--line-soft); border-radius:8px;"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closePo()">닫기</button>
+      <button class="btn" id="poSaveBtn">저장</button>
+      <button class="btn primary" id="poPrintBtn">🖨 인쇄</button>
+    </div>
+  </div>
+</div>
+
 <!-- 인원 관리 · 개인 출근일 상세 모달 -->
 <div class="overlay" id="staffDayOverlay">
   <div class="modal" style="max-width:680px;">
@@ -1470,5 +1522,7 @@
 <script src="/static/vendor/chart.umd.js"></script>
 <script src="/static/vendor/chartjs-plugin-zoom.min.js"></script>
 <script src="/static/app.js"></script>
+<!-- 발주서 인쇄 전용 영역 — 인쇄 시 body.po-print 클래스로 이 영역만 표시 -->
+<div id="poPrintArea"></div>
 </body>
 </html>

@@ -1156,6 +1156,20 @@ function selHtml(list, val, field, nameKey = "name", extra = "", cls = "") {
   return `<select class="mini-sel ${cls}" data-f="${field}"><option value="">— 선택 —</option>${extra}` +
     list.map(o => `<option value="${o.id}" ${o.id === val ? "selected" : ""}>${esc(o[nameKey])}</option>`).join("") + "</select>";
 }
+/* 거래처 select 옵션 — 유형별 optgroup으로 구분 표시.
+   firstType이 맨 앞 그룹 (일일 입력=판매처, 발주서=자재 공급처), 나머지는 가나다순 */
+function partnerOptGroups(selId, list, firstType = "판매처") {
+  const by = {};
+  (list || M.partner.filter(isSeller)).forEach(p => {
+    const t = p.type || "기타";
+    (by[t] = by[t] || []).push(p);
+  });
+  const order = Object.keys(by).sort((a, b) =>
+    a === firstType ? -1 : b === firstType ? 1 : a.localeCompare(b, "ko"));
+  return order.map(t => `<optgroup label="${esc(t)}">`
+    + by[t].map(p => `<option value="${p.id}" ${p.id === selId ? "selected" : ""}>${esc(p.name)}</option>`).join("")
+    + `</optgroup>`).join("");
+}
 /* 자재 select — 원재료/부재료를 optgroup으로 분리해 찾기 쉽게 (data-f / data-uf 는 호출부 지정) */
 function matOptGroups(val) {
   const grp = (label, arr) => arr.length
@@ -1778,11 +1792,10 @@ window.clearPlanSplit = () => {   // 분배 해제 — 생산은 직접 입력 �
   toast("거래처 분배를 해제했습니다 — 생산수량을 직접 입력하세요");
 };
 function renderPlanSplitRows() {
-  const partners = M.partner.filter(isSeller);
   $("planSplitBody").innerHTML = PSP.rows.map((s, i) => `<tr data-psi="${i}">
     <td><select class="mini-sel" data-psf="partner_id" style="min-width:150px">
       <option value="">— 거래처 —</option>
-      ${partners.map(p => `<option value="${p.id}" ${p.id === s.partner_id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}
+      ${partnerOptGroups(s.partner_id)}
     </select></td>
     <td class="r"><input class="mini-input num" data-psf="qty" value="${s.qty ?? ""}" style="width:100px" inputmode="decimal"></td>
     <td><button class="btn ghost sm" data-psdel>삭제</button></td></tr>`).join("");
@@ -1953,7 +1966,7 @@ function renderLotSplitRows() {
     <td><select class="mini-sel" data-sf="partner_id" style="max-width:130px; font-size:11.5px;"
         title="이 구간의 납품처 — 출고 시 이 LOT을 고르면 거래처가 자동 선택됩니다">
       <option value="">— 미지정 —</option>
-      ${M.partner.filter(isSeller).map(p => `<option value="${p.id}" ${+s.partner_id === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}
+      ${partnerOptGroups(+s.partner_id || null)}
     </select></td>
     <td class="r"><input class="mini-input num" data-sf="qty" value="${s.qty ?? ""}" style="width:90px" inputmode="decimal"></td>
     <td><input class="mini-input datepick" type="text" readonly data-sf="expiry" value="${esc(s.expiry || "")}" placeholder="📅 소비기한" style="width:150px"></td>
@@ -2086,7 +2099,7 @@ function renderShip() {
     return `<tr data-i="${i}">
     <td>${selHtml(shipProducts(r), r.product_id, "product_id", "name", "", "nm")}</td>
     <td>${shipLotSel(r)}</td>
-    <td>${selHtml(M.partner.filter(isSeller), r.partner_id, "partner_id")}</td>
+    <td><select class="mini-sel" data-f="partner_id"><option value="">— 선택 —</option>${partnerOptGroups(r.partner_id)}</select></td>
     <td class="r"><input class="mini-input num${over ? " ship-over" : ""}" data-f="qty" value="${r.qty || ""}"
       title="${r.product_id ? "이날 가용 재고 " + NF(avail) + "개" : ""}"></td>
     <td>${r.product_id ? `<span class="ship-warn num" style="color:${over ? "var(--crit)" : "#B45309"}; font-size:11px; ${warnTxt ? "" : "display:none"}">${warnTxt}</span> `
@@ -3066,6 +3079,7 @@ const QE_COLS = {
   product: { 3: "unit_price", 4: "shelf_days", 5: "safety_stock" },
   raw: { 4: "unit_price", 5: "safety_stock" },
   sub: { 2: "pack_count", 3: "unit_price", 4: "safety_stock" },
+  partner: { 1: "type" },   // 유형 — 숫자가 아닌 선택형 (renderMasters에서 select로 렌더)
   staff: { 3: "wage" },
 };
 let mQuick = false;      // 빠른 편집 모드
@@ -3139,7 +3153,7 @@ function renderMasters() {
   // 빠른 편집 버튼: 대상 탭 + 쓰기 권한일 때만
   const qeMap = QE_COLS[mTab];
   $("mQuickEdit").style.display = (qeMap && ROLE !== "guest") ? "" : "none";
-  $("mImport").style.display = (qeMap && ROLE === "admin") ? "" : "none";
+  $("mImport").style.display = (qeMap && ROLE === "admin" && mTab !== "partner") ? "" : "none";   // 거래처는 [엑셀 받기] 전용
   $("mPackSet").style.display = (mTab === "sub" && ROLE === "admin") ? "" : "none";
   $("mErpImport").style.display = (mTab === "partner" && ROLE === "admin") ? "" : "none";
   $("mQuickEdit").classList.toggle("on", mQuick);
@@ -3156,6 +3170,14 @@ function renderMasters() {
     const cells = cfg.row(r);
     if (mQuick && qeMap) {
       for (const [idx, f] of Object.entries(qeMap)) {
+        if (f === "type") {   // 거래처 유형 — 선택형 (기존 유형 + 기본 유형 목록)
+          const types = [...new Set(["판매처", "자재 공급처", "용역업체"]
+            .concat((M.partner || []).map(p => p.type).filter(Boolean)))];
+          cells[idx] = `<select class="qe-input" data-qe="type" data-qid="${r.id}" style="min-width:110px">`
+            + types.map(t => `<option value="${esc(t)}" ${t === r.type ? "selected" : ""}>${esc(t)}</option>`).join("")
+            + `</select>`;
+          continue;
+        }
         if (r[f] === null && !(ROLE === "admin"
           || (f === "unit_price" && canM(mTab === "product" ? "prod" : "mat"))
           || (f === "wage" && canM("labor")))) continue;   // 권한 마스킹 필드는 열람 권한 없으면 입력 불가 — 권한자의 null은 '미입력'
@@ -3238,13 +3260,14 @@ $("mBody").addEventListener("click", e => {
 $("mBody").addEventListener("change", async e => {
   const inp = e.target.closest(".qe-input"); if (!inp) return;
   const f = inp.dataset.qe, id = +inp.dataset.qid;
-  const v = Number(String(inp.value).replace(/,/g, ""));
-  if (inp.value !== "" && (isNaN(v) || v < 0)) { toast("숫자를 입력하세요"); inp.value = ""; return; }
+  const isText = f === "type";   // 거래처 유형 등 텍스트 선택형은 숫자 검사 없이 그대로 저장
+  const v = isText ? inp.value : Number(String(inp.value).replace(/,/g, ""));
+  if (!isText && inp.value !== "" && (isNaN(v) || v < 0)) { toast("숫자를 입력하세요"); inp.value = ""; return; }
   try {
     await api(`/api/masters/${mTab}/${id}`, { method: "PUT",
-      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ [f]: v || 0 }) });
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ [f]: isText ? v : (v || 0) }) });
     const row = (M[mTab] || []).find(r => r.id === id);
-    if (row) row[f] = v || 0;
+    if (row) row[f] = isText ? v : (v || 0);
     inp.classList.add("saved");
     setTimeout(() => inp.classList.remove("saved"), 1200);
     renderMHealth();   // 배너 건수만 갱신 (표는 그대로 — 포커스 유지)
@@ -4410,8 +4433,7 @@ async function loadLowStock() {
   try { d = await api("/api/lowstock"); } catch (e) { return; }
   const items = d.items || [];
   const todo = items.filter(x => !x.ordered);          // 아직 발주 안 한 것 = 진짜 할 일
-  if (!items.length && !d.unset) { panel.style.display = "none"; return; }
-  panel.style.display = "flex";
+  panel.style.display = "flex";   // 부족이 없어도 표시 — [📋 발주서] 진입점 (목록엔 '미달 없음' 안내)
   $("lowpCnt").textContent = items.length
     ? (todo.length ? `${todo.length}종` : "발주 완료") : "";
   $("lowpList").innerHTML = items.map(x => `
@@ -4460,6 +4482,143 @@ async function gotoLowMaterial(mid) {
     toast(`'${m.name}' 발주량을 입력하세요 — 저장하면 알림에서 '발주함'으로 바뀝니다`);
   }
 }
+
+/* ══ 발주서 — 부족 자재를 거래처에 주문 (작성·저장·인쇄) ═════════ */
+const PO = { items: [], id: null };
+async function openPo(prefillLow) {
+  PO.items = []; PO.id = null;
+  // 거래처: 전체를 유형별 그룹으로 — 발주 대상은 대개 자재 공급처라 맨 앞 그룹으로
+  const list = M.partner.filter(p => p.status !== "중지");
+  $("poPartner").innerHTML = '<option value="">— 거래처 선택 —</option>' + partnerOptGroups(null, list, "자재 공급처");
+  $("poDate").value = todayISO();
+  $("poDue").value = ""; $("poNote").value = "";
+  if (prefillLow) await poFillFromLow();
+  renderPoItems();
+  loadPoHistory();
+  $("poOverlay").classList.add("on");
+}
+window.closePo = () => $("poOverlay").classList.remove("on");
+async function poFillFromLow() {
+  try {
+    const d = await api("/api/lowstock");
+    const items = (d.items || []).filter(x => !x.ordered);
+    if (!items.length) { toast("안전재고 미달(미발주) 자재가 없습니다"); return; }
+    items.forEach(x => {
+      if (!PO.items.some(it => it.material_id === x.id))
+        PO.items.push({ material_id: x.id, qty: Math.ceil(x.shortfall * 100) / 100 });
+    });
+  } catch (e) { /* api가 토스트 */ }
+}
+function renderPoItems() {
+  $("poItems").innerHTML = PO.items.map((it, i) => {
+    const m = materialById(it.material_id) || {};
+    return `<tr data-poi="${i}">
+      <td>${matSel(it.material_id, 'data-pf="material_id"')}</td>
+      <td class="r"><input class="mini-input num" data-pf="qty" value="${it.qty ?? ""}" style="width:90px" inputmode="decimal"></td>
+      <td class="auto">${esc(m.unit || "")}</td>
+      <td><button class="btn ghost sm" data-podel>삭제</button></td></tr>`;
+  }).join("") || '<tr><td colspan="4" class="auto">[⚠ 부족 자재 채우기] 또는 [+ 품목 추가]로 품목을 넣으세요</td></tr>';
+}
+$("poItems").addEventListener("input", e => {
+  const tr = e.target.closest("tr[data-poi]"); if (!tr) return;
+  const it = PO.items[+tr.dataset.poi]; if (!it) return;
+  const f = e.target.dataset.pf; if (!f) return;
+  if (f === "material_id") { it.material_id = e.target.value ? +e.target.value : null; renderPoItems(); }
+  else it.qty = e.target.value;
+});
+$("poItems").addEventListener("click", e => {
+  const d = e.target.closest("[data-podel]"); if (!d) return;
+  PO.items.splice(+d.closest("tr[data-poi]").dataset.poi, 1);
+  renderPoItems();
+});
+$("poAddItem").onclick = () => { PO.items.push({ material_id: null, qty: "" }); renderPoItems(); };
+$("poFillLow").onclick = async () => { await poFillFromLow(); renderPoItems(); };
+function poBody() {
+  return { date: $("poDate").value || todayISO(), partner_id: +$("poPartner").value || null,
+    due: $("poDue").value || "", note: $("poNote").value.trim(),
+    items: PO.items.filter(it => it.material_id)
+      .map(it => ({ material_id: it.material_id, qty: Number(String(it.qty ?? "").replace(/,/g, "")) || 0 })) };
+}
+$("poSaveBtn").onclick = async () => {
+  const b = poBody();
+  if (!b.items.length) return toast("발주 품목을 추가해주세요");
+  try {
+    const r = await api("/api/po", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) });
+    PO.id = r.id;
+    toast(`발주서 #${r.id} 저장됨`);
+    loadPoHistory();
+  } catch (e) { /* api가 토스트 */ }
+};
+async function loadPoHistory() {
+  let hist = [];
+  try { hist = await api("/api/po"); } catch (e) { }
+  $("poHistory").innerHTML = hist.map(h => `
+    <div style="display:flex; align-items:center; gap:8px; padding:5px 10px; border-bottom:1px solid var(--line-soft); font-size:12.5px;">
+      <button class="uselink" data-poload="${h.id}" title="클릭하면 이 발주서를 불러옵니다 (재인쇄 가능)">#${h.id} · ${h.date} · ${esc(h.partner)}</button>
+      <span class="auto">${h.items.length}종</span>
+      <span class="spacer"></span>
+      <button class="btn ghost sm" data-podelhist="${h.id}" style="color:var(--crit)">삭제</button>
+    </div>`).join("") || '<div class="auto" style="padding:10px;">저장된 발주서가 없습니다</div>';
+  PO.hist = hist;
+}
+$("poHistory").addEventListener("click", async e => {
+  const ld = e.target.closest("[data-poload]");
+  if (ld) {
+    const h = (PO.hist || []).find(x => x.id === +ld.dataset.poload); if (!h) return;
+    PO.id = h.id;
+    $("poPartner").value = h.partner_id || "";
+    $("poDate").value = h.date; $("poDue").value = h.due || ""; $("poNote").value = h.note || "";
+    PO.items = h.items.map(it => ({ material_id: it.material_id, qty: it.qty }));
+    renderPoItems();
+    toast(`발주서 #${h.id} 불러옴 — [🖨 인쇄]로 다시 출력할 수 있습니다`);
+    return;
+  }
+  const del = e.target.closest("[data-podelhist]");
+  if (del && confirm(`발주서 #${del.dataset.podelhist}를 삭제할까요?`)) {
+    try { await api("/api/po/" + del.dataset.podelhist, { method: "DELETE" }); loadPoHistory(); } catch (err) { }
+  }
+});
+$("poPrintBtn").onclick = () => {
+  const b = poBody();
+  if (!b.items.length) return toast("발주 품목을 추가해주세요");
+  const pa = M.partner.find(p => p.id === b.partner_id) || {};
+  const rowsHtml = b.items.map((it, i) => {
+    const m = materialById(it.material_id) || {};
+    return `<tr><td style="text-align:center">${i + 1}</td><td>${esc(m.name || "")}</td>
+      <td>${esc(m.spec || "")}</td><td style="text-align:right">${it.qty ? NF(it.qty) : ""}</td>
+      <td style="text-align:center">${esc(m.unit || "")}</td><td></td></tr>`;
+  }).join("");
+  $("poPrintArea").innerHTML = `
+    <h1>발 주 서</h1>
+    <div class="po-meta">
+      <table>
+        <tr><th style="width:80px">수신</th><td>${esc(pa.name || "________________")} 귀중</td></tr>
+        <tr><th>사업자번호</th><td>${esc(pa.biz_no || "")}</td></tr>
+        <tr><th>대표자</th><td>${esc(pa.ceo || "")}</td></tr>
+        <tr><th>연락처</th><td>${esc(pa.phone || pa.mobile || "")}</td></tr>
+      </table>
+      <table>
+        <tr><th style="width:90px">발주일</th><td>${esc(b.date)}</td></tr>
+        <tr><th>납기 희망일</th><td>${esc(b.due || "협의")}</td></tr>
+        <tr><th>발신</th><td>리바이프로덕트 (REBYPRODUCT)</td></tr>
+        <tr><th>발주번호</th><td>${PO.id ? "#" + PO.id : "-"}</td></tr>
+      </table>
+    </div>
+    <table>
+      <thead><tr><th style="width:40px; text-align:center">No</th><th>품목명</th><th style="width:120px">규격</th>
+        <th style="width:90px; text-align:right">수량</th><th style="width:60px; text-align:center">단위</th><th style="width:110px">비고</th></tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
+    ${b.note ? `<p style="margin-top:12px; font-size:13px;"><b>비고:</b> ${esc(b.note)}</p>` : ""}
+    <p style="margin-top:26px; font-size:13px; text-align:right;">위와 같이 발주합니다. &nbsp;&nbsp; ${esc(b.date)} &nbsp;&nbsp; 리바이프로덕트 &nbsp;(인)</p>`;
+  document.body.classList.add("po-print");
+  const done = () => { document.body.classList.remove("po-print"); window.removeEventListener("afterprint", done); };
+  window.addEventListener("afterprint", done);
+  window.print();
+  setTimeout(done, 1500);   // afterprint 미발생 브라우저 대비
+};
+$("lowpPo").addEventListener("click", e => { e.stopPropagation(); openPo(true); });
 async function doLkSearch() {
   const q = $("lkSearch").value.trim();
   if (!q) return toast("제품명을 입력하세요");
@@ -5780,12 +5939,12 @@ document.addEventListener("input", e => {
 });
 
 /* ── 모달 공통 닫기 ─────────────────── */
-["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "dispOverlay", "lotSplitOverlay", "packSetOverlay", "staffDayOverlay"].forEach(id => {
+["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "dispOverlay", "lotSplitOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay"].forEach(id => {
   $(id).addEventListener("click", e => { if (e.target.id === id) $(id).classList.remove("on"); });
 });
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") {
-    ["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "packSetOverlay", "staffDayOverlay"].forEach(id => $(id).classList.remove("on"));
+    ["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay"].forEach(id => $(id).classList.remove("on"));
     hidePad();
   }
 });
