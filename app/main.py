@@ -40,7 +40,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.9.0"     # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.10.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -134,7 +134,7 @@ MASTER_TABLES = {
                             "shelf_days", "safety_stock", "batch_yield", "status", "note"]),
     "material": ("material", ["kind", "name", "spec", "unit", "pack_count", "pack_set", "unit_price", "partner_id",
                               "safety_stock", "prod_mult", "prod_per", "status", "note"]),
-    "partner": ("partner", ["name", "type", "phone", "contact", "note", "status", "biz_no", "ceo", "mobile"]),
+    "partner": ("partner", ["name", "type", "phone", "contact", "note", "status", "biz_no", "ceo", "mobile", "email"]),
     "staff": ("staff", ["name", "kind", "position", "process", "wage", "join_date", "phone", "status", "note"]),
     "line": ("line", ["name", "process", "std_hours", "parent_id", "note", "status"]),
 }
@@ -1681,6 +1681,130 @@ def po_delete(request: Request, po_id: int):
         con.close()
 
 
+# ── 메일(SMTP) 설정 + 발주서 메일 발송 ──────────────────────
+SMTP_KEYS = ("smtp_host", "smtp_port", "smtp_user", "smtp_pass", "smtp_from")
+
+
+def get_settings(con, keys):
+    got = {r["key"]: r["value"] for r in con.execute(
+        f"SELECT key, value FROM app_setting WHERE key IN ({','.join('?' * len(keys))})", keys)}
+    return {k: got.get(k, "") for k in keys}
+
+
+@app.get("/api/smtp")
+def smtp_get(request: Request):
+    require_admin(request)
+    con = connect()
+    try:
+        s = get_settings(con, SMTP_KEYS)
+        return {"host": s["smtp_host"], "port": s["smtp_port"], "user": s["smtp_user"],
+                "from": s["smtp_from"], "has_pass": bool(s["smtp_pass"]),
+                "configured": bool(s["smtp_host"] and s["smtp_user"] and s["smtp_pass"])}
+    finally:
+        con.close()
+
+
+@app.post("/api/smtp")
+def smtp_save(request: Request, body: dict):
+    require_admin(request)
+    con = connect()
+    try:
+        vals = {"smtp_host": (body.get("host") or "").strip(),
+                "smtp_port": str(body.get("port") or "").strip(),
+                "smtp_user": (body.get("user") or "").strip(),
+                "smtp_from": (body.get("from") or "").strip()}
+        if body.get("pass"):   # 비밀번호는 입력했을 때만 교체 (빈칸 = 기존 유지)
+            vals["smtp_pass"] = str(body["pass"]).strip()
+        for k, v in vals.items():
+            con.execute("INSERT INTO app_setting(key, value) VALUES(?,?)"
+                        " ON CONFLICT(key) DO UPDATE SET value=excluded.value", (k, v))
+        audit(con, "smtp_set", "메일(SMTP) 설정 변경")
+        con.commit()
+        return {"ok": True}
+    finally:
+        con.close()
+
+
+def send_mail(con, to_list, subject, html, attachments, sender_label):
+    """SMTP 발송 — 포트 465는 SSL, 그 외 STARTTLS. attachments=[{name, data(base64)}]."""
+    import smtplib
+    import base64 as b64
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+    from email.mime.application import MIMEApplication
+    from email.utils import formataddr
+    s = get_settings(con, SMTP_KEYS)
+    if not (s["smtp_host"] and s["smtp_user"] and s["smtp_pass"]):
+        raise HTTPException(400, "메일(SMTP)이 설정되지 않았습니다 — [관리] > 메일 설정에서 계정을 등록해주세요")
+    port = int(s["smtp_port"] or 465)
+    msg = MIMEMultipart()
+    msg["From"] = formataddr((sender_label, s["smtp_from"] or s["smtp_user"]))
+    msg["To"] = ", ".join(to_list)
+    msg["Subject"] = subject
+    msg.attach(MIMEText(html, "html", "utf-8"))
+    total = 0
+    for a in attachments or []:
+        data = a.get("data") or ""
+        if "," in data[:100]:
+            data = data.split(",", 1)[1]
+        raw = b64.b64decode(data)
+        total += len(raw)
+        if total > 20 * 1024 * 1024:
+            raise HTTPException(400, "첨부 합계는 20MB 이하만 가능합니다")
+        part = MIMEApplication(raw)
+        part.add_header("Content-Disposition", "attachment",
+                        filename=("utf-8", "", a.get("name") or "file"))
+        msg.attach(part)
+    try:
+        if port == 465:
+            sv = smtplib.SMTP_SSL(s["smtp_host"], port, timeout=25)
+        else:
+            sv = smtplib.SMTP(s["smtp_host"], port, timeout=25)
+            sv.starttls()
+        with sv:
+            sv.login(s["smtp_user"], s["smtp_pass"])
+            sv.send_message(msg)
+    except smtplib.SMTPAuthenticationError:
+        raise HTTPException(502, "메일 로그인 실패 — 계정·앱 비밀번호를 확인해주세요")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(502, f"메일 발송 실패: {e}")
+
+
+def sender_label_of(con, username):
+    """발신 표시명: '리바이프로덕트 이름 직급' — 직급은 인원 등록(staff)의 직책에서 이름 매칭."""
+    row = con.execute("SELECT position FROM staff WHERE name=?", (username,)).fetchone()
+    pos = (row["position"] if row else "") or ""
+    return f"리바이프로덕트 {username}" + (f" {pos}" if pos else "")
+
+
+@app.post("/api/po/send")
+def po_send(request: Request, body: dict):
+    """발주서 메일 발송 — 본문 HTML(발주서 표) + 첨부. 발송하면 발주서에 발송 기록."""
+    require_stock_duty(request)
+    to = [t.strip() for t in str(body.get("to") or "").replace(";", ",").split(",") if t.strip()]
+    if not to:
+        raise HTTPException(400, "받는 메일 주소를 입력해주세요")
+    if any("@" not in t for t in to):
+        raise HTTPException(400, "메일 주소 형식이 올바르지 않습니다")
+    subject = (body.get("subject") or "").strip() or "[리바이프로덕트] 발주서"
+    html = body.get("html") or ""
+    con = connect()
+    try:
+        send_mail(con, to, subject, html, body.get("attachments") or [],
+                  sender_label_of(con, request.state.user.get("username", "")))
+        po_id = body.get("po_id")
+        if po_id:
+            con.execute("UPDATE purchase_order SET sent_at=datetime('now','localtime'), sent_to=? WHERE id=?",
+                        (", ".join(to), po_id))
+        audit(con, "send_po", f"발주서{'#' + str(po_id) if po_id else ''} 메일 발송 → {', '.join(to)}")
+        con.commit()
+        return {"ok": True}
+    finally:
+        con.close()
+
+
 # ── 거래처 엑셀 받기 (ERP ESA001M.xlsx / 앱 엑셀 내보내기 CSV) ──────────
 # 열 이름 별칭 — ERP 양식·앱 내보내기 양식 어느 쪽이든 헤더 이름으로 매핑
 PARTNER_COL_ALIAS = {
@@ -1689,6 +1813,7 @@ PARTNER_COL_ALIAS = {
     "ceo": ("대표자명", "대표자"),
     "phone": ("전화", "연락처"),
     "mobile": ("모바일",),
+    "email": ("이메일", "E-MAIL", "EMAIL", "메일"),
     "type": ("유형",),
     "contact": ("담당자",),
     "status": ("상태",),
@@ -1786,10 +1911,10 @@ def partners_import(request: Request, body: dict):
                 skipped += 1
                 continue
             if pid:   # 기존 거래처 — 빈 필드만 채움, 이름/유형/상태/비고는 유지
-                cur = con.execute("SELECT biz_no, ceo, phone, mobile, contact FROM partner WHERE id=?", (pid,)).fetchone()
+                cur = con.execute("SELECT biz_no, ceo, phone, mobile, contact, email FROM partner WHERE id=?", (pid,)).fetchone()
                 sets, vals = [], []
                 for f, nv in (("biz_no", biz), ("ceo", it["ceo"]), ("phone", it["phone"]),
-                              ("mobile", it["mobile"]), ("contact", it["contact"])):
+                              ("mobile", it["mobile"]), ("contact", it["contact"]), ("email", it["email"])):
                     if nv and not (cur[f] or "").strip():
                         sets.append(f + "=?"); vals.append(nv)
                 if sets:
@@ -1801,10 +1926,10 @@ def partners_import(request: Request, body: dict):
             else:     # 신규 등록 — 유형 열이 있으면 그대로, 없으면 '자재 공급처'(판매 드롭다운 보호)
                 status = it["status"] or ("중지" if it["use"].upper() == "NO" else "활성")
                 if apply_:
-                    cur = con.execute("""INSERT INTO partner(name, type, phone, contact, note, status, biz_no, ceo, mobile)
-                        VALUES(?,?,?,?,?,?,?,?,?)""",
+                    cur = con.execute("""INSERT INTO partner(name, type, phone, contact, note, status, biz_no, ceo, mobile, email)
+                        VALUES(?,?,?,?,?,?,?,?,?,?)""",
                                       (name, it["type"] or "자재 공급처", it["phone"], it["contact"], "",
-                                       status, biz, it["ceo"], it["mobile"]))
+                                       status, biz, it["ceo"], it["mobile"], it["email"]))
                     by_name[name] = cur.lastrowid
                     if biz:
                         by_biz[biz] = cur.lastrowid

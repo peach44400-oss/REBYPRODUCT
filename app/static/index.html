@@ -1219,7 +1219,32 @@
     <div class="modal-foot">
       <button class="btn" onclick="closePo()">닫기</button>
       <button class="btn" id="poSaveBtn">저장</button>
+      <button class="btn" id="poMailBtn" title="발주서를 거래처 이메일로 보냅니다 (관리 > 메일 설정 필요)">📧 메일 보내기</button>
       <button class="btn primary" id="poPrintBtn">🖨 인쇄</button>
+    </div>
+  </div>
+</div>
+
+<!-- 발주서 메일 작성 모달 -->
+<div class="overlay" id="poMailOverlay">
+  <div class="modal" style="max-width:560px;">
+    <h3>📧 발주서 메일 보내기</h3>
+    <p class="hint">발주서 표가 메일 본문에 자동으로 들어갑니다 · 보낸 사람은 로그인 사용자 이름·직급으로 표시됩니다.</p>
+    <div class="fgrid">
+      <div class="fld full"><label>받는 메일 (쉼표로 여러 명)</label><input id="pmTo" placeholder="예: order@company.co.kr"></div>
+      <div class="fld full"><label>제목</label><input id="pmSubject"></div>
+      <div class="fld full"><label>메시지</label><textarea id="pmMsg" rows="4" style="width:100%; resize:vertical; font:inherit; padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:var(--surface); color:var(--ink);"></textarea></div>
+      <div class="fld full"><label>첨부 (이미지·파일 · 개당 10MB, 합계 20MB)</label>
+        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+          <button class="btn sm" id="pmAttach">📎 파일 첨부</button>
+          <input type="file" id="pmFile" multiple style="display:none;">
+          <span id="pmFiles" style="flex:1;"></span>
+        </div></div>
+    </div>
+    <p class="hint" id="pmHint" style="color:var(--warn);"></p>
+    <div class="modal-foot">
+      <button class="btn" onclick="closePoMail()">취소</button>
+      <button class="btn primary" id="pmSend">📧 보내기</button>
     </div>
   </div>
 </div>
@@ -1272,6 +1297,21 @@
       <span class="auto" id="updMsg" style="font-size:12px;"></span>
     </div>
     <div id="updNotes" style="font-size:11.5px; color:var(--muted); white-space:pre-wrap; line-height:1.5; margin-bottom:6px;"></div>
+    <div style="font-size:12.5px; font-weight:800; color:var(--muted); margin:16px 0 6px;">📧 메일(SMTP) 설정 — 발주서 메일 발송용</div>
+    <p class="hint" style="margin:0 0 8px;">발송용 계정 하나만 등록하면 됩니다. 네이버: smtp.naver.com·465 / 구글: smtp.gmail.com·465 — 각 메일 설정에서 <b>앱 비밀번호</b>를 발급받아 입력하세요.</p>
+    <div style="display:grid; grid-template-columns:1fr 90px; gap:6px; margin-bottom:6px;">
+      <input class="mini-input" id="smtpHost" placeholder="SMTP 서버 (예: smtp.naver.com)" style="text-align:left;">
+      <input class="mini-input num" id="smtpPort" placeholder="포트 (465)">
+    </div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:6px;">
+      <input class="mini-input" id="smtpUser" placeholder="계정 (메일 주소)" style="text-align:left;" autocomplete="off">
+      <input class="mini-input" id="smtpPass" type="password" placeholder="앱 비밀번호" style="text-align:left;" autocomplete="new-password">
+    </div>
+    <div style="display:flex; gap:6px; align-items:center; margin-bottom:6px;">
+      <input class="mini-input" id="smtpFrom" placeholder="표시 발신 주소 (비우면 계정 주소)" style="text-align:left; flex:1;">
+      <button class="btn sm" id="smtpSave">저장</button>
+      <span class="auto" id="smtpState" style="font-size:11.5px;"></span>
+    </div>
     <div style="font-size:12.5px; font-weight:800; color:var(--muted); margin:16px 0 6px;">💾 백업 / 복원</div>
     <p class="hint" style="margin:0 0 8px;">매일 자동 백업됩니다 (백업 폴더 · 최근 30개 보관). 복원하면 현재 DB가 그 시점으로 되돌아가며, 복원 직전 상태도 자동 백업됩니다.</p>
     <div style="margin-bottom:8px;"><button class="btn sm" id="bkNow">💾 지금 백업</button></div>

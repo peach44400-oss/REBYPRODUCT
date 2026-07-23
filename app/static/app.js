@@ -3000,9 +3000,9 @@ const MCOLS = {
         esc(r.stock_date || "—"), chip(r.status)];
     },
     hint: "재고일수 = 현재고 ÷ 최근 30일 일평균 사용량 · 생산가능수량 = 현재고 × 단위당 수량 · 횟수 = 수량 ÷ 1회 소요량 (환산계수는 7/7 실사 엑셀에서 갱신됨)" },
-  partner: { label: "거래처", cols: ["거래처명", "유형", "사업자번호", "대표자", "전화", "모바일", "담당자", "상태"],
+  partner: { label: "거래처", cols: ["거래처명", "유형", "사업자번호", "대표자", "전화", "모바일", "이메일", "담당자", "상태"],
     row: r => [B(r.name), `<span class="chip cat">${esc(r.type)}</span>`, esc(r.biz_no || "—"), esc(r.ceo || "—"),
-      esc(r.phone || "—"), esc(r.mobile || "—"), esc(r.contact || "—"), chip(r.status)],
+      esc(r.phone || "—"), esc(r.mobile || "—"), esc(r.email || "—"), esc(r.contact || "—"), chip(r.status)],
     hint: "중지 상태 거래처는 일일 입력 드롭다운에서 숨겨집니다 · [ERP 가져오기]로 거래처등록(ESA001M) 엑셀을 그대로 올릴 수 있습니다" },
   staff: { label: "인원", cols: ["이름", "구분", "직책", "담당 공정", "시급(원)", "입사일", "상태"],
     row: r => [B(r.name), esc(r.kind), esc(r.position || "—"), esc(r.process || "—"), r.wage == null ? "—" : NF(r.wage), esc(r.join_date || "—"), chip(r.status)],
@@ -4150,6 +4150,7 @@ const MFORMS = {
   partner: [["name", "거래처명 *"], ["type", "유형 — 선택 또는 직접 입력 (예: 기부)", "combo", ["판매처", "자재 공급처", "용역업체"]],
     ["biz_no", "사업자등록번호"], ["ceo", "대표자명"],
     ["phone", "전화"], ["mobile", "모바일"],
+    ["email", "이메일 (발주서 메일 발송)"],
     ["contact", "담당자"], ["status", "상태", "sel", ["활성", "중지"]], ["note", "비고", "full"]],
   staff: [["name", "이름 *"], ["kind", "구분", "sel", ["정직원", "계약직", "용역", "일용직", "아르바이트", "파견"]],
     ["position", "직책", "combo", []], ["process", "담당 공정"],
@@ -4555,8 +4556,9 @@ async function loadPoHistory() {
   try { hist = await api("/api/po"); } catch (e) { }
   $("poHistory").innerHTML = hist.map(h => `
     <div style="display:flex; align-items:center; gap:8px; padding:5px 10px; border-bottom:1px solid var(--line-soft); font-size:12.5px;">
-      <button class="uselink" data-poload="${h.id}" title="클릭하면 이 발주서를 불러옵니다 (재인쇄 가능)">#${h.id} · ${h.date} · ${esc(h.partner)}</button>
+      <button class="uselink" data-poload="${h.id}" title="클릭하면 이 발주서를 불러옵니다 (재인쇄·재발송 가능)">#${h.id} · ${h.date} · ${esc(h.partner)}</button>
       <span class="auto">${h.items.length}종</span>
+      ${h.sent_at ? `<span class="auto" style="color:var(--ok); font-size:11px;" title="${esc(h.sent_to || "")} · ${esc(h.sent_at)}">📧 발송됨</span>` : ""}
       <span class="spacer"></span>
       <button class="btn ghost sm" data-podelhist="${h.id}" style="color:var(--crit)">삭제</button>
     </div>`).join("") || '<div class="auto" style="padding:10px;">저장된 발주서가 없습니다</div>';
@@ -4579,39 +4581,40 @@ $("poHistory").addEventListener("click", async e => {
     try { await api("/api/po/" + del.dataset.podelhist, { method: "DELETE" }); loadPoHistory(); } catch (err) { }
   }
 });
-$("poPrintBtn").onclick = () => {
+/* 발주서 문서 HTML — 인쇄·메일 본문 공용. 메일은 CSS 클래스가 안 먹어서 전부 인라인 스타일 */
+function buildPoDoc() {
   const b = poBody();
-  if (!b.items.length) return toast("발주 품목을 추가해주세요");
   const pa = M.partner.find(p => p.id === b.partner_id) || {};
+  const TD = "border:1px solid #333; padding:6px 9px; font-size:13px;";
+  const TH = TD + " background:#f0f0f0; font-weight:700; text-align:left;";
+  const meta = (rows_) => `<table style="border-collapse:collapse; min-width:46%;">${rows_.map(([k, v]) =>
+    `<tr><th style="${TH} width:90px;">${k}</th><td style="${TD}">${v}</td></tr>`).join("")}</table>`;
   const rowsHtml = b.items.map((it, i) => {
     const m = materialById(it.material_id) || {};
-    return `<tr><td style="text-align:center">${i + 1}</td><td>${esc(m.name || "")}</td>
-      <td>${esc(m.spec || "")}</td><td style="text-align:right">${it.qty ? NF(it.qty) : ""}</td>
-      <td style="text-align:center">${esc(m.unit || "")}</td><td></td></tr>`;
+    return `<tr><td style="${TD} text-align:center;">${i + 1}</td><td style="${TD}">${esc(m.name || "")}</td>
+      <td style="${TD}">${esc(m.spec || "")}</td><td style="${TD} text-align:right;">${it.qty ? NF(it.qty) : ""}</td>
+      <td style="${TD} text-align:center;">${esc(m.unit || "")}</td><td style="${TD}"></td></tr>`;
   }).join("");
-  $("poPrintArea").innerHTML = `
-    <h1>발 주 서</h1>
-    <div class="po-meta">
-      <table>
-        <tr><th style="width:80px">수신</th><td>${esc(pa.name || "________________")} 귀중</td></tr>
-        <tr><th>사업자번호</th><td>${esc(pa.biz_no || "")}</td></tr>
-        <tr><th>대표자</th><td>${esc(pa.ceo || "")}</td></tr>
-        <tr><th>연락처</th><td>${esc(pa.phone || pa.mobile || "")}</td></tr>
-      </table>
-      <table>
-        <tr><th style="width:90px">발주일</th><td>${esc(b.date)}</td></tr>
-        <tr><th>납기 희망일</th><td>${esc(b.due || "협의")}</td></tr>
-        <tr><th>발신</th><td>리바이프로덕트 (REBYPRODUCT)</td></tr>
-        <tr><th>발주번호</th><td>${PO.id ? "#" + PO.id : "-"}</td></tr>
-      </table>
+  return `<div style="font-family:'Malgun Gothic',sans-serif; color:#111;">
+    <h1 style="font-size:25px; text-align:center; letter-spacing:13px; margin:0 0 18px;">발 주 서</h1>
+    <div style="display:flex; justify-content:space-between; gap:16px; margin-bottom:14px;">
+      ${meta([["수신", esc(pa.name || "________________") + " 귀중"], ["사업자번호", esc(pa.biz_no || "")],
+              ["대표자", esc(pa.ceo || "")], ["연락처", esc(pa.phone || pa.mobile || "")]])}
+      ${meta([["발주일", esc(b.date)], ["납기 희망일", esc(b.due || "협의")],
+              ["발신", "리바이프로덕트 (REBYPRODUCT)"], ["발주번호", PO.id ? "#" + PO.id : "-"]])}
     </div>
-    <table>
-      <thead><tr><th style="width:40px; text-align:center">No</th><th>품목명</th><th style="width:120px">규격</th>
-        <th style="width:90px; text-align:right">수량</th><th style="width:60px; text-align:center">단위</th><th style="width:110px">비고</th></tr></thead>
+    <table style="border-collapse:collapse; width:100%;">
+      <thead><tr><th style="${TH} width:40px; text-align:center;">No</th><th style="${TH}">품목명</th>
+        <th style="${TH} width:120px;">규격</th><th style="${TH} width:90px; text-align:right;">수량</th>
+        <th style="${TH} width:60px; text-align:center;">단위</th><th style="${TH} width:110px;">비고</th></tr></thead>
       <tbody>${rowsHtml}</tbody>
     </table>
     ${b.note ? `<p style="margin-top:12px; font-size:13px;"><b>비고:</b> ${esc(b.note)}</p>` : ""}
-    <p style="margin-top:26px; font-size:13px; text-align:right;">위와 같이 발주합니다. &nbsp;&nbsp; ${esc(b.date)} &nbsp;&nbsp; 리바이프로덕트 &nbsp;(인)</p>`;
+    <p style="margin-top:26px; font-size:13px; text-align:right;">위와 같이 발주합니다. &nbsp;&nbsp; ${esc(b.date)} &nbsp;&nbsp; 리바이프로덕트 &nbsp;(인)</p></div>`;
+}
+$("poPrintBtn").onclick = () => {
+  if (!poBody().items.length) return toast("발주 품목을 추가해주세요");
+  $("poPrintArea").innerHTML = buildPoDoc();
   document.body.classList.add("po-print");
   const done = () => { document.body.classList.remove("po-print"); window.removeEventListener("afterprint", done); };
   window.addEventListener("afterprint", done);
@@ -4619,6 +4622,74 @@ $("poPrintBtn").onclick = () => {
   setTimeout(done, 1500);   // afterprint 미발생 브라우저 대비
 };
 $("lowpPo").addEventListener("click", e => { e.stopPropagation(); openPo(true); });
+
+/* ── 발주서 메일 보내기 — 본문에 발주서 표 자동 삽입 + 이미지/파일 첨부 ── */
+const POMAIL = { files: [] };
+$("poMailBtn").onclick = () => {
+  const b = poBody();
+  if (!b.items.length) return toast("발주 품목을 추가해주세요");
+  const pa = M.partner.find(p => p.id === b.partner_id);
+  if (!pa) return toast("거래처를 먼저 선택해주세요");
+  $("pmTo").value = pa.email || "";
+  $("pmSubject").value = `[리바이프로덕트] 발주서 (${b.date})${PO.id ? " #" + PO.id : ""}`;
+  $("pmMsg").value = `안녕하세요, ${pa.name} 담당자님.\n\n아래와 같이 발주드립니다. 확인 부탁드립니다.\n감사합니다.`;
+  POMAIL.files = [];
+  renderPmFiles();
+  $("pmHint").textContent = pa.email ? "" : "이 거래처에 저장된 이메일이 없습니다 — 주소를 입력하면 거래처 정보에도 저장됩니다";
+  $("poMailOverlay").classList.add("on");
+};
+window.closePoMail = () => $("poMailOverlay").classList.remove("on");
+function renderPmFiles() {
+  $("pmFiles").innerHTML = POMAIL.files.map((f, i) => `
+    <span class="chip" style="display:inline-flex; align-items:center; gap:5px; margin:2px 4px 2px 0;">
+      ${esc(f.name)} <span class="auto">(${Math.round(f.size / 1024)}KB)</span>
+      <button data-pmrm="${i}" style="background:none;border:0;cursor:pointer;color:var(--crit)">✕</button></span>`).join("")
+    || '<span class="auto" style="font-size:12px">첨부 없음</span>';
+}
+$("pmFiles").addEventListener("click", e => {
+  const b = e.target.closest("[data-pmrm]"); if (!b) return;
+  POMAIL.files.splice(+b.dataset.pmrm, 1); renderPmFiles();
+});
+$("pmAttach").onclick = () => $("pmFile").click();
+$("pmFile").addEventListener("change", async e => {
+  for (const f of e.target.files) {
+    if (f.size > 10 * 1024 * 1024) { toast(`'${f.name}' — 파일당 10MB 이하만 첨부할 수 있습니다`); continue; }
+    if (POMAIL.files.reduce((s, x) => s + x.size, 0) + f.size > 20 * 1024 * 1024) { toast("첨부 합계는 20MB까지입니다"); break; }
+    const data = await new Promise((res, rej) => {
+      const rd = new FileReader(); rd.onload = () => res(rd.result); rd.onerror = rej; rd.readAsDataURL(f);
+    });
+    POMAIL.files.push({ name: f.name, size: f.size, data });
+  }
+  e.target.value = "";
+  renderPmFiles();
+});
+$("pmSend").onclick = async () => {
+  const to = $("pmTo").value.trim();
+  if (!to) return toast("받는 메일 주소를 입력해주세요");
+  const b = poBody();
+  const msgHtml = $("pmMsg").value.trim().split("\n").map(l => esc(l) || "&nbsp;").join("<br>");
+  $("pmSend").disabled = true;
+  $("pmSend").textContent = "보내는 중…";
+  try {
+    await api("/api/po/send", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ po_id: PO.id, to, subject: $("pmSubject").value.trim(),
+        html: `<p style="font-size:14px; line-height:1.7;">${msgHtml}</p><hr style="margin:14px 0; border:none; border-top:1px solid #ccc;">` + buildPoDoc(),
+        attachments: POMAIL.files.map(f => ({ name: f.name, data: f.data })) }) });
+    // 거래처에 이메일이 없었으면 지금 입력한 주소를 저장 (다음부터 자동 입력)
+    const pa = M.partner.find(p => p.id === b.partner_id);
+    if (pa && !pa.email) {
+      try {
+        await api("/api/masters/partner/" + pa.id, { method: "PUT",
+          headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: to.split(",")[0].trim() }) });
+        pa.email = to.split(",")[0].trim();
+      } catch (e2) { }
+    }
+    toast("📧 발주서 메일을 보냈습니다");
+    closePoMail();
+    loadPoHistory();
+  } catch (err) { /* api()가 오류 토스트 표시 */ }
+  finally { $("pmSend").disabled = false; $("pmSend").textContent = "📧 보내기"; }
+};
 async function doLkSearch() {
   const q = $("lkSearch").value.trim();
   if (!q) return toast("제품명을 입력하세요");
@@ -5939,12 +6010,12 @@ document.addEventListener("input", e => {
 });
 
 /* ── 모달 공통 닫기 ─────────────────── */
-["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "dispOverlay", "lotSplitOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay"].forEach(id => {
+["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "dispOverlay", "lotSplitOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay"].forEach(id => {
   $(id).addEventListener("click", e => { if (e.target.id === id) $(id).classList.remove("on"); });
 });
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") {
-    ["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay"].forEach(id => $(id).classList.remove("on"));
+    ["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay"].forEach(id => $(id).classList.remove("on"));
     hidePad();
   }
 });
@@ -5959,10 +6030,35 @@ async function openAdmin() {
   $("updMsg").textContent = "";
   UPD.latest = null;
   loadBackups();
+  loadSmtp();
   updCheck(true);   // 열 때 조용히 현재 버전 표시(있으면 새 버전도)
 }
 window.closeAdmin = () => $("adminOverlay").classList.remove("on");
 $("btnAdmin").onclick = openAdmin;
+
+/* ── 메일(SMTP) 설정 — 발주서 메일 발송용 (admin) ── */
+async function loadSmtp() {
+  try {
+    const s = await api("/api/smtp");
+    $("smtpHost").value = s.host || "";
+    $("smtpPort").value = s.port || "";
+    $("smtpUser").value = s.user || "";
+    $("smtpFrom").value = s.from || "";
+    $("smtpPass").value = "";
+    $("smtpPass").placeholder = s.has_pass ? "저장됨 — 변경 시에만 입력" : "앱 비밀번호";
+    $("smtpState").textContent = s.configured ? "✅ 설정됨" : "미설정";
+    $("smtpState").style.color = s.configured ? "var(--ok)" : "var(--muted)";
+  } catch (e) { /* api가 토스트 */ }
+}
+$("smtpSave").onclick = async () => {
+  try {
+    await api("/api/smtp", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ host: $("smtpHost").value, port: $("smtpPort").value,
+        user: $("smtpUser").value, pass: $("smtpPass").value, from: $("smtpFrom").value }) });
+    toast("메일 설정 저장됨");
+    loadSmtp();
+  } catch (e) { /* api가 토스트 */ }
+};
 
 /* ── 프로그램 업데이트 ── */
 const UPD = { latest: null };

@@ -69,7 +69,8 @@ CREATE TABLE IF NOT EXISTS partner (
   status TEXT DEFAULT '활성',           -- 활성/중지
   biz_no TEXT DEFAULT '',              -- 사업자등록번호 (ERP 가져오기 매칭 키)
   ceo TEXT DEFAULT '',                 -- 대표자명
-  mobile TEXT DEFAULT ''               -- 모바일
+  mobile TEXT DEFAULT '',              -- 모바일
+  email TEXT DEFAULT ''                -- 이메일 (발주서 메일 발송)
 );
 
 CREATE TABLE IF NOT EXISTS staff (
@@ -198,9 +199,17 @@ CREATE TABLE IF NOT EXISTS purchase_order (
   note TEXT DEFAULT '',
   items TEXT DEFAULT '[]',             -- [{material_id, name, spec, unit, qty}]
   created_at TEXT DEFAULT (datetime('now','localtime')),
-  created_by TEXT DEFAULT ''
+  created_by TEXT DEFAULT '',
+  sent_at TEXT DEFAULT '',             -- 메일 발송 시각
+  sent_to TEXT DEFAULT ''              -- 발송 수신 주소
 );
 CREATE INDEX IF NOT EXISTS idx_po_date ON purchase_order(date);
+
+-- 앱 설정 (SMTP 등 — 관리 팝업에서 편집)
+CREATE TABLE IF NOT EXISTS app_setting (
+  key TEXT PRIMARY KEY,
+  value TEXT DEFAULT ''
+);
 
 -- 자재 사용처: 자재×제품×일 실측 사용량 (원료수불부 매트릭스)
 -- product_id NULL = 기타 사용 (생산과 무관한 자재 사용 — 테스트/청소/타용도)
@@ -559,11 +568,16 @@ def init_db() -> None:
     micols = [r[1] for r in con.execute("PRAGMA table_info(material_in)")]
     if "made_date" not in micols:
         con.execute("ALTER TABLE material_in ADD COLUMN made_date TEXT DEFAULT ''")
-    # 거래처: 사업자등록번호·대표자·모바일 (ERP 거래처등록 엑셀 가져오기)
+    # 거래처: 사업자등록번호·대표자·모바일·이메일 (ERP 가져오기 + 발주서 메일)
     pcols = [r[1] for r in con.execute("PRAGMA table_info(partner)")]
-    for col in ("biz_no", "ceo", "mobile"):
+    for col in ("biz_no", "ceo", "mobile", "email"):
         if col not in pcols:
             con.execute(f"ALTER TABLE partner ADD COLUMN {col} TEXT DEFAULT ''")
+    # 발주서 메일 발송 기록
+    pocols = [r[1] for r in con.execute("PRAGMA table_info(purchase_order)")]
+    for col in ("sent_at", "sent_to"):
+        if col not in pocols:
+            con.execute(f"ALTER TABLE purchase_order ADD COLUMN {col} TEXT DEFAULT ''")
     # 용역도 출근·퇴근·휴게 입력 지원 (정직원 staffing_member와 동일)
     if "start_time" not in sacols:
         con.execute("ALTER TABLE staffing_agency ADD COLUMN start_time TEXT DEFAULT ''")
