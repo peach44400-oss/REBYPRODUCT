@@ -1,5 +1,5 @@
 {
-  "version": "1.16.2",
+  "version": "1.17.0",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· 근무 상세 팝업 확대(스크롤 제거) + 페이지네이션(« ‹ 1 2 3 … › »)\n· 발주 현황 목록·인원 관리 표에도 같은 페이지네이션 적용 — 데이터가 많아져도 화면 유지 (CSV는 전체 저장)"
+  "notes": "· 발주 정산서를 화면에서 바로 확인 — 거래처 선택 → 정산서(품목별 상세·합계) 표시\n· A4 인쇄 최적화(행 잘림 방지·머리행 반복) · [PDF 저장](인쇄 창에서 'PDF로 저장') · CSV 저장 유지"
 }

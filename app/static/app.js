@@ -4781,18 +4781,93 @@ $("postCsv").onclick = async () => {
   $("poCsvOverlay").classList.add("on");
 };
 window.closePoCsv = () => $("poCsvOverlay").classList.remove("on");
+/* 거래처 선택 → 정산서 화면 표시 (A4 인쇄·PDF·CSV는 뷰어에서) */
+const SETTLE = { pos: [], pname: "", label: "" };
 $("poCsvGo").onclick = () => {
   const d = POCSV.data; if (!d) return;
   const pname = $("pcPartner").value.trim();
   const pos = pname ? d.pos.filter(p => p.partner === pname) : d.pos;
   if (!pos.length) return toast(pname ? `'${pname}' — 이 기간에 발주가 없습니다` : "이 기간에 발주가 없습니다");
+  SETTLE.pos = pos; SETTLE.pname = pname; SETTLE.label = $("postLbl").textContent;
+  closePoCsv();
+  $("poSettleTitle").textContent = `📄 발주 정산서 — ${pname || "전체 거래처"}`;
+  $("poSettleBody").innerHTML = buildSettleDoc();
+  $("poSettleOverlay").classList.add("on");
+};
+window.closePoSettle = () => $("poSettleOverlay").classList.remove("on");
+/* 정산서 문서 — 인라인 스타일 (화면·A4 인쇄 공용, 발주서 문서와 같은 방식) */
+function buildSettleDoc() {
+  const money = canM("mat");
+  const pos = SETTLE.pos;
+  const showPartnerCol = !SETTLE.pname;   // 전체일 때만 거래처 열
+  const TD = "border:1px solid #333; padding:4px 7px; font-size:11.5px;";
+  const TH = TD + " background:#f0f0f0; font-weight:700;";
+  let tot = 0, rowsHtml = "", no = 0;
+  pos.forEach(h => (h.items || []).forEach(it => {
+    no++;
+    const amt = money && it.amount != null ? Math.round(it.amount) : null;
+    if (money && it.amount) tot += it.amount;
+    rowsHtml += `<tr>
+      <td style="${TD} text-align:center;">${no}</td>
+      <td style="${TD} text-align:center;">#${h.id}</td>
+      <td style="${TD} text-align:center;">${h.date.slice(5)}</td>
+      ${showPartnerCol ? `<td style="${TD}">${esc(h.partner)}</td>` : ""}
+      <td style="${TD}">${esc(it.name)}</td>
+      <td style="${TD}">${esc(it.spec || "")}</td>
+      <td style="${TD} text-align:center;">${esc(it.unit || "")}</td>
+      <td style="${TD} text-align:right;">${NF(it.qty)}</td>
+      <td style="${TD} text-align:right;">${it.recv != null ? NF(it.recv) : ""}</td>
+      ${money ? `<td style="${TD} text-align:right;">${it.price ? NF(it.price) : ""}</td>
+      <td style="${TD} text-align:right;">${amt != null ? NF(amt) : '<span style="color:#999">미입력</span>'}</td>` : ""}
+      <td style="${TD} text-align:center;">${(h.received_at || "").slice(5, 10)}</td>
+    </tr>`;
+  }));
+  const cols = 9 + (showPartnerCol ? 1 : 0) + (money ? 2 : 0);
+  const meta = `<table style="border-collapse:collapse; width:100%; margin-bottom:12px;">
+    <tr><th style="${TH} width:90px;">정산 기간</th><td style="${TD}">${esc(SETTLE.label)}</td>
+        <th style="${TH} width:90px;">거래처</th><td style="${TD}">${esc(SETTLE.pname || "전체")}</td></tr>
+    <tr><th style="${TH}">발주 건수</th><td style="${TD}">${NF(pos.length)}건 · 품목 ${NF(no)}행</td>
+        <th style="${TH}">발행일</th><td style="${TD}">${todayISO()}</td></tr>
+  </table>`;
+  return `<div style="font-family:'Malgun Gothic',sans-serif; color:#111;">
+    <h1 style="font-size:23px; text-align:center; letter-spacing:10px; margin:0 0 16px;">발 주 정 산 서</h1>
+    ${meta}
+    <table style="border-collapse:collapse; width:100%;">
+      <thead><tr>
+        <th style="${TH} width:32px;">No</th><th style="${TH} width:44px;">발주</th><th style="${TH} width:52px;">발주일</th>
+        ${showPartnerCol ? `<th style="${TH}">거래처</th>` : ""}
+        <th style="${TH}">품목명</th><th style="${TH} width:80px;">규격</th><th style="${TH} width:36px;">단위</th>
+        <th style="${TH} width:60px;">발주수량</th><th style="${TH} width:60px;">입고수량</th>
+        ${money ? `<th style="${TH} width:64px;">단가(원)</th><th style="${TH} width:80px;">금액(원)</th>` : ""}
+        <th style="${TH} width:52px;">입고일</th></tr></thead>
+      <tbody>${rowsHtml}
+        ${money ? `<tr><td colspan="${cols - 3}" style="${TH} text-align:right;">합계</td>
+          <td style="${TH} text-align:right;">${NF(Math.round(tot))}</td><td style="${TH}"></td></tr>` : ""}</tbody>
+    </table>
+    <p style="margin-top:16px; font-size:12px; color:#555;">· 금액 = 입고 처리 때 입력한 실제 단가 × 입고수량 · '미입력'은 단가가 아직 입력되지 않은 품목입니다.</p>
+    <p style="margin-top:14px; font-size:13px; text-align:right;">리바이프로덕트 (REBYPRODUCT) &nbsp; ${todayISO()}</p></div>`;
+}
+function settlePrint() {
+  $("poPrintArea").innerHTML = buildSettleDoc();
+  document.body.classList.add("po-print");
+  const done = () => { document.body.classList.remove("po-print"); window.removeEventListener("afterprint", done); };
+  window.addEventListener("afterprint", done);
+  window.print();
+  setTimeout(done, 1500);
+}
+$("poSettlePrint").onclick = settlePrint;
+$("poSettlePdf").onclick = () => {
+  toast("인쇄 창에서 대상(프린터)을 'PDF로 저장'으로 선택하세요");
+  setTimeout(settlePrint, 400);
+};
+$("poSettleCsv").onclick = () => {
   const money = canM("mat");
   const head = ["발주번호", "발주일", "거래처", "품목명", "규격", "단위", "발주수량", "입고수량",
     ...(money ? ["단가(원)", "금액(원)"] : []), "입고일", "메일발송", "작성자"];
   const cell = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
   const lines = [head.map(cell).join(",")];
   let tot = 0;
-  pos.forEach(h => (h.items || []).forEach(it => {
+  SETTLE.pos.forEach(h => (h.items || []).forEach(it => {
     const amt = money && it.amount != null ? Math.round(it.amount) : "";
     if (money && it.amount) tot += it.amount;
     lines.push([
@@ -4802,16 +4877,15 @@ $("poCsvGo").onclick = () => {
       (h.received_at || "").slice(0, 10), h.sent_at ? "발송" : "", h.created_by || "",
     ].map(cell).join(","));
   }));
-  if (money)   // 합계 행 — 단가 열에 '합계' 라벨, 금액 열에 합
+  if (money)
     lines.push(["", "", "", "", "", "", "", "", "합계", Math.round(tot), "", "", ""].map(cell).join(","));
   const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = csvName("발주정산", (pname || "전체") + "_" + $("postLbl").textContent);
+  a.download = csvName("발주정산", (SETTLE.pname || "전체") + "_" + SETTLE.label);
   a.click();
   URL.revokeObjectURL(a.href);
-  toast(`📄 ${pname || "전체"} 정산 CSV 저장됨 (품목 ${lines.length - 1 - (money ? 1 : 0)}행)`);
-  closePoCsv();
+  toast(`📄 ${SETTLE.pname || "전체"} 정산 CSV 저장됨`);
 };
 $("postBody").addEventListener("click", async e => {
   const pg = e.target.closest("[data-pg]");
@@ -6427,12 +6501,12 @@ document.addEventListener("input", e => {
 });
 
 /* ── 모달 공통 닫기 ─────────────────── */
-["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "dispOverlay", "lotSplitOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay", "meOverlay", "poListOverlay", "poViewOverlay", "poRecvOverlay", "poCsvOverlay"].forEach(id => {
+["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "dispOverlay", "lotSplitOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay", "meOverlay", "poListOverlay", "poViewOverlay", "poRecvOverlay", "poCsvOverlay", "poSettleOverlay"].forEach(id => {
   $(id).addEventListener("click", e => { if (e.target.id === id) $(id).classList.remove("on"); });
 });
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") {
-    ["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay", "meOverlay", "poListOverlay", "poViewOverlay", "poRecvOverlay", "poCsvOverlay"].forEach(id => $(id).classList.remove("on"));
+    ["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay", "meOverlay", "poListOverlay", "poViewOverlay", "poRecvOverlay", "poCsvOverlay", "poSettleOverlay"].forEach(id => $(id).classList.remove("on"));
     hidePad();
   }
 });

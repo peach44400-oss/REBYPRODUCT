@@ -73,6 +73,11 @@
     body.po-print #poPrintArea{display:block !important;}
   }
   #poPrintArea{font-family:inherit; color:#111; padding:10mm;}
+  /* A4 인쇄: 행이 페이지 경계에서 잘리지 않게, 여러 장이면 머리행 반복(thead 기본 동작) */
+  @media print{
+    #poPrintArea tr{page-break-inside:avoid;}
+    #poPrintArea table{page-break-inside:auto;}
+  }
   #poPrintArea h1{font-size:26px; text-align:center; letter-spacing:14px; margin:0 0 18px;}
   #poPrintArea table{width:100%; border-collapse:collapse; font-size:13px;}
   #poPrintArea th, #poPrintArea td{border:1px solid #333; padding:6px 9px; text-align:left;}
@@ -773,7 +778,7 @@
           </div>
           <span class="spacer"></span>
           <button class="btn sm primary" id="postNew">+ 발주서 작성</button>
-          <button class="btn sm" id="postCsv" title="거래처별 정산 표를 CSV(엑셀)로 저장">📄 정산 CSV</button>
+          <button class="btn sm" id="postCsv" title="거래처를 골라 정산서를 화면으로 보고 인쇄·PDF 저장·CSV로 내보냅니다">📄 정산서</button>
           <button class="btn sm" onclick="window.print()">인쇄</button>
         </div>
         <div style="display:flex; align-items:center; gap:8px; margin:12px 0;">
@@ -1303,17 +1308,32 @@
   </div>
 </div>
 
-<!-- 발주 정산 CSV 모달 (거래처 선택 → 품목별 상세) -->
+<!-- 발주 정산 — 거래처 선택 모달 -->
 <div class="overlay" id="poCsvOverlay">
   <div class="modal" style="width:min(420px, 94vw);">
-    <h3>📄 정산 CSV 저장</h3>
-    <p class="hint" id="poCsvHint">현재 기간의 발주 내역을 <b>품목별 상세</b>(발주번호·품목·수량·입고·단가·금액)로 저장합니다. 거래처를 고르면 그 거래처만, 비워두면 전체가 저장됩니다.</p>
+    <h3>📄 정산서</h3>
+    <p class="hint" id="poCsvHint">현재 기간의 발주 내역을 <b>품목별 상세 정산서</b>로 보여줍니다. 거래처를 고르면 그 거래처만, 비워두면 전체입니다.</p>
     <div class="fld"><label>거래처 (검색 · 비우면 전체)</label>
       <input id="pcPartner" list="pcPartnerDl" placeholder="🔍 거래처 이름 검색 또는 전체" autocomplete="off">
       <datalist id="pcPartnerDl"></datalist></div>
     <div class="modal-foot">
       <button class="btn" onclick="closePoCsv()">취소</button>
-      <button class="btn primary" id="poCsvGo">📄 CSV 저장</button>
+      <button class="btn primary" id="poCsvGo">📄 정산서 보기</button>
+    </div>
+  </div>
+</div>
+
+<!-- 발주 정산서 뷰어 (A4 인쇄·PDF 저장·CSV) -->
+<div class="overlay" id="poSettleOverlay">
+  <div class="modal" style="width:min(860px, 96vw);">
+    <h3 id="poSettleTitle">📄 발주 정산서</h3>
+    <p class="hint">인쇄하면 A4 용지에 맞게 나옵니다 · <b>[📑 PDF 저장]</b>은 인쇄 창에서 대상(프린터)을 <b>"PDF로 저장"</b>으로 선택하면 됩니다.</p>
+    <div id="poSettleBody" style="max-height:60vh; overflow-y:auto; border:1px solid var(--line-soft); border-radius:10px; padding:16px; background:#fff;"></div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closePoSettle()">닫기</button>
+      <button class="btn" id="poSettleCsv" title="같은 내용을 CSV(엑셀)로 저장">📄 CSV</button>
+      <button class="btn" id="poSettlePdf" title="인쇄 창에서 'PDF로 저장' 선택">📑 PDF 저장</button>
+      <button class="btn primary" id="poSettlePrint">🖨 인쇄</button>
     </div>
   </div>
 </div>
