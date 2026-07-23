@@ -6054,9 +6054,18 @@ $("smtpSave").onclick = async () => {
     await api("/api/mysmtp", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ host: $("smtpHost").value, port: $("smtpPort").value,
         user: $("smtpUser").value, pass: $("smtpPass").value, from: $("smtpFrom").value }) });
-    toast("내 메일 설정 저장됨");
+    toast("내 메일 설정 저장됨 — [📨 테스트 발송]으로 바로 확인해보세요");
     loadSmtp();
   } catch (e) { /* api가 토스트 */ }
+};
+$("smtpTest").onclick = async () => {
+  $("smtpTest").disabled = true;
+  $("smtpTest").textContent = "보내는 중…";
+  try {
+    const r = await api("/api/mysmtp/test", { method: "POST" });
+    toast(`📨 테스트 메일을 보냈습니다 → ${r.to} — 받은편지함을 확인해보세요`);
+  } catch (e) { /* api가 오류 토스트 (로그인 실패 등 원인 표시) */ }
+  finally { $("smtpTest").disabled = false; $("smtpTest").textContent = "📨 테스트 발송"; }
 };
 
 /* ── 프로그램 업데이트 ── */

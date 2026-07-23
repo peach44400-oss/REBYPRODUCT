@@ -40,7 +40,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.10.2"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.10.3"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -1714,14 +1714,33 @@ def mysmtp_save(request: Request, body: dict):
                 "smtp_port": str(body.get("port") or "").strip(),
                 "smtp_user": (body.get("user") or "").strip(),
                 "smtp_from": (body.get("from") or "").strip()}
-        if body.get("pass"):   # 비밀번호는 입력했을 때만 교체 (빈칸 = 기존 유지)
-            vals["smtp_pass"] = str(body["pass"]).strip()
+        if body.get("pass"):   # 비밀번호는 입력했을 때만 교체 (빈칸 = 기존 유지) · 공백 제거(복사 실수 방지)
+            vals["smtp_pass"] = re.sub(r"\s+", "", str(body["pass"]))
         for k, v in vals.items():
             con.execute("INSERT INTO user_setting(username, key, value) VALUES(?,?,?)"
                         " ON CONFLICT(username, key) DO UPDATE SET value=excluded.value", (username, k, v))
         audit(con, "smtp_set", f"{username} — 내 메일(SMTP) 설정 변경")
         con.commit()
         return {"ok": True}
+    finally:
+        con.close()
+
+
+@app.post("/api/mysmtp/test")
+def mysmtp_test(request: Request):
+    """내 메일 설정 테스트 — 내 주소로 테스트 메일을 보내본다 (설정 문제를 발송 전에 확인)."""
+    username = request.state.user.get("username", "")
+    con = connect()
+    try:
+        s = get_user_settings(con, username, SMTP_KEYS)
+        to = s["smtp_from"] or s["smtp_user"]
+        if not to:
+            raise HTTPException(400, "먼저 메일 계정을 저장해주세요")
+        send_mail(con, username, [to],
+                  "[리바이프로덕트] 메일 설정 테스트",
+                  "<p>이 메일이 보이면 발주서 메일 설정이 정상입니다. ✅</p>",
+                  [], sender_label_of(con, username))
+        return {"ok": True, "to": to}
     finally:
         con.close()
 
@@ -1756,17 +1775,33 @@ def send_mail(con, username, to_list, subject, html, attachments, sender_label):
         part.add_header("Content-Disposition", "attachment",
                         filename=("utf-8", "", a.get("name") or "file"))
         msg.attach(part)
+    # 비밀번호 공백 제거 (앱 비밀번호 복사 시 공백이 섞이는 경우) +
+    # 로그인 아이디 재시도: 네이버 등은 전체 주소가 아니라 '아이디'로 로그인해야 하는 경우가 있음
+    pw = re.sub(r"\s+", "", s["smtp_pass"])
+    user = s["smtp_user"]
+    logins = [user]
+    if "@" in user:
+        logins.append(user.split("@")[0])   # gdgoo@naver.com 실패 시 gdgoo로 재시도
     try:
-        if port == 465:
-            sv = smtplib.SMTP_SSL(s["smtp_host"], port, timeout=25)
-        else:
-            sv = smtplib.SMTP(s["smtp_host"], port, timeout=25)
-            sv.starttls()
-        with sv:
-            sv.login(s["smtp_user"], s["smtp_pass"])
-            sv.send_message(msg)
-    except smtplib.SMTPAuthenticationError:
-        raise HTTPException(502, "메일 로그인 실패 — 계정·앱 비밀번호를 확인해주세요")
+        last_auth_err = None
+        for i, u in enumerate(logins):
+            if port == 465:
+                sv = smtplib.SMTP_SSL(s["smtp_host"], port, timeout=25)
+            else:
+                sv = smtplib.SMTP(s["smtp_host"], port, timeout=25)
+                sv.starttls()
+            try:
+                with sv:
+                    sv.login(u, pw)
+                    sv.send_message(msg)
+                last_auth_err = None
+                break
+            except smtplib.SMTPAuthenticationError as e:
+                last_auth_err = e
+                continue
+        if last_auth_err is not None:
+            raise HTTPException(502, "메일 로그인 실패 — 일반 비밀번호가 아니라 2단계 인증 후 발급한 "
+                                "앱 비밀번호(애플리케이션 비밀번호)를 입력해야 합니다. 계정·앱 비밀번호를 다시 확인해주세요")
     except HTTPException:
         raise
     except Exception as e:
