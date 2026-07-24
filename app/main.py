@@ -40,7 +40,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.24.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.24.1"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -810,6 +810,39 @@ def _backup_scheduler():
         except Exception:
             pass
         time.sleep(3600)
+
+
+def _backfill_matin_po():
+    """v1.24 이전 발주 입고분의 material_in에 거래처·단가 소급 기록.
+    거래처가 빈 발주 유래 행만 대상 — 발주서에서 거래처명·그 품목 단가를 찾아 채운다 (멱등)."""
+    con = connect()
+    try:
+        targets = con.execute("""SELECT id, material_id, note FROM material_in
+            WHERE note LIKE '발주 #%' AND COALESCE(partner,'')=''""").fetchall()
+        for r in targets:
+            m = re.match(r"발주 #(\d+)", r["note"] or "")
+            if not m:
+                continue
+            po = con.execute("""SELECT po.items, COALESCE(pa.name, NULLIF(po.partner_name,''), '') pname
+                FROM purchase_order po LEFT JOIN partner pa ON pa.id=po.partner_id
+                WHERE po.id=?""", (int(m.group(1)),)).fetchone()
+            if not po:
+                continue
+            price = 0
+            try:
+                for it in json.loads(po["items"] or "[]"):
+                    if it.get("material_id") == r["material_id"]:
+                        price = it.get("price") or 0
+            except ValueError:
+                pass
+            if po["pname"] or price:
+                con.execute("UPDATE material_in SET partner=?, price=? WHERE id=?",
+                            (po["pname"], float(price), r["id"]))
+        con.commit()
+    except Exception:
+        pass
+    finally:
+        con.close()
 
 
 def _expiry_alert_once():
@@ -4165,6 +4198,7 @@ if __name__ == "__main__":
     init_chat_db()
     purge_old_chat(CHAT_DIR)      # 보관 주기 지난 대화 정리
     ensure_admin()
+    _backfill_matin_po()          # v1.24 이전 발주 입고분에 거래처·단가 소급 (빈 행만)
     port = int(os.environ.get("PORT", "8600"))
     url = f"http://127.0.0.1:{port}"
     # 같은 네트워크(공유기)의 다른 PC에서 접속할 수 있는 LAN 주소 탐지
