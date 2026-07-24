@@ -1,5 +1,5 @@
 {
-  "version": "1.19.0",
+  "version": "1.19.1",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· 발주서가 메일 본문 편집기 안에 직접 표시 — 보면서 수정 가능, 그대로 발송\n· 글꼴·크기 선택 상자 짤림 수정 · 검정/빨강/파랑 원클릭 색상 버튼\n· 본문 이미지 클릭 시 크기 조절(25/50/75/100%)·삭제"
+  "notes": "· 발주서 품목 자재 선택을 검색 방식으로 — 이름 일부만 입력해도 자동으로 찾아줍니다"
 }

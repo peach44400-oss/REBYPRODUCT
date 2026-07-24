@@ -4528,6 +4528,9 @@ async function openPo(prefillLow) {
   $("poPartner").value = "";
   $("poDate").value = todayISO();
   $("poDue").value = ""; $("poNote").value = "";
+  // 자재 검색 자동완성 목록 (원재료/부재료 전체)
+  $("poMatDl").innerHTML = M.raw.concat(M.sub)
+    .map(m => `<option value="${esc(m.name)}">${m.kind === "raw" ? "원재료" : "부재료"}</option>`).join("");
   if (prefillLow) await poFillFromLow();
   renderPoItems();
   loadPoHistory();
@@ -4549,7 +4552,8 @@ function renderPoItems() {
   $("poItems").innerHTML = PO.items.map((it, i) => {
     const m = materialById(it.material_id) || {};
     return `<tr data-poi="${i}">
-      <td>${matSel(it.material_id, 'data-pf="material_id"')}</td>
+      <td><input class="mini-input" data-pf="matq" list="poMatDl" value="${esc(m.name || it.matq || "")}"
+        placeholder="🔍 자재 이름 검색" autocomplete="off" style="text-align:left; min-width:210px; width:100%;"></td>
       <td class="r"><input class="mini-input num" data-pf="qty" value="${it.qty ?? ""}" style="width:90px" inputmode="decimal"></td>
       <td class="auto">${esc(m.unit || "")}</td>
       <td><button class="btn ghost sm" data-podel>삭제</button></td></tr>`;
@@ -4559,8 +4563,27 @@ $("poItems").addEventListener("input", e => {
   const tr = e.target.closest("tr[data-poi]"); if (!tr) return;
   const it = PO.items[+tr.dataset.poi]; if (!it) return;
   const f = e.target.dataset.pf; if (!f) return;
-  if (f === "material_id") { it.material_id = e.target.value ? +e.target.value : null; renderPoItems(); }
-  else it.qty = e.target.value;
+  if (f === "qty") it.qty = e.target.value;
+});
+// 자재 이름 입력 확정(선택/포커스 이탈) 시 해석: 정확 일치 → 부분 일치 1건 → 안내
+$("poItems").addEventListener("change", e => {
+  if (e.target.dataset.pf !== "matq") return;
+  const tr = e.target.closest("tr[data-poi]"); if (!tr) return;
+  const it = PO.items[+tr.dataset.poi]; if (!it) return;
+  const q = e.target.value.trim();
+  it.matq = q;
+  if (!q) { it.material_id = null; renderPoItems(); return; }
+  const all = M.raw.concat(M.sub);
+  let m = all.find(x => x.name === q);
+  if (!m) {
+    const cands = all.filter(x => x.name.toLowerCase().includes(q.toLowerCase()));
+    if (cands.length === 1) m = cands[0];
+    else if (cands.length > 1) { toast(`'${q}'와(과) 비슷한 자재가 ${cands.length}개 있습니다 — 목록에서 선택해주세요`); return; }
+  }
+  if (!m) { toast(`'${q}' — 등록된 자재가 아닙니다`); it.material_id = null; return; }
+  it.material_id = m.id;
+  it.matq = "";
+  renderPoItems();   // 단위 표시 갱신
 });
 $("poItems").addEventListener("click", e => {
   const d = e.target.closest("[data-podel]"); if (!d) return;
