@@ -5977,6 +5977,14 @@ async function openMatHistory(mid) {
         <span class="auto" style="font-weight:500">— 발주 입고 단가 ${pts.length}건 · 최근 ${NF(last.price)}원/${esc(d.unit)}${chg}</span></div>
       <div style="height:150px;"><canvas id="mhPriceCv"></canvas></div>
     </div>`;
+  } else if (priceD) {
+    // 단가 기록이 아직 없어도 기능 안내는 보여준다 — 어디서 생기는 데이터인지 알 수 있게
+    priceSec = `
+    <div style="border:1px solid var(--line-soft); border-radius:10px; padding:10px 12px; margin-bottom:12px;">
+      <div style="font-size:12.5px; font-weight:800;">💰 단가 추이
+        <span class="auto" style="font-weight:500">— 아직 단가 기록이 없습니다.
+        발주 현황에서 <b>입고 처리할 때 단가를 입력</b>하면 여기에 변동 그래프가 쌓입니다${priceD.base_price ? ` (기준 단가 ${NF(priceD.base_price)}원/${esc(d.unit)})` : ""}</span></div>
+    </div>`;
   }
   const usedProds = [...new Set(bomUse.map(b => b.product_id))]
     .map(pid => productById(pid)).filter(Boolean);

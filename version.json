@@ -1,5 +1,5 @@
 {
-  "version": "1.23.2",
+  "version": "1.23.3",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· 자재 이력에서 [발주 #N] 클릭 시 발주서 팝업이 뒤에 뜨던 문제 수정 — 항상 위로 표시"
+  "notes": "· 단가 추이: 기록이 없을 때도 자재 이력 팝업에 안내 표시 — 발주 입고 시 단가를 입력하면 그래프가 쌓입니다"
 }
