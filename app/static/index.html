@@ -48,13 +48,13 @@
     font-size:11.5px; color:#FFB4AE; margin-bottom:6px;}
   .lowp-h b{font-size:12px; color:#FFD5D1;}
   .lowp-btns{display:flex; gap:4px; margin-bottom:6px;}
-  #lowpPo, #lowpPoList{flex:1; background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.25); color:#FFD5D1;
+  #lowpPo, #lowpPoList, #lowpBulk{flex:1; background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.25); color:#FFD5D1;
     font-size:11px; padding:3px 6px; border-radius:6px; cursor:pointer; white-space:nowrap;}
-  #lowpPo:hover, #lowpPoList:hover{background:rgba(255,255,255,.2);}
+  #lowpPo:hover, #lowpPoList:hover, #lowpBulk:hover{background:rgba(255,255,255,.2);}
   /* 부족 자재가 없을 때 — 경고색 대신 중립 톤 */
   #lowPanel.ok{background:rgba(255,255,255,.06); border-color:rgba(255,255,255,.18);}
   #lowPanel.ok .lowp-h b, #lowPanel.ok .lowp-h, #lowPanel.ok #lowpCnt{color:var(--side-muted);}
-  #lowPanel.ok #lowpPo, #lowPanel.ok #lowpPoList{color:var(--side-ink);}
+  #lowPanel.ok #lowpPo, #lowPanel.ok #lowpPoList, #lowPanel.ok #lowpBulk{color:var(--side-ink);}
   /* 기준정보 목록 인쇄 — 열 잘림 방지: 표 축소 + 편집 열·도구 숨김 */
   @media print{
     #scr-items table{font-size:8.5px !important;}
@@ -611,6 +611,7 @@
       <div class="lowp-h"><b id="lowpTitle">⚠ 발주 필요</b><span id="lowpCnt"></span></div>
       <div class="lowp-btns">
         <button id="lowpPo" title="부족 자재로 발주서를 만들어 인쇄·메일 발송합니다">📋 발주서</button>
+        <button id="lowpBulk" title="부족 자재를 공급 거래처별로 묶어 발주서 초안을 한번에 만듭니다">🧾 일괄</button>
         <button id="lowpPoList" title="지금까지 만든 발주서 목록 — 발송 기록 확인·재인쇄">📑 이력</button>
       </div>
       <div id="lowpList"></div>
@@ -1010,6 +1011,7 @@
           <button data-agg="m">월간</button>
         </div>
         <span class="spacer"></span>
+        <button class="btn sm noprint" id="mrBtn" style="display:none;" title="생산·출고·자재·노무비 월간 요약 (관리자)">🗓 월간 마감</button>
         <button class="btn sm noprint" onclick="window.print()">인쇄</button>
       </div>
       <div class="kpis" id="anaKpis" style="grid-template-columns:repeat(6,1fr);"></div>
@@ -1347,6 +1349,41 @@
 </div>
 
 <!-- 발주 정산서 뷰어 (A4 인쇄·PDF 저장·CSV) -->
+<!-- 부족 자재 일괄 발주 — 공급 거래처별로 묶어 발주서 초안을 한번에 생성 -->
+<div class="overlay" id="poBulkOverlay">
+  <div class="modal" style="width:min(720px, 94vw);">
+    <h3>🧾 부족 자재 일괄 발주</h3>
+    <p class="hint">안전재고 미달(미발주) 자재를 <b>거래처별로 묶어</b> 발주서 초안을 한번에 만듭니다.
+      거래처는 기준정보의 공급처, 없으면 <b>그 자재를 마지막으로 발주한 거래처</b>로 자동 지정됩니다 —
+      비어 있으면 아래에서 입력하거나, 그대로 두면 '미지정'으로 저장됩니다. 수량은 부족분이 기본이며 수정할 수 있습니다.</p>
+    <div id="poBulkBody" style="max-height:56vh; overflow-y:auto;"></div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closePoBulk()">닫기</button>
+      <button class="btn primary" id="poBulkSave">🧾 발주서 생성</button>
+    </div>
+  </div>
+</div>
+
+<!-- 월간 마감 리포트 (분석 화면 → 월간 마감) -->
+<div class="overlay" id="monthRepOverlay">
+  <div class="modal" style="width:min(860px, 96vw);">
+    <h3>🗓 월간 마감 리포트</h3>
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+      <input type="month" id="mrYm" class="mini-input" style="width:150px;">
+      <button class="btn sm primary" id="mrLoad">조회</button>
+      <span class="auto" style="font-size:12px;">생산 · 출고 · 자재 사용액 · 발주 입고액 · 노무비를 한 장으로 요약합니다</span>
+    </div>
+    <div id="mrBody" style="max-height:60vh; overflow-y:auto; border:1px solid var(--line-soft); border-radius:10px; padding:16px; background:#fff;">
+      <div class="auto" style="padding:20px; text-align:center;">월을 선택하고 [조회]를 눌러주세요</div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeMonthRep()">닫기</button>
+      <button class="btn" id="mrPdf" title="인쇄 창에서 'PDF로 저장' 선택">📑 PDF 저장</button>
+      <button class="btn primary" id="mrPrint">🖨 인쇄</button>
+    </div>
+  </div>
+</div>
+
 <div class="overlay" id="poSettleOverlay">
   <div class="modal" style="width:min(860px, 96vw);">
     <h3 id="poSettleTitle">📄 발주 정산서</h3>

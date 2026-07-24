@@ -5067,6 +5067,190 @@ $("poPrintBtn").onclick = () => {
 };
 $("lowpPo").addEventListener("click", e => { e.stopPropagation(); openPo(true); });
 
+/* ── 부족 자재 일괄 발주 — 공급 거래처(material.partner_id)별로 묶어 발주서 초안을 한번에 생성 ── */
+const POBULK = { groups: [] };
+$("lowpBulk").addEventListener("click", e => { e.stopPropagation(); openPoBulk(); });
+async function openPoBulk() {
+  let d;
+  try { d = await api("/api/lowstock"); } catch (e) { return; }
+  const todo = (d.items || []).filter(x => !x.ordered);
+  if (!todo.length) return toast("안전재고 미달(미발주) 자재가 없습니다");
+  // 공급처 결정: 기준정보의 공급처 → 없으면 최근 발주 이력에서 그 자재를 마지막으로 주문한 거래처
+  const lastPa = {};   // material_id → 거래처 이름
+  try {
+    const hist = await api("/api/po?limit=200");   // 최신순 — 먼저 만난 것이 최근
+    hist.forEach(h => (h.items || []).forEach(it => {
+      if (it.material_id && lastPa[it.material_id] == null)
+        lastPa[it.material_id] = (h.partner === "거래처 미지정") ? "" : h.partner;
+    }));
+  } catch (e) { }
+  const byPa = new Map();
+  todo.forEach(x => {
+    const m = materialById(x.id) || {};
+    const pa = M.partner.find(p => p.id === m.partner_id);
+    const key = (pa ? pa.name : "") || lastPa[x.id] || "";
+    if (!byPa.has(key)) byPa.set(key, []);
+    byPa.get(key).push({ material_id: x.id, name: x.name, unit: x.unit,
+      qty: Math.ceil((x.shortfall || 0) * 100) / 100 });
+  });
+  POBULK.groups = [...byPa.entries()].map(([partner, items]) => ({ partner, items }))
+    .sort((a, b) => (b.partner ? 1 : 0) - (a.partner ? 1 : 0) || a.partner.localeCompare(b.partner, "ko"));
+  renderPoBulk();
+  $("poBulkOverlay").classList.add("on");
+}
+window.closePoBulk = () => $("poBulkOverlay").classList.remove("on");
+function renderPoBulk() {
+  const paDl = `<datalist id="pbPaDl">${M.partner.filter(p => p.status !== "중지")
+    .sort((a, b) => (b.type === "자재 공급처") - (a.type === "자재 공급처") || a.name.localeCompare(b.name, "ko"))
+    .map(p => `<option value="${esc(p.name)}">${esc(p.type || "")}</option>`).join("")}</datalist>`;
+  $("poBulkBody").innerHTML = paDl + POBULK.groups.map((g, gi) => `
+    <div style="border:1px solid var(--line-soft); border-radius:10px; padding:10px 12px; margin-bottom:10px;">
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+        <span style="font-size:12.5px; font-weight:800;">발주서 ${gi + 1}</span>
+        <input class="mini-input" data-pbpa="${gi}" list="pbPaDl" value="${esc(g.partner)}"
+          placeholder="🔍 거래처 검색 (비우면 미지정)" autocomplete="off" style="width:220px; text-align:left;">
+        <span class="auto" style="font-size:12px;">${g.items.length}품목${g.partner ? "" : " · 이 자재들은 기준정보에 공급처가 없습니다"}</span>
+      </div>
+      <table style="width:100%;"><tbody class="num">${g.items.map((it, ii) => `
+        <tr><td style="text-align:left;">${esc(it.name)}</td>
+          <td class="r" style="width:110px;"><input class="mini-input num" data-pbq="${gi}:${ii}"
+            value="${it.qty}" inputmode="decimal" style="width:90px;"></td>
+          <td class="auto" style="width:50px;">${esc(it.unit || "")}</td></tr>`).join("")}
+      </tbody></table>
+    </div>`).join("");
+}
+$("poBulkBody").addEventListener("input", e => {
+  const pa = e.target.dataset.pbpa;
+  if (pa != null) { POBULK.groups[+pa].partner = e.target.value; return; }
+  const q = e.target.dataset.pbq;
+  if (q != null) {
+    const [gi, ii] = q.split(":").map(Number);
+    POBULK.groups[gi].items[ii].qty = e.target.value;
+  }
+});
+$("poBulkSave").onclick = async () => {
+  const jobs = POBULK.groups
+    .map(g => ({ ...g, items: g.items.filter(it => parseFloat(it.qty) > 0) }))
+    .filter(g => g.items.length);
+  if (!jobs.length) return toast("발주할 품목이 없습니다 — 수량을 확인해주세요");
+  if (!confirm(`발주서 ${jobs.length}건을 생성합니다:\n${jobs.map(g =>
+    `· ${g.partner.trim() || "미지정"} — ${g.items.length}품목`).join("\n")}\n\n생성 후 [📑 이력]에서 확인·메일 발송할 수 있습니다. 진행할까요?`)) return;
+  $("poBulkSave").disabled = true;
+  let ok = 0;
+  try {
+    for (const g of jobs) {
+      const name = g.partner.trim();
+      const pa = M.partner.find(p => p.name === name);
+      await api("/api/po", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date: todayISO(), partner_id: pa ? pa.id : null,
+          partner_name: pa ? "" : name,
+          items: g.items.map(it => ({ material_id: it.material_id, qty: parseFloat(it.qty) })) }) });
+      ok++;
+    }
+    toast(`🧾 발주서 ${ok}건 생성 완료 — [📑 이력]에서 확인·메일 발송하세요`);
+    closePoBulk();
+    openPoList();
+  } catch (e) {
+    if (ok) toast(`일부만 생성됐습니다 (${ok}/${jobs.length}건) — [📑 이력]에서 확인해주세요`);
+  } finally {
+    $("poBulkSave").disabled = false;
+  }
+};
+
+/* ── 월간 마감 리포트 — 생산·출고·자재 사용액·발주 입고액·노무비 한 장 요약 (admin) ── */
+const MR = { data: null };
+function openMonthRep() {
+  if (ROLE !== "admin") return toast("월간 마감 리포트는 노무비가 포함되어 관리자만 볼 수 있습니다");
+  if (!$("mrYm").value) {
+    const t = new Date(); t.setDate(1); t.setMonth(t.getMonth() - 1);   // 기본: 지난달 (마감 용도)
+    $("mrYm").value = fmtISO(t).slice(0, 7);
+  }
+  $("monthRepOverlay").classList.add("on");
+  loadMonthRep();
+}
+window.closeMonthRep = () => $("monthRepOverlay").classList.remove("on");
+$("mrBtn").onclick = openMonthRep;
+$("mrLoad").onclick = () => loadMonthRep();
+async function loadMonthRep() {
+  const ym = $("mrYm").value;
+  if (!ym) return toast("월을 선택해주세요");
+  try {
+    MR.data = await api("/api/monthreport?ym=" + ym);
+    $("mrBody").innerHTML = buildMonthRep(MR.data);
+  } catch (e) { /* api가 토스트 */ }
+}
+function buildMonthRep(d) {
+  const TD = "border:1px solid #333; padding:4px 7px; font-size:11.5px;";
+  const TH = TD + " background:#f0f0f0; font-weight:700;";
+  const H2 = "font-size:14px; font-weight:800; margin:16px 0 6px; border-left:4px solid #C2372C; padding-left:8px;";
+  const [y, m] = d.ym.split("-");
+  const won = n => NF(Math.round(n)) + "원";
+  const tbl = (heads, rowsHtml) => `<table style="border-collapse:collapse; width:100%;">
+    <thead><tr>${heads.map(h => `<th style="${TH}">${h}</th>`).join("")}</tr></thead><tbody>${rowsHtml}</tbody></table>`;
+  const prodRows = d.prod.map(r => `<tr><td style="${TD}">${esc(r.name)}</td>
+    <td style="${TD} text-align:right;">${NF(r.qty)}</td>
+    <td style="${TD} text-align:right;">${r.defect ? NF(r.defect) : "·"}</td>
+    <td style="${TD} text-align:right;">${r.amount ? won(r.amount) : "·"}</td></tr>`).join("")
+    || `<tr><td colspan="4" style="${TD} text-align:center; color:#999;">생산 기록 없음</td></tr>`;
+  const shipRows = d.ship_partner.map(r => `<tr><td style="${TD}">${esc(r.partner)}</td>
+    <td style="${TD} text-align:right;">${NF(r.qty)}</td></tr>`).join("")
+    || `<tr><td colspan="2" style="${TD} text-align:center; color:#999;">출고 기록 없음</td></tr>`;
+  const shipPrRows = d.ship_product.map(r => `<tr><td style="${TD}">${esc(r.name)}</td>
+    <td style="${TD} text-align:right;">${NF(r.qty)}</td></tr>`).join("");
+  const matRows = d.mat_used.map(r => `<tr><td style="${TD}">${esc(r.name)}</td>
+    <td style="${TD} text-align:right;">${NF(r.used)} ${esc(r.unit || "")}</td>
+    <td style="${TD} text-align:right;">${r.price ? NF(r.price) : '<span style="color:#999">단가 없음</span>'}</td>
+    <td style="${TD} text-align:right;">${r.amount ? won(r.amount) : "·"}</td></tr>`).join("")
+    || `<tr><td colspan="4" style="${TD} text-align:center; color:#999;">사용 기록 없음</td></tr>`;
+  const poRows = d.po_in.map(r => `<tr><td style="${TD}">${esc(r.partner)}</td>
+    <td style="${TD} text-align:right;">${won(r.amount)}</td></tr>`).join("")
+    || `<tr><td colspan="2" style="${TD} text-align:center; color:#999;">입고 처리된 발주 없음</td></tr>`;
+  const L = d.labor;
+  return `<div style="font-family:'Malgun Gothic',sans-serif; color:#111;">
+    <h1 style="font-size:22px; text-align:center; letter-spacing:8px; margin:0 0 4px;">월 간 마 감 리 포 트</h1>
+    <p style="text-align:center; font-size:13px; margin:0 0 14px;">${y}년 ${+m}월 (${d.from} ~ ${d.to}) · 리바이프로덕트 (REBYPRODUCT)</p>
+    <table style="border-collapse:collapse; width:100%;"><tr>
+      <th style="${TH}">가동일수</th><td style="${TD} text-align:right;">${NF(d.prod_days)}일</td>
+      <th style="${TH}">총 생산</th><td style="${TD} text-align:right;">${NF(d.prod_total.qty)}개</td>
+      <th style="${TH}">총 불량</th><td style="${TD} text-align:right;">${NF(d.prod_total.defect)}개</td>
+      <th style="${TH}">총 출고</th><td style="${TD} text-align:right;">${NF(d.ship_total)}개</td></tr><tr>
+      <th style="${TH}">생산액</th><td style="${TD} text-align:right;">${won(d.prod_total.amount)}</td>
+      <th style="${TH}">자재 사용액</th><td style="${TD} text-align:right;">${won(d.mat_used_total)}</td>
+      <th style="${TH}">발주 입고액</th><td style="${TD} text-align:right;">${won(d.po_in_total)}</td>
+      <th style="${TH}">노무비</th><td style="${TD} text-align:right;">${won(L.total)}</td></tr></table>
+    <div style="${H2}">1. 생산 실적 <span style="font-weight:500; font-size:11.5px; color:#555;">— 생산액은 당시 단가 스냅샷 기준</span></div>
+    ${tbl(["제품", "생산수량", "불량", "생산액"], prodRows)}
+    <div style="${H2}">2. 출고 실적</div>
+    <div style="display:flex; gap:12px; align-items:flex-start;">
+      <div style="flex:1;">${tbl(["거래처", "출고수량"], shipRows)}</div>
+      <div style="flex:1;">${tbl(["제품", "출고수량"], shipPrRows || `<tr><td colspan="2" style="${TD} text-align:center; color:#999;">기록 없음</td></tr>`)}</div>
+    </div>
+    <div style="${H2}">3. 자재 사용액 <span style="font-weight:500; font-size:11.5px; color:#555;">— 단가는 월말 이전 마지막 발주 입고 단가, 없으면 기준 단가${d.mat_used_more ? ` · 상위 20종 표시 (외 ${d.mat_used_more}종)` : ""}</span></div>
+    ${tbl(["자재", "사용량", "단가(원)", "사용액"], matRows)}
+    <div style="${H2}">4. 발주 입고액 (실제 매입) <span style="font-weight:500; font-size:11.5px; color:#555;">— 이 달 입고 처리분${d.po_unpriced ? ` · 단가 미입력 ${d.po_unpriced}품목 제외` : ""}</span></div>
+    ${tbl(["거래처", "입고액"], poRows)}
+    <div style="${H2}">5. 노무비</div>
+    ${tbl(["구분", "투입시간", "노무비"], `
+      <tr><td style="${TD}">직원</td><td style="${TD} text-align:right;">${NF(L.staff_hours)}시간</td><td style="${TD} text-align:right;">${won(L.staff)}</td></tr>
+      <tr><td style="${TD}">용역</td><td style="${TD} text-align:right;">${NF(L.agency_hours)}시간</td><td style="${TD} text-align:right;">${won(L.agency)}</td></tr>
+      <tr><td style="${TH}">합계</td><td style="${TH} text-align:right;">${NF(L.staff_hours + L.agency_hours)}시간</td><td style="${TH} text-align:right;">${won(L.total)}</td></tr>`)}
+    <p style="margin-top:14px; font-size:13px; text-align:right;">작성 ${todayISO()} · ${esc(USERNAME || "")}</p></div>`;
+}
+function monthRepPrint() {
+  if (!MR.data) return toast("먼저 [조회]로 리포트를 불러와주세요");
+  $("poPrintArea").innerHTML = buildMonthRep(MR.data);
+  document.body.classList.add("po-print");
+  const done = () => { document.body.classList.remove("po-print"); window.removeEventListener("afterprint", done); };
+  window.addEventListener("afterprint", done);
+  window.print();
+  setTimeout(done, 1500);
+}
+$("mrPrint").onclick = monthRepPrint;
+$("mrPdf").onclick = () => {
+  toast("인쇄 창에서 대상(프린터)을 'PDF로 저장'으로 선택하세요");
+  setTimeout(monthRepPrint, 400);
+};
+
 /* ── 발주서 메일 보내기 — 본문에 발주서 표 자동 삽입 + 이미지/파일 첨부 ── */
 const POMAIL = { files: [] };
 $("poMailBtn").onclick = () => {
@@ -5778,6 +5962,22 @@ async function openMatHistory(mid) {
   // 배합비 사용처 — 이 자재가 어느 제품 배합에 들어가 있는지 (교체 대상 파악용)
   let bomUse = [];
   try { bomUse = (await api("/api/bom")).filter(b => b.material_id === mid); } catch (e) { }
+  // 단가 추이 — 발주 입고 때 입력한 실제 단가 (단가 열람 권한 없으면 조용히 생략)
+  let priceD = null;
+  try { priceD = await api("/api/matprice/" + mid); } catch (e) { }
+  const pts = (priceD && priceD.points) || [];
+  let priceSec = "";
+  if (pts.length) {
+    const last = pts[pts.length - 1], prev = pts.length > 1 ? pts[pts.length - 2] : null;
+    const chg = prev && prev.price ? (last.price >= prev.price ? " · 직전 대비 ▲" : " · 직전 대비 ▼")
+      + Math.abs((last.price - prev.price) / prev.price * 100).toFixed(1) + "%" : "";
+    priceSec = `
+    <div style="border:1px solid var(--line-soft); border-radius:10px; padding:10px 12px; margin-bottom:12px;">
+      <div style="font-size:12.5px; font-weight:800; margin-bottom:4px;">💰 단가 추이
+        <span class="auto" style="font-weight:500">— 발주 입고 단가 ${pts.length}건 · 최근 ${NF(last.price)}원/${esc(d.unit)}${chg}</span></div>
+      <div style="height:150px;"><canvas id="mhPriceCv"></canvas></div>
+    </div>`;
+  }
   const usedProds = [...new Set(bomUse.map(b => b.product_id))]
     .map(pid => productById(pid)).filter(Boolean);
   const bomSec = `
@@ -5801,7 +6001,7 @@ async function openMatHistory(mid) {
     `${d.kind === "raw" ? "원재료" : "부재료"} · 최근 ${d.rows.length}일` +
     ` · 마지막 입고 ${d.last_in ? d.last_in.date + " (+" + NF(d.last_in.in_qty) + d.unit + ")" : "기록 없음"}` +
     ` · 마지막 사용 ${d.last_use ? d.last_use.date + " (" + NF(d.last_use.used_qty) + d.unit + ")" : "기록 없음"}`;
-  $("anaPBody").innerHTML = bomSec + `<div class="tbl-wrap"><table>
+  $("anaPBody").innerHTML = bomSec + priceSec + `<div class="tbl-wrap"><table>
     <thead><tr><th>날짜</th><th class="r">전일</th><th class="r">입고</th><th class="r">사용</th><th class="r">실재고</th><th>발주</th></tr></thead>
     <tbody class="num">${d.rows.map(r => `<tr ${r.in_qty > 0 ? 'style="background:var(--ok-soft)"' : ""}>
       <td>${r.date}${r.src === "auto" ? ' <span class="chip cat">자동</span>' : ""}</td>
@@ -5815,6 +6015,27 @@ async function openMatHistory(mid) {
       <td class="r" style="font-weight:700">${NF(r.real_qty)}</td>
       <td class="auto">${esc(r.order_date || "")}${r.order_qty ? " (" + NF(r.order_qty) + ")" : ""}</td></tr>`).join("")
       || '<tr><td colspan="6" class="auto">기록 없음</td></tr>'}</tbody></table></div>`;
+  // 단가 추이 차트 — 기준 단가(회색 점선)와 함께. 이전 차트는 파기 후 재생성
+  if (window.MHCHART) { try { window.MHCHART.destroy(); } catch (e) { } window.MHCHART = null; }
+  if (pts.length) {
+    const base = priceD.base_price || 0;
+    window.MHCHART = new Chart($("mhPriceCv"), {
+      type: "line",
+      data: { labels: pts.map(p => p.date.slice(5)),
+        datasets: [
+          { label: "입고 단가", data: pts.map(p => p.price), borderColor: "#C2372C",
+            backgroundColor: "#C2372C", pointRadius: 3.5, tension: 0.25, fill: false },
+          ...(base > 0 ? [{ label: "기준 단가", data: pts.map(() => base), borderColor: "#B0ADA6",
+            borderDash: [5, 4], pointRadius: 0, tension: 0, fill: false }] : [])] },
+      options: { responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: { legend: { display: base > 0, labels: { boxWidth: 10, font: { size: 10 } } },
+          tooltip: { callbacks: { label: c => c.datasetIndex === 0
+            ? ` ${NF(c.parsed.y)}원 · ${pts[c.dataIndex].partner || "미지정"} (발주 #${pts[c.dataIndex].po_id})`
+            : ` 기준 단가 ${NF(c.parsed.y)}원` } } },
+        scales: { y: { ticks: { callback: v => NF(v), font: { size: 10 } } },
+                  x: { ticks: { font: { size: 10 } } } } }
+    });
+  }
   // 입고 기록의 발주 배지 클릭 → 그 발주서를 팝업으로 (자재 이력 → 발주서 추적)
   $("anaPBody").onclick = async e => {
     const b2 = e.target.closest("[data-poin]");
@@ -6656,12 +6877,12 @@ document.addEventListener("input", e => {
 });
 
 /* ── 모달 공통 닫기 ─────────────────── */
-["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "dispOverlay", "lotSplitOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay", "meOverlay", "poListOverlay", "poViewOverlay", "poRecvOverlay", "poCsvOverlay", "poSettleOverlay"].forEach(id => {
+["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "dispOverlay", "lotSplitOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay", "meOverlay", "poListOverlay", "poViewOverlay", "poRecvOverlay", "poCsvOverlay", "poSettleOverlay", "poBulkOverlay", "monthRepOverlay"].forEach(id => {
   $(id).addEventListener("click", e => { if (e.target.id === id) $(id).classList.remove("on"); });
 });
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") {
-    ["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay", "meOverlay", "poListOverlay", "poViewOverlay", "poRecvOverlay", "poCsvOverlay", "poSettleOverlay"].forEach(id => $(id).classList.remove("on"));
+    ["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay", "meOverlay", "poListOverlay", "poViewOverlay", "poRecvOverlay", "poCsvOverlay", "poSettleOverlay", "poBulkOverlay", "monthRepOverlay"].forEach(id => $(id).classList.remove("on"));
     hidePad();
   }
 });
@@ -6964,6 +7185,7 @@ async function startApp(me) {
     $("tabAudit").style.display = "";
     $("btnAdmin").style.display = "";
     $("navStaff").style.display = "";   // 인원 관리 탭 — admin만
+    $("mrBtn").style.display = "";      // 월간 마감 리포트 — 노무비 포함이라 admin만
   }
   // 담당별 일일 입력: 자기 탭이 기본 + 담당 아닌 탭 저장 버튼 비활성 (서버도 403으로 강제)
   const canProd = ROLE === "admin" || PROD_DUTIES.some(k => MYDUTY.has(k));

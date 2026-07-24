@@ -40,7 +40,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.22.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.23.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -812,6 +812,61 @@ def _backup_scheduler():
         time.sleep(3600)
 
 
+def _expiry_alert_once():
+    """소비기한 임박(7일 이내)·만료 LOT을 채팅 시스템 메시지로 — 해당 LOT이 있을 때만 게시."""
+    con = connect()
+    try:
+        today = dt.date.today()
+        upto = today.isoformat()
+        found = []   # (dleft, 제품명, 수량, 기한)
+        for p in con.execute("SELECT id, name FROM product WHERE status!='단종'"):
+            for l in current_lots(con, p["id"], upto)["lots"]:
+                if not l["expiry"]:
+                    continue
+                try:
+                    dleft = (dt.date.fromisoformat(l["expiry"]) - today).days
+                except ValueError:
+                    continue
+                if dleft <= 7:
+                    found.append((dleft, p["name"], l["qty"], l["expiry"]))
+        if not found:
+            return
+        n_exp = sum(1 for f in found if f[0] < 0)
+        lines = [f"⏰ 소비기한 아침 알림 — 만료 {n_exp}건 · 임박(7일 이내) {len(found) - n_exp}건"]
+        for dleft, name, qty, exp in sorted(found)[:8]:
+            tag = f"D+{-dleft} 만료" if dleft < 0 else ("오늘 만료" if dleft == 0 else f"D-{dleft}")
+            lines.append(f"· {name} {tag} ({qty:g}개, 기한 {exp})")
+        if len(found) > 8:
+            lines.append(f"· 외 {len(found) - 8}건 — LOT 관리에서 확인")
+        chat_system("\n".join(lines))
+    finally:
+        con.close()
+
+
+def _alert_scheduler():
+    """30분마다 확인 — 아침 7시 이후 하루 1회 소비기한 알림 (게시 여부와 무관하게 하루 1번만 검사)."""
+    while True:
+        try:
+            now = dt.datetime.now()
+            if now.hour >= 7:
+                run = False
+                con = connect()
+                try:
+                    r = con.execute("SELECT value FROM app_setting WHERE key='expiry_alert_date'").fetchone()
+                    if (r["value"] if r else "") != now.date().isoformat():
+                        con.execute("INSERT OR REPLACE INTO app_setting(key,value) VALUES('expiry_alert_date',?)",
+                                    (now.date().isoformat(),))
+                        con.commit()
+                        run = True
+                finally:
+                    con.close()
+                if run:
+                    _expiry_alert_once()
+        except Exception:
+            pass
+        time.sleep(1800)
+
+
 @app.get("/api/backups")
 def backups_list(request: Request):
     require_admin(request)
@@ -1209,6 +1264,37 @@ def lowstock(request: Request):
             r["ordered"] = bool((r["order_qty"] or 0) > 0 or (r["order_date"] or ""))
         # 안전재고를 설정한 자재만 대상 — 미설정 자재는 판단 기준이 없어 어디에도 세지 않는다 (대시보드와 동일 기준)
         return {"items": items}
+    finally:
+        con.close()
+
+
+@app.get("/api/matprice/{mid}")
+def matprice(request: Request, mid: int):
+    """자재 단가 추이 — 발주 입고 처리 때 입력한 실제 단가 이력 (입고 완료 발주서의 items 스냅샷)."""
+    if not mcan(request, "mat"):
+        raise HTTPException(403, "단가 열람 권한이 없습니다")
+    con = connect()
+    try:
+        m = con.execute("SELECT name, unit, unit_price FROM material WHERE id=?", (mid,)).fetchone()
+        if not m:
+            raise HTTPException(404, "자재를 찾을 수 없습니다")
+        pts = []
+        for r in con.execute("""
+                SELECT po.id, po.date, po.received_at, po.items,
+                       COALESCE(pa.name, po.partner_name, '') pname
+                FROM purchase_order po LEFT JOIN partner pa ON pa.id=po.partner_id
+                WHERE po.received_at!='' ORDER BY po.received_at"""):
+            try:
+                its = json.loads(r["items"] or "[]")
+            except ValueError:
+                continue
+            for it in its:
+                if it.get("material_id") == mid and (it.get("price") or 0) > 0:
+                    pts.append({"date": (r["received_at"] or r["date"])[:10], "po_id": r["id"],
+                                "price": it["price"], "partner": r["pname"],
+                                "qty": it.get("recv") or it.get("qty") or 0})
+        return {"name": m["name"], "unit": m["unit"] or "",
+                "base_price": m["unit_price"] or 0, "points": pts}
     finally:
         con.close()
 
@@ -2844,6 +2930,104 @@ def period_range(mode: str, date: str):
     return date[:4] + "-01-01", date[:4] + "-12-31"
 
 
+@app.get("/api/monthreport")
+def month_report(request: Request, ym: str = ""):
+    """월간 마감 리포트 — 생산·출고·자재 사용액·발주 입고액·노무비를 한 달 기준으로 집계.
+    노무비가 포함되므로 admin 전용. 자재 단가는 월말 이전 마지막 발주 입고 단가, 없으면 기준 단가."""
+    require_admin(request)
+    if not re.match(r"^\d{4}-\d{2}$", ym or ""):
+        ym = dt.date.today().isoformat()[:7]
+    a, b = period_range("m", ym + "-01")
+    con = connect()
+    try:
+        prod = rows(con.execute("""
+            SELECT p.name, SUM(pr.prod_qty) qty, SUM(pr.defect_qty) defect,
+                   SUM(pr.prod_qty * pr.unit_price) amount
+            FROM production pr JOIN product p ON p.id=pr.product_id
+            WHERE pr.date BETWEEN ? AND ? AND (pr.prod_qty>0 OR pr.defect_qty>0)
+            GROUP BY p.id ORDER BY qty DESC""", (a, b)))
+        prod_days = con.execute("""SELECT COUNT(DISTINCT date) d FROM production
+            WHERE date BETWEEN ? AND ? AND prod_qty>0""", (a, b)).fetchone()["d"]
+        ship_pa = rows(con.execute("""
+            SELECT COALESCE(pa.name,'거래처 미상') partner, SUM(s.qty) qty
+            FROM shipment s LEFT JOIN partner pa ON pa.id=s.partner_id
+            WHERE s.date BETWEEN ? AND ? AND s.qty>0
+            GROUP BY COALESCE(pa.name,'거래처 미상') ORDER BY qty DESC""", (a, b)))
+        ship_pr = rows(con.execute("""
+            SELECT p.name, SUM(s.qty) qty
+            FROM shipment s JOIN product p ON p.id=s.product_id
+            WHERE s.date BETWEEN ? AND ? AND s.qty>0
+            GROUP BY p.id ORDER BY qty DESC""", (a, b)))
+        # 자재 사용액 — 사용량 × 단가 (월말 이전 마지막 발주 입고 단가 → 없으면 기준 단가)
+        used = rows(con.execute("""
+            SELECT m.id, m.name, m.unit, m.unit_price, SUM(md.used_qty) used
+            FROM material_daily md JOIN material m ON m.id=md.material_id
+            WHERE md.date BETWEEN ? AND ? AND md.used_qty>0
+            GROUP BY m.id ORDER BY used DESC""", (a, b)))
+        last_price = {}
+        for r in con.execute("""SELECT items FROM purchase_order
+                WHERE received_at!='' AND substr(received_at,1,10)<=? ORDER BY received_at""", (b,)):
+            try:
+                its = json.loads(r["items"] or "[]")
+            except ValueError:
+                continue
+            for it in its:
+                if (it.get("price") or 0) > 0:
+                    last_price[it.get("material_id")] = it["price"]
+        for r in used:
+            r["price"] = last_price.get(r["id"]) or r["unit_price"] or 0
+            r["amount"] = round(r["used"] * r["price"])
+            r.pop("unit_price", None)
+        used.sort(key=lambda x: -x["amount"])
+        # 발주 입고액 — 이 달 입고 처리분 (실제 매입), 단가 미입력 품목은 집계 제외하고 건수만 안내
+        po_pa, unpriced = {}, 0
+        for r in con.execute("""SELECT COALESCE(pa.name, NULLIF(po.partner_name,''), '미지정') pname, po.items
+                FROM purchase_order po LEFT JOIN partner pa ON pa.id=po.partner_id
+                WHERE po.received_at!='' AND substr(po.received_at,1,10) BETWEEN ? AND ?""", (a, b)):
+            try:
+                its = json.loads(r["items"] or "[]")
+            except ValueError:
+                continue
+            for it in its:
+                q = it.get("recv") or it.get("qty") or 0
+                if (it.get("price") or 0) > 0:
+                    po_pa[r["pname"]] = po_pa.get(r["pname"], 0) + round(q * it["price"])
+                else:
+                    unpriced += 1
+        po_in = sorted(({"partner": k, "amount": v} for k, v in po_pa.items()),
+                       key=lambda x: -x["amount"])
+        # 노무비 — 직원(개인시간, 미입력 시 라인 실가동 폴백) + 용역(상세행, 없으면 구 방식 합계 폴백)
+        HRS = "CASE WHEN sm.hours>0 THEN sm.hours ELSE st.work_hours END"
+        lm = con.execute(f"""SELECT COALESCE(SUM({HRS}),0) hours, COALESCE(SUM({HRS}*s.wage),0) labor
+            FROM staffing_member sm JOIN staffing st ON st.id=sm.staffing_id JOIN staff s ON s.id=sm.staff_id
+            WHERE st.date BETWEEN ? AND ?""", (a, b)).fetchone()
+        ag = con.execute("""SELECT COALESCE(SUM(sa.hours),0) hours, COALESCE(SUM(sa.hours*sa.wage),0) labor
+            FROM staffing_agency sa JOIN staffing st ON st.id=sa.staffing_id
+            WHERE st.date BETWEEN ? AND ?""", (a, b)).fetchone()
+        legacy = con.execute("""SELECT COALESCE(SUM(agency_hours),0) hours,
+                                       COALESCE(SUM(agency_hours*agency_wage),0) labor
+            FROM staffing st WHERE st.date BETWEEN ? AND ?
+              AND NOT EXISTS (SELECT 1 FROM staffing_agency sa WHERE sa.staffing_id=st.id)""",
+            (a, b)).fetchone()
+        return {"ym": ym, "from": a, "to": b, "prod_days": prod_days,
+                "prod": prod,
+                "prod_total": {"qty": sum(r["qty"] or 0 for r in prod),
+                               "defect": sum(r["defect"] or 0 for r in prod),
+                               "amount": round(sum(r["amount"] or 0 for r in prod))},
+                "ship_partner": ship_pa, "ship_product": ship_pr,
+                "ship_total": sum(r["qty"] or 0 for r in ship_pa),
+                "mat_used": used[:20], "mat_used_more": max(0, len(used) - 20),
+                "mat_used_total": sum(r["amount"] for r in used),
+                "po_in": po_in, "po_in_total": sum(r["amount"] for r in po_in),
+                "po_unpriced": unpriced,
+                "labor": {"staff_hours": lm["hours"], "staff": round(lm["labor"]),
+                          "agency_hours": ag["hours"] + legacy["hours"],
+                          "agency": round(ag["labor"] + legacy["labor"]),
+                          "total": round(lm["labor"] + ag["labor"] + legacy["labor"])}}
+    finally:
+        con.close()
+
+
 @app.get("/api/shipstatus")
 def shipstatus(request: Request, mode: str = "d", date: str = ""):
     """출고 현황: 기간 내 출고를 개별 건 + 제품별·거래처별 집계로."""
@@ -3984,5 +4168,7 @@ if __name__ == "__main__":
         threading.Timer(1.2, lambda: webbrowser.open(url)).start()
     # 자동 백업: 매일 1회 (기동 직후 오늘자 없으면 즉시) — 백업/자동백업_날짜.db, 30개 보관
     threading.Thread(target=_backup_scheduler, daemon=True).start()
+    # 소비기한 아침 알림: 매일 7시 이후 1회, 임박·만료 LOT이 있으면 채팅에 게시
+    threading.Thread(target=_alert_scheduler, daemon=True).start()
     # 0.0.0.0 = 같은 네트워크의 다른 PC도 접속 가능 (로그인으로 접근 통제)
     uvicorn.run(app, host=os.environ.get("HOST", "0.0.0.0"), port=port, log_level="warning")
