@@ -40,7 +40,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.20.1"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.21.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -1813,6 +1813,64 @@ def po_receive(request: Request, po_id: int, body: dict):
         audit(con, "receive_po", f"발주서 #{po_id} 입고 처리 → {rdate} · {len(recvs)}품목 (재고 자동 반영)")
         con.commit()
         return {"ok": True, "date": rdate}
+    finally:
+        con.close()
+
+
+@app.post("/api/po/{po_id}/unreceive")
+def po_unreceive(request: Request, po_id: int):
+    """입고 취소 — 입고 처리 때 자동 기록된 원부자재 입고를 삭제하고 재고를 되돌린다.
+    발주서는 다시 '진행중'이 되어 재입고 처리할 수 있다."""
+    require_stock_duty(request)
+    con = connect()
+    try:
+        po = con.execute("SELECT * FROM purchase_order WHERE id=?", (po_id,)).fetchone()
+        if not po:
+            raise HTTPException(404, "발주서가 없습니다")
+        if not po["received_at"]:
+            raise HTTPException(400, "입고 처리되지 않은 발주서입니다")
+        # 입고 처리 때 남긴 기록 찾기 — note '발주 #id' 또는 '발주 #id · 거래처' (#1이 #10에 안 걸리게 정확 매칭)
+        rows_in = rows(con.execute(
+            "SELECT id, date, material_id FROM material_in WHERE note=? OR note LIKE ?",
+            (f"발주 #{po_id}", f"발주 #{po_id} ·%")))
+        affected = {(r["date"], r["material_id"]) for r in rows_in}
+        for r in rows_in:
+            con.execute("DELETE FROM material_in WHERE id=?", (r["id"],))
+        # 재고 재계산 — 입고 처리와 동일 규칙의 역방향
+        for (rdate, mid) in affected:
+            in_total = con.execute("SELECT COALESCE(SUM(qty),0) q FROM material_in WHERE date=? AND material_id=?",
+                                   (rdate, mid)).fetchone()["q"]
+            used = con.execute("SELECT COALESCE(SUM(qty),0) q FROM material_usage WHERE date=? AND material_id=?",
+                               (rdate, mid)).fetchone()["q"]
+            manual = con.execute("SELECT 1 FROM material_daily WHERE date=? AND material_id=? AND src!='auto'",
+                                 (rdate, mid)).fetchone()
+            if manual:   # 실사 행: 실재고(측정값) 유지, 입고·사용량만 재계산
+                con.execute("""UPDATE material_daily SET in_qty=?, used_qty=prev_qty+?-real_qty
+                    WHERE date=? AND material_id=? AND src!='auto'""", (in_total, in_total, rdate, mid))
+            elif in_total == 0 and used == 0:   # 입고 취소로 빈 자동 행 — 통째로 제거 (일일 입력에서도 사라짐)
+                con.execute("DELETE FROM material_daily WHERE date=? AND material_id=? AND src='auto'", (rdate, mid))
+            else:
+                prev_row = con.execute("""SELECT real_qty FROM material_daily
+                    WHERE material_id=? AND date<? ORDER BY date DESC LIMIT 1""", (mid, rdate)).fetchone()
+                prev = float(prev_row["real_qty"]) if prev_row else 0.0
+                con.execute("""INSERT OR REPLACE INTO material_daily
+                    (date, material_id, prev_qty, in_qty, real_qty, used_qty, src)
+                    VALUES(?,?,?,?,?,?,'auto')""",
+                            (rdate, mid, prev, in_total, prev + in_total - used, used))
+            ripple_material(con, mid, rdate)
+        # 발주서 되돌리기 — 입고 수량·입고 단가 스냅샷 제거
+        try:
+            items = json.loads(po["items"] or "[]")
+        except ValueError:
+            items = []
+        for it in items:
+            it.pop("recv", None)
+            it["price"] = 0
+        con.execute("UPDATE purchase_order SET items=?, received_at='', received_by='' WHERE id=?",
+                    (json.dumps(items, ensure_ascii=False), po_id))
+        audit(con, "unreceive_po", f"발주서 #{po_id} 입고 취소 — 자동 입고 기록 {len(rows_in)}건 삭제, 재고 원복")
+        con.commit()
+        return {"ok": True, "removed": len(rows_in)}
     finally:
         con.close()
 

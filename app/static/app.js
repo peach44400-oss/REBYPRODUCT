@@ -2537,6 +2537,13 @@ function wireEntryTable(tbodyId, arr, rerender, liveUpdate) {
     const i = +tr.dataset.i;
     if (e.target.closest("[data-del]")) {
       const delRow = arr()[i];
+      // 발주서 입고 처리로 들어온 입고 행은 여기서 못 지움 — 발주 현황의 [입고 취소]로 일괄 처리 (재고 원복 포함)
+      if (tbodyId === "eMatIn" && delRow && /^발주 #\d+/.test(delRow.note || "")) {
+        alert(`이 입고는 발주서 입고 처리로 자동 기록된 것입니다 (${delRow.note.split("·")[0].trim()}).\n\n` +
+          "삭제하려면 [발주 현황] 화면에서 해당 발주서를 확인한 뒤 [↩ 입고 취소]를 눌러주세요.\n" +
+          "입고 취소하면 이 입고 기록이 삭제되고 재고도 자동으로 되돌아갑니다.");
+        return;
+      }
       arr().splice(i, 1); rerender();
       // 생산행 삭제 → 그 제품의 자재 사용 기록도 함께 정리 (같은 제품 행이 남아 있으면 유지)
       if (tbodyId === "eProd" && delRow && delRow.product_id) cleanupUsageFor(delRow.product_id);
@@ -4761,7 +4768,8 @@ function renderPoStat() {
       ${money ? `<td class="r">${h.amount ? NF(Math.round(h.amount)) : "—"}</td>` : ""}
       <td style="white-space:nowrap;">
         <button class="btn ghost sm" data-psopen="${h.id}">${h.sent_at ? "보기" : "열기"}</button>
-        ${!h.received_at ? `<button class="btn ghost sm" data-psrecv="${h.id}" style="color:var(--ok); border-color:var(--ok)">📥 입고</button>` : ""}
+        ${!h.received_at ? `<button class="btn ghost sm" data-psrecv="${h.id}" style="color:var(--ok); border-color:var(--ok)">📥 입고</button>`
+          : `<button class="btn ghost sm" data-psunrecv="${h.id}" style="color:#B45309; border-color:#B45309" title="자동 기록된 입고를 삭제하고 재고를 되돌립니다">↩ 입고 취소</button>`}
         ${(!h.sent_at && !h.received_at) || ROLE === "admin"
           ? `<button class="btn ghost sm" data-psdel="${h.id}" style="color:var(--crit)">삭제</button>` : ""}</td></tr>`;
   }).join("");
@@ -4927,6 +4935,21 @@ $("postBody").addEventListener("click", async e => {
   }
   const rc = e.target.closest("[data-psrecv]");
   if (rc) { const h = findPo(rc.dataset.psrecv); if (h) openPoRecv(h); return; }
+  const ur = e.target.closest("[data-psunrecv]");
+  if (ur) {
+    const h = findPo(ur.dataset.psunrecv); if (!h) return;
+    if (!confirm(`발주서 #${h.id} (${h.partner}) 입고를 취소할까요?\n\n` +
+      `· 입고 처리로 자동 기록된 원부자재 입고(${h.items.length}품목)가 삭제됩니다\n` +
+      `· 재고가 입고 전으로 되돌아갑니다 (이후 날짜 재고도 자동 재계산)\n` +
+      `· 발주서는 '진행중'으로 돌아가 다시 입고 처리할 수 있습니다`)) return;
+    try {
+      const r = await api(`/api/po/${h.id}/unreceive`, { method: "POST" });
+      toast(`↩ 발주서 #${h.id} 입고 취소 — 자동 입고 기록 ${r.removed}건 삭제, 재고 원복`);
+      loadPoStat();
+      loadLowStock();
+    } catch (err) { /* api가 토스트 */ }
+    return;
+  }
   const del = e.target.closest("[data-psdel]");
   if (del) {
     const h = findPo(del.dataset.psdel);
