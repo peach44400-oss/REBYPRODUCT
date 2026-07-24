@@ -5171,6 +5171,13 @@ $("pmSend").onclick = async () => {
   $("pmSend").disabled = true;
   $("pmSend").textContent = "보내는 중…";
   try {
+    // 저장 안 된 발주서는 발송 전에 자동 저장 — 보낸 발주서가 이력에 반드시 남게
+    if (!PO.id) {
+      const saved = await api("/api/po", { method: "POST",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) });
+      PO.id = saved.id;
+      $("pmSubject").value = $("pmSubject").value.replace(/\s*#\d+$/, "") + ` #${PO.id}`;
+    }
     // 메일 클라이언트가 표를 읽기창 전체 폭으로 늘리지 않게 — 문서 폭 680px 고정 (테이블 래퍼가 호환성 가장 좋음)
     // 발주서는 이미 본문 안에 들어 있으므로 그대로 발송
     const mailHtml = `<table style="width:680px; max-width:100%; border-collapse:collapse;"><tr><td>

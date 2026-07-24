@@ -1,5 +1,5 @@
 {
-  "version": "1.19.1",
+  "version": "1.19.2",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· 발주서 품목 자재 선택을 검색 방식으로 — 이름 일부만 입력해도 자동으로 찾아줍니다"
+  "notes": "· 메일을 보내면 발주서가 자동 저장 — 저장을 안 눌러도 이력·발주 현황에 반드시 남습니다 (발주번호 자동 부여)"
 }
