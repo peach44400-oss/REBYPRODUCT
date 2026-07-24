@@ -1,5 +1,5 @@
 {
-  "version": "1.19.2",
+  "version": "1.20.0",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· 메일을 보내면 발주서가 자동 저장 — 저장을 안 눌러도 이력·발주 현황에 반드시 남습니다 (발주번호 자동 부여)"
+  "notes": "· [내 설정] > 사인 — 사인 사진을 올리면 흰 배경이 자동으로 투명 처리되어 저장\n· 발주서 서명란에 내 사인이 들어갑니다 (인쇄·메일 동일) — 사인이 없으면 내 이름 도장으로 표시"
 }

@@ -40,7 +40,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.19.2"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.20.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -1890,6 +1890,37 @@ def mysmtp_test(request: Request):
                   "<p>이 메일이 보이면 발주서 메일 설정이 정상입니다. ✅</p>",
                   [], sender_label_of(con, username))
         return {"ok": True, "to": to}
+    finally:
+        con.close()
+
+
+@app.get("/api/mysign")
+def mysign_get(request: Request):
+    """내 사인 이미지 조회 — 발주서 서명란에 들어간다 (없으면 이름 도장으로 대체)."""
+    con = connect()
+    try:
+        s = get_user_settings(con, request.state.user.get("username", ""), ("sign_img",))
+        return {"img": s["sign_img"]}
+    finally:
+        con.close()
+
+
+@app.post("/api/mysign")
+def mysign_save(request: Request, body: dict):
+    img = (body.get("img") or "").strip()
+    if img and not img.startswith("data:image/"):
+        raise HTTPException(400, "이미지 형식이 올바르지 않습니다")
+    if len(img) > 800_000:
+        raise HTTPException(400, "사인 이미지가 너무 큽니다 — 다시 올려주세요")
+    username = request.state.user.get("username", "")
+    con = connect()
+    try:
+        con.execute("INSERT INTO user_setting(username, key, value) VALUES(?,?,?)"
+                    " ON CONFLICT(username, key) DO UPDATE SET value=excluded.value",
+                    (username, "sign_img", img))
+        audit(con, "sign_set", f"{username} — 사인 {'등록' if img else '삭제'}")
+        con.commit()
+        return {"ok": True}
     finally:
         con.close()
 

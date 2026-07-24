@@ -11,6 +11,7 @@ const DOW = ["일", "월", "화", "수", "목", "금", "토"];
 const dowOf = (iso) => DOW[new Date(iso + "T00:00:00").getDay()];
 
 let ROLE = null, USERNAME = null, DUTY = "all", MYDUTY = new Set();   // MYDUTY = 내 담당 코드 Set
+const MYSIGN = { img: "" };   // 내 사인 이미지 (발주서 서명란 — 없으면 이름 도장)
 // 금액 열람 권한: mat(자재 단가·금액) / prod(생산·출고·재고 금액) / labor(시급·노무비) / cost(원가 분석)
 // admin은 서버가 전체를 내려줌 — 나머지는 admin이 사용자 탭에서 체크한 항목만
 let MPERM = new Set();
@@ -5003,7 +5004,14 @@ function buildPoDocData(d) {   // d = {id, date, due, note, partner:{name,biz_no
       <tbody>${rowsHtml}</tbody>
     </table>
     ${d.note ? `<p style="margin-top:12px; font-size:13px;"><b>비고:</b> ${esc(d.note)}</p>` : ""}
-    <p style="margin-top:26px; font-size:13px; text-align:right;">위와 같이 발주합니다. &nbsp;&nbsp; ${esc(d.date)} &nbsp;&nbsp; 리바이프로덕트 &nbsp;(인)</p></div>`;
+    <p style="margin-top:26px; font-size:13px; text-align:right;">위와 같이 발주합니다. &nbsp;&nbsp; ${esc(d.date)} &nbsp;&nbsp; 리바이프로덕트 ${poSignHtml()}</p></div>`;
+}
+/* 발주서 서명란 — 내 사인 이미지(투명 배경), 없으면 이름 도장 */
+function poSignHtml() {
+  if (MYSIGN.img)
+    return `<img src="${MYSIGN.img}" alt="사인" style="height:42px; vertical-align:middle; margin-left:6px;">`;
+  return `<span style="display:inline-block; margin-left:6px; padding:1px 10px; border:2px solid #C2372C;
+    border-radius:6px; color:#C2372C; font-weight:800; font-size:15px; vertical-align:middle;">${esc(USERNAME || "")} 인</span>`;
 }
 function buildPoDoc() {   // 작성 중인 폼 기준
   const b = poBody();
@@ -6652,6 +6660,67 @@ $("smtpSave").onclick = async () => {
     loadSmtp();
   } catch (e) { /* api가 토스트 */ }
 };
+/* ── 내 사인 — 발주서 서명란용. 업로드 시 흰 배경을 투명 처리(밝기→투명도 변환: 흰색=투명, 진할수록 불투명) ── */
+function renderSignPreview() {
+  $("signPreview").innerHTML = MYSIGN.img
+    ? `<img src="${MYSIGN.img}" alt="사인">`
+    : `<span class="auto">등록된 사인이 없습니다 — 발주서에는 <b>${esc(USERNAME || "")}</b> 이름 도장으로 표시됩니다</span>`;
+  $("signState").textContent = MYSIGN.img ? "✅ 등록됨" : "";
+}
+function processSignImage(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const maxW = 400;
+      const scale = Math.min(1, maxW / img.width);
+      const cv = document.createElement("canvas");
+      cv.width = Math.round(img.width * scale);
+      cv.height = Math.round(img.height * scale);
+      const cx = cv.getContext("2d");
+      cx.drawImage(img, 0, 0, cv.width, cv.height);
+      const d = cx.getImageData(0, 0, cv.width, cv.height);
+      const p = d.data;
+      for (let i = 0; i < p.length; i += 4) {
+        // 밝기 → 투명도: 흰 배경(밝음)=투명, 펜 선(어두움)=불투명 — 경계도 자연스럽게 처리
+        const lum = (p[i] + p[i + 1] + p[i + 2]) / 3;
+        const a = Math.max(0, Math.min(255, Math.round((235 - lum) * 255 / 160)));
+        p[i + 3] = Math.min(p[i + 3], a);
+      }
+      cx.putImageData(d, 0, 0);
+      resolve(cv.toDataURL("image/png"));
+    };
+    img.onerror = reject;
+    img.src = dataUrl;
+  });
+}
+$("signUpload").onclick = () => $("signFile").click();
+$("signFile").addEventListener("change", async e => {
+  const f = e.target.files[0]; e.target.value = "";
+  if (!f) return;
+  if (f.size > 10 * 1024 * 1024) return toast("이미지는 10MB 이하만 올릴 수 있습니다");
+  try {
+    const raw = await new Promise((res, rej) => {
+      const rd = new FileReader(); rd.onload = () => res(rd.result); rd.onerror = rej; rd.readAsDataURL(f);
+    });
+    const png = await processSignImage(raw);
+    await api("/api/mysign", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ img: png }) });
+    MYSIGN.img = png;
+    renderSignPreview();
+    toast("✍ 사인 등록됨 — 흰 배경은 투명 처리했습니다 (발주서 서명란에 들어갑니다)");
+  } catch (err) { toast("사인 이미지를 처리하지 못했습니다"); }
+});
+$("signDelete").onclick = async () => {
+  if (!MYSIGN.img) return;
+  try {
+    await api("/api/mysign", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ img: "" }) });
+    MYSIGN.img = "";
+    renderSignPreview();
+    toast("사인이 삭제됐습니다 — 발주서에는 이름 도장으로 표시됩니다");
+  } catch (e) { }
+};
+
 $("smtpTest").onclick = async () => {
   $("smtpTest").disabled = true;
   $("smtpTest").textContent = "보내는 중…";
@@ -6798,6 +6867,7 @@ async function startApp(me) {
   await loadDash();
   loadLowStock();   // 사이드바 '발주 필요' 알림 (자재 담당·admin)
   $("navPoStat").style.display = canStock ? "" : "none";   // 발주 현황 탭 — 자재 담당·admin
+  api("/api/mysign").then(s => { MYSIGN.img = s.img || ""; }).catch(() => { });   // 내 사인 (발주서 서명란)
   $("dbStatus").textContent = `DB 연결됨 · 제품 ${M.product.length} · 자재 ${M.raw.length + M.sub.length}`;
   // 권한 실시간 반영: admin이 권한을 바꾸면(서버 세션은 즉시 교체됨) 화면도 20초 내 자동 새로고침
   setInterval(async () => {
@@ -7076,6 +7146,7 @@ function openMe(tab) {
   $("meWho").textContent = $("userLbl").textContent;   // 아이디 · 역할 · 담당 그대로 표시
   meTab(tab || "info");
   loadSmtp();
+  renderSignPreview();
   $("meOverlay").classList.add("on");
 }
 window.closeMe = () => $("meOverlay").classList.remove("on");
