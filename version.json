@@ -1,5 +1,5 @@
 {
-  "version": "1.21.0",
+  "version": "1.21.1",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· 발주 입고분은 일일 입력에서 직접 삭제 불가 — 발주 현황에서 [입고 취소]로 진행하라는 안내 팝업\n· 발주 현황에 [↩ 입고 취소] — 자동 기록된 입고 삭제 + 재고 원복(이후 날짜 재계산), 발주서는 진행중으로 복귀해 재입고 가능"
+  "notes": "· 발주 입고·입고 취소 후 일일 입력을 열면 자동으로 최신 상태로 갱신 (날짜를 다시 클릭할 필요 없음)"
 }
