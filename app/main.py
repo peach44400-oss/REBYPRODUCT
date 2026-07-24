@@ -40,7 +40,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.20.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.20.1"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -1596,8 +1596,16 @@ def mat_history(mid: int, limit: int = 40):
         for r in con.execute("""SELECT date, GROUP_CONCAT(made_date, ', ') e FROM material_in
             WHERE material_id=? AND made_date!='' GROUP BY date""", (mid,)):
             in_made[r["date"]] = r["e"]
+        in_po = {}       # 날짜별 입고가 어느 발주서에서 왔는지 (입고 처리 시 note에 '발주 #id' 기록됨)
+        for r in con.execute("""SELECT date, note FROM material_in
+            WHERE material_id=? AND note LIKE '발주 #%'""", (mid,)):
+            m2 = re.match(r"발주 #(\d+)", r["note"] or "")
+            if m2:
+                in_po.setdefault(r["date"], [])
+                if int(m2.group(1)) not in in_po[r["date"]]:
+                    in_po[r["date"]].append(int(m2.group(1)))
         return {"name": mat["name"], "unit": mat["unit"], "kind": mat["kind"], "rows": hist,
-                "in_expiry": in_expiry, "in_made": in_made,
+                "in_expiry": in_expiry, "in_made": in_made, "in_po": in_po,
                 "last_in": dict(last_in) if last_in else None,
                 "last_use": dict(last_use) if last_use else None}
     finally:
@@ -1805,6 +1813,30 @@ def po_receive(request: Request, po_id: int, body: dict):
         audit(con, "receive_po", f"발주서 #{po_id} 입고 처리 → {rdate} · {len(recvs)}품목 (재고 자동 반영)")
         con.commit()
         return {"ok": True, "date": rdate}
+    finally:
+        con.close()
+
+
+@app.get("/api/po/{po_id}")
+def po_get(request: Request, po_id: int):
+    """발주서 단건 — 자재 이력의 입고 기록에서 클릭해 볼 때 사용. 금액은 mat 권한 마스킹."""
+    con = connect()
+    try:
+        po = con.execute("""
+            SELECT po.*, COALESCE(pa.name, NULLIF(po.partner_name,''), '거래처 미지정') partner
+            FROM purchase_order po LEFT JOIN partner pa ON pa.id=po.partner_id
+            WHERE po.id=?""", (po_id,)).fetchone()
+        if not po:
+            raise HTTPException(404, "발주서가 없습니다")
+        po = dict(po)
+        try:
+            po["items"] = json.loads(po["items"] or "[]")
+        except ValueError:
+            po["items"] = []
+        if not mcan(request, "mat"):
+            for it in po["items"]:
+                it["price"] = None
+        return po
     finally:
         con.close()
 

@@ -4691,8 +4691,11 @@ $("poListBody").addEventListener("click", async e => {
 const POVIEW = { h: null };
 function openPoView(h) {
   POVIEW.h = h;
-  $("poViewTitle").textContent = `📧 보낸 발주서 #${h.id}`;
-  $("poViewSub").textContent = `${h.partner} · 발송 ${(h.sent_at || "").slice(0, 16)} → ${h.sent_to || ""} · 작성 ${h.created_by || "—"}`;
+  $("poViewTitle").textContent = h.sent_at ? `📧 보낸 발주서 #${h.id}` : `📋 발주서 #${h.id}`;
+  $("poViewSub").textContent = `${h.partner}`
+    + (h.sent_at ? ` · 발송 ${h.sent_at.slice(0, 16)} → ${h.sent_to || ""}` : "")
+    + (h.received_at ? ` · 입고 ${h.received_at.slice(0, 16)}` : "")
+    + ` · 작성 ${h.created_by || "—"}`;
   $("poViewBody").innerHTML = buildPoDocFromRecord(h);
   $("poViewOverlay").classList.add("on");
 }
@@ -5775,11 +5778,22 @@ async function openMatHistory(mid) {
       <td class="r">${NF(r.prev_qty)}</td>
       <td class="r" ${r.in_qty > 0 ? 'style="color:var(--ok); font-weight:700"' : ""}>${r.in_qty ? "+" + NF(r.in_qty)
         + (d.in_made && d.in_made[r.date] ? ` <span class="auto" style="font-weight:400">(제조 ${esc(d.in_made[r.date])})</span>` : "")
-        + (d.in_expiry && d.in_expiry[r.date] ? ` <span class="auto" style="font-weight:400">(유통 ${esc(d.in_expiry[r.date])})</span>` : "") : "·"}</td>
+        + (d.in_expiry && d.in_expiry[r.date] ? ` <span class="auto" style="font-weight:400">(유통 ${esc(d.in_expiry[r.date])})</span>` : "")
+        + (d.in_po && d.in_po[r.date] ? d.in_po[r.date].map(pid =>
+            ` <button class="uselink" data-poin="${pid}" style="font-size:11px; font-weight:700;" title="이 입고의 발주서 보기">📋 발주 #${pid}</button>`).join("") : "") : "·"}</td>
       <td class="r">${r.used_qty ? NF(r.used_qty) : "·"}</td>
       <td class="r" style="font-weight:700">${NF(r.real_qty)}</td>
       <td class="auto">${esc(r.order_date || "")}${r.order_qty ? " (" + NF(r.order_qty) + ")" : ""}</td></tr>`).join("")
       || '<tr><td colspan="6" class="auto">기록 없음</td></tr>'}</tbody></table></div>`;
+  // 입고 기록의 발주 배지 클릭 → 그 발주서를 팝업으로 (자재 이력 → 발주서 추적)
+  $("anaPBody").onclick = async e => {
+    const b2 = e.target.closest("[data-poin]");
+    if (!b2) return;
+    try {
+      const po = await api("/api/po/" + b2.dataset.poin);
+      openPoView(po);
+    } catch (err) { /* api가 토스트 (삭제된 발주서 등) */ }
+  };
   // 배합비 자재 일괄 교체 (admin) — 확인창에 대상 제품 수·이름 표시 후 실행
   const repBtn = $("mhRepBtn");
   if (repBtn) repBtn.onclick = async () => {
