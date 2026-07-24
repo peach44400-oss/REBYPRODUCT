@@ -1,5 +1,5 @@
 {
-  "version": "1.23.1",
+  "version": "1.23.2",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· 발주 관리 버튼 배치 수정 — [발주서][이력] / [발주서 일괄] 2줄로 (좁은 화면에서 깨지던 현상)"
+  "notes": "· 자재 이력에서 [발주 #N] 클릭 시 발주서 팝업이 뒤에 뜨던 문제 수정 — 항상 위로 표시"
 }

@@ -1425,7 +1425,8 @@
 </div>
 
 <!-- 발송된 발주서 보기 전용 모달 -->
-<div class="overlay" id="poViewOverlay">
+<!-- z-index 62: 자재 이력 등 다른 팝업(60) 위에서 열리는 보기 전용 팝업이라 항상 위로 -->
+<div class="overlay" id="poViewOverlay" style="z-index:62;">
   <div class="modal" style="width:min(720px, 94vw);">
     <h3 id="poViewTitle">📧 보낸 발주서</h3>
     <p class="hint" id="poViewSub"></p>
