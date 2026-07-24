@@ -1,5 +1,5 @@
 {
-  "version": "1.23.3",
+  "version": "1.24.0",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· 단가 추이: 기록이 없을 때도 자재 이력 팝업에 안내 표시 — 발주 입고 시 단가를 입력하면 그래프가 쌓입니다"
+  "notes": "· 일일 입력 원부자재 입고에 거래처·단가 칸 추가 (선택 입력) — 발주 없이 입고해도 단가 이력이 쌓입니다\n· 단가 추이 그래프·월간 리포트가 일일 입고 단가도 집계 (월간 '매입액' = 발주 입고 + 일일 입고 단가 입력분)"
 }

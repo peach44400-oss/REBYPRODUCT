@@ -1091,11 +1091,11 @@ async function loadDay(date) {
   E.mat = d.materials.filter(r => r.src !== "auto")
     .map(r => ({ material_id: r.material_id, prev_qty: r.prev_qty, in_qty: r.in_qty || "", real_qty: r.real_qty, order_date: r.order_date || "", order_qty: r.order_qty || "" }));
   E.autoMat = d.materials.filter(r => r.src === "auto");
-  E.matIn = (d.mat_in || []).map(r => ({ material_id: r.material_id, qty: r.qty, made: r.made_date || "", expiry: r.expiry || "", note: r.note || "" }));
+  E.matIn = (d.mat_in || []).map(r => ({ material_id: r.material_id, qty: r.qty, made: r.made_date || "", expiry: r.expiry || "", note: r.note || "", partner: r.partner || "", price: r.price || "" }));
   // 발주됐는데 아직 입고 안 된 자재 → 입고 카드에 자동 제안 (입고량 비워두면 저장 안 됨)
   (d.pending_orders || []).forEach(o => {
     if (!E.matIn.some(x => x.material_id === o.material_id))
-      E.matIn.push({ material_id: o.material_id, qty: "", made: "", expiry: "",
+      E.matIn.push({ material_id: o.material_id, qty: "", made: "", expiry: "", partner: "", price: "",
         note: `발주 ${o.rec_date.slice(5)}${o.order_qty ? " · " + NF(o.order_qty) + (o.unit || "") : ""}${o.order_date ? " · " + o.order_date : ""}` });
   });
   E.lots = d.lots || [];
@@ -2210,17 +2210,23 @@ function effIn(r) {
 }
 function renderMatIn() {
   const all = M.raw.concat(M.sub);
+  // 거래처 자동완성 — 자재 공급처 우선 정렬 (발주서와 동일 기준)
+  $("miPaDl").innerHTML = M.partner.filter(p => p.status !== "중지")
+    .sort((a, b) => (b.type === "자재 공급처") - (a.type === "자재 공급처") || a.name.localeCompare(b.name, "ko"))
+    .map(p => `<option value="${esc(p.name)}">${esc(p.type || "")}</option>`).join("");
   $("eMatIn").innerHTML = E.matIn.map((r, i) => {
     const m = materialById(r.material_id) || {};
     return `<tr data-i="${i}">
       <td>${matSel(r.material_id, 'data-f="material_id"', NEWMAT_OPTS)}</td>
       <td class="auto">${esc(m.unit || "")}</td>
       <td class="r"><input class="mini-input num" data-f="qty" value="${r.qty ?? ""}"></td>
+      <td><input class="mini-input" data-f="partner" list="miPaDl" value="${esc(r.partner || "")}" placeholder="🔍 거래처 (선택)" autocomplete="off" style="width:130px; text-align:left"></td>
+      <td class="r"><input class="mini-input num" data-f="price" value="${r.price || ""}" placeholder="단가 (선택)" title="입고 단가를 입력하면 자재 이력의 단가 추이 그래프와 월간 리포트에 집계됩니다" style="width:90px" inputmode="decimal"></td>
       <td><input class="mini-input datepick" type="text" readonly data-f="made" value="${esc(r.made || "")}" placeholder="📅 제조일자" style="width:135px"></td>
       <td><input class="mini-input datepick" type="text" readonly data-f="expiry" value="${esc(r.expiry || "")}" placeholder="📅 유통기한" style="width:135px"></td>
-      <td><input class="mini-input w num" style="text-align:left" data-f="note" value="${esc(r.note || "")}" placeholder="메모 (공급처 등)"></td>
+      <td><input class="mini-input w num" style="text-align:left" data-f="note" value="${esc(r.note || "")}" placeholder="메모"></td>
       <td><button class="btn ghost sm" data-del>삭제</button></td></tr>`;
-  }).join("") || `<tr><td colspan="7" class="auto">+ 입고 행 추가 — 재고 실사 카드에 발주량·발주일을 적어두면 입고 전까지 여기 자동으로 나타납니다</td></tr>`;
+  }).join("") || `<tr><td colspan="9" class="auto">+ 입고 행 추가 — 재고 실사 카드에 발주량·발주일을 적어두면 입고 전까지 여기 자동으로 나타납니다</td></tr>`;
 }
 // 이날 기록된 제품별 사용 합 (실사 사용량과의 차이 = 로스/조정)
 function usageSumOf(mid) {
@@ -2490,9 +2496,9 @@ wireQuickAdd("qaMat", "qaMaterials", () => M.raw.concat(M.sub), hit => {
   renderMat();
 }, "addMat", () => { E.mat.push({ material_id: null, prev_qty: "", in_qty: "", real_qty: "", order_date: "", order_qty: "" }); renderMat(); });
 wireQuickAdd("qaMatIn", "qaMaterials", () => M.raw.concat(M.sub), hit => {
-  E.matIn.push({ material_id: hit.id, qty: "", made: "", expiry: "", note: "" });
+  E.matIn.push({ material_id: hit.id, qty: "", made: "", expiry: "", note: "", partner: "", price: "" });
   renderMatIn(); renderMat();
-}, "addMatIn", () => { E.matIn.push({ material_id: null, qty: "", made: "", expiry: "", note: "" }); renderMatIn(); });
+}, "addMatIn", () => { E.matIn.push({ material_id: null, qty: "", made: "", expiry: "", note: "", partner: "", price: "" }); renderMatIn(); });
 // 기록조회·분석의 제품 검색창도 클릭 시 전체 제품 드롭다운 (datalist 공유, 포커스 때 최신화)
 ["lkSearch", "anaRotFilter"].forEach(id => {
   $(id).addEventListener("focus", () => {
@@ -2772,7 +2778,9 @@ $("btnSaveStock").onclick = async () => {         // 재고 · 입고 탭
   if (!mustDate()) return;
   const bad = badNumIn(E.mat, ["prev_qty", "in_qty", "real_qty", "order_qty"], "재고 실사")
     || badNumIn(E.matIn, ["qty"], "원부자재 입고")
-    || negNumIn(E.matIn, ["qty"], "원부자재 입고");   // 실사(E.mat)는 정정 신호일 수 있어 음수 허용
+    || negNumIn(E.matIn, ["qty"], "원부자재 입고")   // 실사(E.mat)는 정정 신호일 수 있어 음수 허용
+    || badNumIn(E.matIn, ["price"], "입고 단가")
+    || negNumIn(E.matIn, ["price"], "입고 단가");
   if (bad) return toast("⚠ " + bad + " — 고친 뒤 저장하세요");
   const body = {
     // 실재고가 빈 실사 행은 제외 — 0으로 저장돼 재고가 통째로 사용 처리되는 사고 방지
@@ -5216,7 +5224,7 @@ function buildMonthRep(d) {
       <th style="${TH}">총 출고</th><td style="${TD} text-align:right;">${NF(d.ship_total)}개</td></tr><tr>
       <th style="${TH}">생산액</th><td style="${TD} text-align:right;">${won(d.prod_total.amount)}</td>
       <th style="${TH}">자재 사용액</th><td style="${TD} text-align:right;">${won(d.mat_used_total)}</td>
-      <th style="${TH}">발주 입고액</th><td style="${TD} text-align:right;">${won(d.po_in_total)}</td>
+      <th style="${TH}">매입액</th><td style="${TD} text-align:right;">${won(d.po_in_total)}</td>
       <th style="${TH}">노무비</th><td style="${TD} text-align:right;">${won(L.total)}</td></tr></table>
     <div style="${H2}">1. 생산 실적 <span style="font-weight:500; font-size:11.5px; color:#555;">— 생산액은 당시 단가 스냅샷 기준</span></div>
     ${tbl(["제품", "생산수량", "불량", "생산액"], prodRows)}
@@ -5227,8 +5235,8 @@ function buildMonthRep(d) {
     </div>
     <div style="${H2}">3. 자재 사용액 <span style="font-weight:500; font-size:11.5px; color:#555;">— 단가는 월말 이전 마지막 발주 입고 단가, 없으면 기준 단가${d.mat_used_more ? ` · 상위 20종 표시 (외 ${d.mat_used_more}종)` : ""}</span></div>
     ${tbl(["자재", "사용량", "단가(원)", "사용액"], matRows)}
-    <div style="${H2}">4. 발주 입고액 (실제 매입) <span style="font-weight:500; font-size:11.5px; color:#555;">— 이 달 입고 처리분${d.po_unpriced ? ` · 단가 미입력 ${d.po_unpriced}품목 제외` : ""}</span></div>
-    ${tbl(["거래처", "입고액"], poRows)}
+    <div style="${H2}">4. 매입액 <span style="font-weight:500; font-size:11.5px; color:#555;">— 이 달 발주 입고분 + 일일 입고 단가 입력분${d.po_unpriced ? ` · 단가 미입력 ${d.po_unpriced}품목 제외` : ""}</span></div>
+    ${tbl(["거래처", "매입액"], poRows)}
     <div style="${H2}">5. 노무비</div>
     ${tbl(["구분", "투입시간", "노무비"], `
       <tr><td style="${TD}">직원</td><td style="${TD} text-align:right;">${NF(L.staff_hours)}시간</td><td style="${TD} text-align:right;">${won(L.staff)}</td></tr>
@@ -5983,7 +5991,7 @@ async function openMatHistory(mid) {
     <div style="border:1px solid var(--line-soft); border-radius:10px; padding:10px 12px; margin-bottom:12px;">
       <div style="font-size:12.5px; font-weight:800;">💰 단가 추이
         <span class="auto" style="font-weight:500">— 아직 단가 기록이 없습니다.
-        발주 현황에서 <b>입고 처리할 때 단가를 입력</b>하면 여기에 변동 그래프가 쌓입니다${priceD.base_price ? ` (기준 단가 ${NF(priceD.base_price)}원/${esc(d.unit)})` : ""}</span></div>
+        <b>일일 입력의 원부자재 입고</b> 또는 <b>발주 입고 처리</b>에서 단가를 입력하면 여기에 변동 그래프가 쌓입니다${priceD.base_price ? ` (기준 단가 ${NF(priceD.base_price)}원/${esc(d.unit)})` : ""}</span></div>
     </div>`;
   }
   const usedProds = [...new Set(bomUse.map(b => b.product_id))]
@@ -6038,7 +6046,7 @@ async function openMatHistory(mid) {
       options: { responsive: true, maintainAspectRatio: false, animation: false,
         plugins: { legend: { display: base > 0, labels: { boxWidth: 10, font: { size: 10 } } },
           tooltip: { callbacks: { label: c => c.datasetIndex === 0
-            ? ` ${NF(c.parsed.y)}원 · ${pts[c.dataIndex].partner || "미지정"} (발주 #${pts[c.dataIndex].po_id})`
+            ? ` ${NF(c.parsed.y)}원 · ${pts[c.dataIndex].partner || "미지정"} (${pts[c.dataIndex].po_id ? "발주 #" + pts[c.dataIndex].po_id : "일일 입고"})`
             : ` 기준 단가 ${NF(c.parsed.y)}원` } } },
         scales: { y: { ticks: { callback: v => NF(v), font: { size: 10 } } },
                   x: { ticks: { font: { size: 10 } } } } }

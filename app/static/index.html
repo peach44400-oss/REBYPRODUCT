@@ -879,13 +879,14 @@
             <div id="eNeed"></div>
           </div>
           <div class="card" data-esec="stock">
-            <h2>원부자재 입고 <span class="sub">입고만 기록해도 재고에 자동 반영 — 발주한 자재는 자동으로 나타남 · 제조일자·유통기한 기록</span></h2>
+            <h2>원부자재 입고 <span class="sub">입고만 기록해도 재고에 자동 반영 — 발주한 자재는 자동으로 나타남 · 거래처·단가를 입력하면 단가 추이와 월간 리포트에 집계</span></h2>
             <div class="tbl-wrap"><table>
-              <thead><tr><th>자재명</th><th>단위</th><th class="r">입고량</th><th>제조일자</th><th>유통기한</th><th>비고</th><th></th></tr></thead>
+              <thead><tr><th>자재명</th><th>단위</th><th class="r">입고량</th><th>거래처</th><th class="r">단가(원)</th><th>제조일자</th><th>유통기한</th><th>비고</th><th></th></tr></thead>
               <tbody class="num" id="eMatIn"></tbody>
             </table></div>
             <div class="draft-foot"><button class="btn sm" id="addMatIn">+ 입고 행 추가</button>
               <input class="mini-input" id="qaMatIn" list="qaMaterials" placeholder="🔍 자재 검색 후 Enter = 행 추가" style="text-align:left; width:220px;"></div>
+            <datalist id="miPaDl"></datalist>
           </div>
           <div class="card" data-esec="stock">
             <h2>원부자재 재고 실사 <span class="sub">실제 세어본 재고를 입력 — 사용량(총량) = 전일재고 + 입고 − 실재고 · 입고는 위 '원부자재 입고' 카드에서 · 사용량 클릭 = 사용처 분석</span></h2>

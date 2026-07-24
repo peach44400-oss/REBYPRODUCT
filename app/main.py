@@ -40,7 +40,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.23.3"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.24.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -1293,6 +1293,12 @@ def matprice(request: Request, mid: int):
                     pts.append({"date": (r["received_at"] or r["date"])[:10], "po_id": r["id"],
                                 "price": it["price"], "partner": r["pname"],
                                 "qty": it.get("recv") or it.get("qty") or 0})
+        # 일일 입력에서 직접 입력한 입고 단가 — 발주 유래 행(note '발주 #')은 위에서 이미 집계되므로 제외
+        for r in con.execute("""SELECT date, qty, price, COALESCE(partner,'') partner FROM material_in
+                WHERE material_id=? AND price>0 AND note NOT LIKE '발주 #%' ORDER BY date""", (mid,)):
+            pts.append({"date": r["date"], "po_id": None, "price": r["price"],
+                        "partner": r["partner"], "qty": r["qty"]})
+        pts.sort(key=lambda x: x["date"])
         return {"name": m["name"], "unit": m["unit"] or "",
                 "base_price": m["unit_price"] or 0, "points": pts}
     finally:
@@ -1858,9 +1864,10 @@ def po_receive(request: Request, po_id: int, body: dict):
         note = f"발주 #{po_id}" + (f" · {pname}" if pname else "")
         con.execute("INSERT OR IGNORE INTO day_record(date) VALUES(?)", (rdate,))
         for it in recvs:
-            con.execute("""INSERT INTO material_in(date, material_id, qty, made_date, expiry, note)
-                VALUES(?,?,?,?,?,?)""",
-                        (rdate, it["material_id"], float(it["qty"]), made, expiry, note))
+            con.execute("""INSERT INTO material_in(date, material_id, qty, made_date, expiry, note, partner, price)
+                VALUES(?,?,?,?,?,?,?,?)""",
+                        (rdate, it["material_id"], float(it["qty"]), made, expiry, note,
+                         pname, float(it.get("price") or 0)))
         # 자재별 재고 자동 반영 — day_save의 자동 행 로직과 동일 규칙
         for mid in {it["material_id"] for it in recvs}:
             in_total = con.execute("SELECT COALESCE(SUM(qty),0) q FROM material_in WHERE date=? AND material_id=?",
@@ -2964,8 +2971,9 @@ def month_report(request: Request, ym: str = ""):
             FROM material_daily md JOIN material m ON m.id=md.material_id
             WHERE md.date BETWEEN ? AND ? AND md.used_qty>0
             GROUP BY m.id ORDER BY used DESC""", (a, b)))
-        last_price = {}
-        for r in con.execute("""SELECT items FROM purchase_order
+        # 마지막 단가: 발주 입고 단가 + 일일 입고 직접 입력 단가를 날짜순으로 합쳐 자재별 최신값
+        priced = []   # (날짜, material_id, price)
+        for r in con.execute("""SELECT received_at, items FROM purchase_order
                 WHERE received_at!='' AND substr(received_at,1,10)<=? ORDER BY received_at""", (b,)):
             try:
                 its = json.loads(r["items"] or "[]")
@@ -2973,7 +2981,12 @@ def month_report(request: Request, ym: str = ""):
                 continue
             for it in its:
                 if (it.get("price") or 0) > 0:
-                    last_price[it.get("material_id")] = it["price"]
+                    priced.append((r["received_at"][:10], it.get("material_id"), it["price"]))
+        for r in con.execute("""SELECT date, material_id, price FROM material_in
+                WHERE price>0 AND note NOT LIKE '발주 #%' AND date<=? ORDER BY date""", (b,)):
+            priced.append((r["date"], r["material_id"], r["price"]))
+        priced.sort(key=lambda x: x[0])
+        last_price = {mid: price for _, mid, price in priced}
         for r in used:
             r["price"] = last_price.get(r["id"]) or r["unit_price"] or 0
             r["amount"] = round(r["used"] * r["price"])
@@ -2994,6 +3007,11 @@ def month_report(request: Request, ym: str = ""):
                     po_pa[r["pname"]] = po_pa.get(r["pname"], 0) + round(q * it["price"])
                 else:
                     unpriced += 1
+        # 일일 입력에서 단가를 직접 입력한 입고분도 매입액에 포함 (발주 유래 행은 위에서 집계됨)
+        for r in con.execute("""SELECT COALESCE(NULLIF(partner,''),'미지정') pname, SUM(qty*price) amt
+                FROM material_in WHERE price>0 AND note NOT LIKE '발주 #%' AND date BETWEEN ? AND ?
+                GROUP BY COALESCE(NULLIF(partner,''),'미지정')""", (a, b)):
+            po_pa[r["pname"]] = po_pa.get(r["pname"], 0) + round(r["amt"] or 0)
         po_in = sorted(({"partner": k, "amount": v} for k, v in po_pa.items()),
                        key=lambda x: -x["amount"])
         # 노무비 — 직원(개인시간, 미입력 시 라인 실가동 폴백) + 용역(상세행, 없으면 구 방식 합계 폴백)
@@ -3616,10 +3634,11 @@ def day_save(request: Request, date: str, body: dict):
                     nm = con.execute("SELECT name FROM material WHERE id=?", (r["material_id"],)).fetchone()
                     raise HTTPException(400, f"'{nm['name'] if nm else r['material_id']}' 입고량에 "
                                         "음수는 저장할 수 없습니다")
-                con.execute("""INSERT INTO material_in(date, material_id, qty, made_date, expiry, note)
-                    VALUES(?,?,?,?,?,?)""",
+                con.execute("""INSERT INTO material_in(date, material_id, qty, made_date, expiry, note, partner, price)
+                    VALUES(?,?,?,?,?,?,?,?)""",
                             (date, r["material_id"], q, r.get("made") or "",
-                             r.get("expiry") or "", r.get("note") or ""))
+                             r.get("expiry") or "", r.get("note") or "",
+                             (r.get("partner") or "").strip(), float(r.get("price") or 0)))
                 in_totals[r["material_id"]] = in_totals.get(r["material_id"], 0.0) + q
         else:  # 이 저장에 입고가 없으면 기존 저장분 사용
             for r in con.execute("SELECT material_id, SUM(qty) q FROM material_in WHERE date=? GROUP BY material_id", (date,)):

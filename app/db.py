@@ -186,7 +186,9 @@ CREATE TABLE IF NOT EXISTS material_in (
   qty REAL NOT NULL DEFAULT 0,
   made_date TEXT DEFAULT '',           -- 제조일자
   expiry TEXT DEFAULT '',              -- 유통기한
-  note TEXT DEFAULT ''
+  note TEXT DEFAULT '',
+  partner TEXT DEFAULT '',             -- 공급 거래처 이름 (선택 — 미등록 거래처도 허용)
+  price REAL DEFAULT 0                 -- 입고 단가 (선택 — 단가 추이·월간 리포트의 원천)
 );
 CREATE INDEX IF NOT EXISTS idx_matin_date ON material_in(date);
 
@@ -579,6 +581,11 @@ def init_db() -> None:
     micols = [r[1] for r in con.execute("PRAGMA table_info(material_in)")]
     if "made_date" not in micols:
         con.execute("ALTER TABLE material_in ADD COLUMN made_date TEXT DEFAULT ''")
+    # 원부자재 입고 거래처·단가 (선택 입력 — 단가 추이 그래프·월간 리포트 원천)
+    if "partner" not in micols:
+        con.execute("ALTER TABLE material_in ADD COLUMN partner TEXT DEFAULT ''")
+    if "price" not in micols:
+        con.execute("ALTER TABLE material_in ADD COLUMN price REAL DEFAULT 0")
     # 거래처: 사업자등록번호·대표자·모바일·이메일 (ERP 가져오기 + 발주서 메일)
     pcols = [r[1] for r in con.execute("PRAGMA table_info(partner)")]
     for col in ("biz_no", "ceo", "mobile", "email"):
