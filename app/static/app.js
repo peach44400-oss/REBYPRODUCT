@@ -6764,6 +6764,75 @@ $("signDelete").onclick = async () => {
     toast("사인이 삭제됐습니다 — 발주서에는 이름 도장으로 표시됩니다");
   } catch (e) { }
 };
+/* ── 사인 직접 그리기 패드 — 그림판처럼 마우스/터치로 그려서 등록. 획 목록을 보관해 한 획 취소 지원 ── */
+const SIGNPAD = { cv: null, cx: null, strokes: [], cur: null };
+function signPadRedraw() {
+  const { cv, cx } = SIGNPAD;
+  cx.fillStyle = "#fff"; cx.fillRect(0, 0, cv.width, cv.height);
+  cx.lineCap = "round"; cx.lineJoin = "round"; cx.strokeStyle = "#111";
+  for (const s of SIGNPAD.strokes) {
+    cx.lineWidth = s.w;
+    cx.beginPath();
+    s.pts.forEach((p, i) => i ? cx.lineTo(p[0], p[1]) : cx.moveTo(p[0], p[1]));
+    if (s.pts.length === 1) cx.lineTo(s.pts[0][0] + 0.1, s.pts[0][1]);   // 클릭만 해도 점이 찍히게
+    cx.stroke();
+  }
+}
+(function initSignPad() {
+  const cv = $("signPad"); if (!cv) return;
+  SIGNPAD.cv = cv; SIGNPAD.cx = cv.getContext("2d");
+  signPadRedraw();
+  const pos = e => {
+    const r = cv.getBoundingClientRect();
+    return [(e.clientX - r.left) * cv.width / r.width, (e.clientY - r.top) * cv.height / r.height];
+  };
+  cv.addEventListener("pointerdown", e => {
+    e.preventDefault();
+    try { cv.setPointerCapture(e.pointerId); } catch (_) { }
+    SIGNPAD.cur = { w: +$("signPenW").value, pts: [pos(e)] };
+    SIGNPAD.strokes.push(SIGNPAD.cur);
+    signPadRedraw();
+  });
+  cv.addEventListener("pointermove", e => {
+    if (!SIGNPAD.cur) return;
+    SIGNPAD.cur.pts.push(pos(e));
+    signPadRedraw();
+  });
+  const up = () => { SIGNPAD.cur = null; };
+  cv.addEventListener("pointerup", up);
+  cv.addEventListener("pointercancel", up);
+})();
+$("signPadUndo").onclick = () => { SIGNPAD.strokes.pop(); SIGNPAD.cur = null; signPadRedraw(); };
+$("signPadClear").onclick = () => { SIGNPAD.strokes = []; SIGNPAD.cur = null; signPadRedraw(); };
+$("signPadSave").onclick = async () => {
+  if (!SIGNPAD.strokes.length) return toast("먼저 사인을 그려주세요");
+  // 잉크 영역만 잘라내기(여백 24px) — 구석에 작게 그려도 서명란에 알맞은 크기로 들어가게
+  const { cv } = SIGNPAD;
+  const d = SIGNPAD.cx.getImageData(0, 0, cv.width, cv.height).data;
+  let x0 = cv.width, y0 = cv.height, x1 = 0, y1 = 0;
+  for (let y = 0; y < cv.height; y++) for (let x = 0; x < cv.width; x++) {
+    const i = (y * cv.width + x) * 4;
+    if ((d[i] + d[i + 1] + d[i + 2]) / 3 < 200) {
+      if (x < x0) x0 = x; if (x > x1) x1 = x;
+      if (y < y0) y0 = y; if (y > y1) y1 = y;
+    }
+  }
+  if (x1 < x0) return toast("먼저 사인을 그려주세요");
+  const pad = 24;
+  x0 = Math.max(0, x0 - pad); y0 = Math.max(0, y0 - pad);
+  x1 = Math.min(cv.width, x1 + pad); y1 = Math.min(cv.height, y1 + pad);
+  const crop = document.createElement("canvas");
+  crop.width = x1 - x0; crop.height = y1 - y0;
+  crop.getContext("2d").drawImage(cv, x0, y0, crop.width, crop.height, 0, 0, crop.width, crop.height);
+  try {
+    const png = await processSignImage(crop.toDataURL("image/png"));
+    await api("/api/mysign", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ img: png }) });
+    MYSIGN.img = png;
+    renderSignPreview();
+    toast("✍ 그린 사인이 등록됐습니다 (발주서 서명란에 들어갑니다)");
+  } catch (e) { /* api가 토스트 */ }
+};
 
 $("smtpTest").onclick = async () => {
   $("smtpTest").disabled = true;

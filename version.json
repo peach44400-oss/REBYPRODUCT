@@ -1,5 +1,5 @@
 {
-  "version": "1.21.1",
+  "version": "1.22.0",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· 발주 입고·입고 취소 후 일일 입력을 열면 자동으로 최신 상태로 갱신 (날짜를 다시 클릭할 필요 없음)"
+  "notes": "· 내 설정 → 사인: 그림판처럼 마우스·손가락으로 직접 그려서 등록 가능 (펜 굵기 3종, 한 획 취소, 지우기)"
 }

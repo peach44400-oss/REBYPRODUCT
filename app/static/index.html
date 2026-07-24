@@ -1750,6 +1750,21 @@
         <button class="btn" id="signDelete">삭제</button>
         <span class="auto" id="signState" style="font-size:12px;"></span>
       </div>
+      <div style="margin-top:14px; border-top:1px solid #e2e4e9; padding-top:10px;">
+        <p class="hint" style="margin:0 0 8px;">또는 아래 칸에 <b>마우스·손가락으로 직접 그려서</b> 등록할 수 있습니다.</p>
+        <canvas id="signPad" width="880" height="300"
+          style="width:100%; max-width:460px; height:150px; background:#fff; border:1.5px dashed #b9bec9; border-radius:8px; cursor:crosshair; touch-action:none; display:block;"></canvas>
+        <div style="display:flex; align-items:center; gap:8px; margin-top:8px; flex-wrap:wrap;">
+          <select id="signPenW" class="tsel" title="펜 굵기">
+            <option value="4">가는 펜</option>
+            <option value="7" selected>보통 펜</option>
+            <option value="11">굵은 펜</option>
+          </select>
+          <button class="btn" id="signPadUndo" title="마지막으로 그린 획을 지웁니다">↶ 한 획 취소</button>
+          <button class="btn" id="signPadClear">지우기</button>
+          <button class="btn primary" id="signPadSave">✔ 그린 사인 등록</button>
+        </div>
+      </div>
     </div>
     <div class="modal-foot">
       <button class="btn" onclick="closeMe()">닫기</button>
