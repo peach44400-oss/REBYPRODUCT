@@ -366,6 +366,10 @@ async function loadDash() {
     kpis.push(`<div class="kpi"><div class="lbl"><span class="ki">💰</span>이번달 생산금액 <span class="sub" style="font-weight:500">${d.money.label}</span></div>
       <div class="val num">₩${NF(Math.round(d.money.prod))}</div>
       <div class="delta">출고금액 ₩${NF(Math.round(d.money.ship))}</div></div>`);
+    // 이번달 매입·노무비 요약 (매입액 = 발주 입고 + 일일 입고 단가 입력분 · 노무비는 권한 있을 때만)
+    kpis.push(`<div class="kpi"><div class="lbl"><span class="ki">🧾</span>이번달 매입·노무 <span class="sub" style="font-weight:500">${d.money.label}</span></div>
+      <div class="val num">₩${NF(Math.round(d.money.buy || 0))}</div>
+      <div class="delta">매입액${d.month_labor != null ? ` · 노무비 ₩${NF(d.month_labor)}` : ""}</div></div>`);
   }
   kpis.push(`<div class="kpi" title="가동률 = 실가동 시간 합 ÷ 정상가동 시간 합 (물리 라인 기준 · 공정은 대표 라인으로 묶어 최대값)"><div class="lbl"><span class="ki">👷</span>가동률 <span class="sub" style="font-weight:500">최근일</span></div>
     <div class="val num">${util.rate != null ? util.rate + "<small>%</small>" : "—"}</div>
@@ -5083,6 +5087,12 @@ async function openPoBulk() {
   try { d = await api("/api/lowstock"); } catch (e) { return; }
   const todo = (d.items || []).filter(x => !x.ordered);
   if (!todo.length) return toast("안전재고 미달(미발주) 자재가 없습니다");
+  poBulkFromItems(todo.map(x => ({ material_id: x.id, name: x.name, unit: x.unit,
+    qty: Math.ceil((x.shortfall || 0) * 100) / 100 })));
+}
+// 자재 목록(부족 자재·생산계획 소요량 등)을 공급 거래처별로 묶어 일괄 발주 모달을 연다
+async function poBulkFromItems(items) {
+  if (!items || !items.length) return toast("발주할 자재가 없습니다");
   // 공급처 결정: 기준정보의 공급처 → 없으면 최근 발주 이력에서 그 자재를 마지막으로 주문한 거래처
   const lastPa = {};   // material_id → 거래처 이름
   try {
@@ -5093,13 +5103,12 @@ async function openPoBulk() {
     }));
   } catch (e) { }
   const byPa = new Map();
-  todo.forEach(x => {
-    const m = materialById(x.id) || {};
+  items.forEach(x => {
+    const m = materialById(x.material_id) || {};
     const pa = M.partner.find(p => p.id === m.partner_id);
-    const key = (pa ? pa.name : "") || lastPa[x.id] || "";
+    const key = (pa ? pa.name : "") || lastPa[x.material_id] || "";
     if (!byPa.has(key)) byPa.set(key, []);
-    byPa.get(key).push({ material_id: x.id, name: x.name, unit: x.unit,
-      qty: Math.ceil((x.shortfall || 0) * 100) / 100 });
+    byPa.get(key).push({ material_id: x.material_id, name: x.name, unit: x.unit, qty: x.qty });
   });
   POBULK.groups = [...byPa.entries()].map(([partner, items]) => ({ partner, items }))
     .sort((a, b) => (b.partner ? 1 : 0) - (a.partner ? 1 : 0) || a.partner.localeCompare(b.partner, "ko"));
@@ -5163,6 +5172,93 @@ $("poBulkSave").onclick = async () => {
   } finally {
     $("poBulkSave").disabled = false;
   }
+};
+
+/* ── 생산계획 → 자재 소요량 → 부족분 발주 ── */
+const PLAN = { rows: [{ product_id: null, qty: "" }], needs: null };
+$("lowpPlan").addEventListener("click", e => { e.stopPropagation(); openPlan(); });
+function openPlan() {
+  if (!PLAN.rows.length) PLAN.rows = [{ product_id: null, qty: "" }];
+  $("planProdDl").innerHTML = M.product.filter(p => p.status !== "단종")
+    .map(p => `<option value="${esc(p.name)}">`).join("");
+  renderPlanRows();
+  $("planOverlay").classList.add("on");
+}
+window.closePlan = () => $("planOverlay").classList.remove("on");
+function renderPlanRows() {
+  $("planRows").innerHTML = PLAN.rows.map((r, i) => `
+    <div style="display:flex; align-items:center; gap:6px; margin-bottom:5px;">
+      ${matSelProd(r.product_id, `data-plp="${i}"`)}
+      <input class="mini-input num" data-plq="${i}" value="${r.qty ?? ""}" placeholder="수량" style="width:80px;" inputmode="decimal">
+      <button class="btn ghost sm" data-pldel="${i}">✕</button>
+    </div>`).join("") +
+    '<div class="auto" style="font-size:11px; margin-top:4px;">＋ 아래 검색으로 제품을 더 추가할 수 있습니다</div>';
+}
+// 제품 선택 셀 (일반 select — 계획 입력은 목록이 짧아 select가 빠름)
+function matSelProd(pid, attr) {
+  return `<select class="mini-input" ${attr} style="flex:1; min-width:140px;">
+    <option value="">— 제품 —</option>
+    ${M.product.filter(p => p.status !== "단종").map(p =>
+      `<option value="${p.id}" ${p.id === pid ? "selected" : ""}>${esc(p.name)}</option>`).join("")}
+  </select>`;
+}
+$("planRows").addEventListener("input", e => {
+  const p = e.target.dataset.plp, q = e.target.dataset.plq;
+  if (p != null) PLAN.rows[+p].product_id = e.target.value ? +e.target.value : null;
+  if (q != null) PLAN.rows[+q].qty = e.target.value;
+});
+$("planRows").addEventListener("click", e => {
+  const d = e.target.closest("[data-pldel]"); if (!d) return;
+  PLAN.rows.splice(+d.dataset.pldel, 1);
+  if (!PLAN.rows.length) PLAN.rows = [{ product_id: null, qty: "" }];
+  renderPlanRows();
+});
+$("planAdd").addEventListener("keydown", e => {
+  if (e.key !== "Enter") return;
+  const name = e.target.value.trim();
+  const p = M.product.find(x => x.name === name);
+  if (!p) return toast(`'${name}' — 등록된 제품이 아닙니다`);
+  if (PLAN.rows.length === 1 && !PLAN.rows[0].product_id) PLAN.rows = [];
+  PLAN.rows.push({ product_id: p.id, qty: "" });
+  e.target.value = "";
+  renderPlanRows();
+});
+$("planCalc").onclick = async () => {
+  const plans = PLAN.rows.filter(r => r.product_id && parseFloat(r.qty) > 0)
+    .map(r => ({ product_id: r.product_id, qty: parseFloat(r.qty) }));
+  if (!plans.length) return toast("제품과 계획 수량을 입력해주세요");
+  try {
+    PLAN.needs = await api("/api/planneeds", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ plans }) });
+    renderPlanNeeds();
+  } catch (e) { /* api가 토스트 */ }
+};
+function renderPlanNeeds() {
+  const d = PLAN.needs;
+  const money = canM("mat");
+  const noBom = (d.no_bom || []).length
+    ? `<div class="mh-wrap" style="margin-bottom:8px;">📋 배합비 없는 제품 ${d.no_bom.length}종은 소요량 계산에서 제외: ${d.no_bom.slice(0, 5).map(esc).join(", ")}${d.no_bom.length > 5 ? " 외" : ""}</div>` : "";
+  const rows = (d.needs || []).map(n => `
+    <tr ${n.short ? 'style="background:var(--warn-soft, #FEF3E2)"' : ""}>
+      <td style="text-align:left;">${esc(n.name)}${n.short && n.partner ? ` <span class="auto" style="font-size:10.5px;">→ ${esc(n.partner)}</span>` : ""}</td>
+      <td class="r">${NF(n.need)} ${esc(n.unit)}</td>
+      <td class="r auto">${NF(n.stock)}</td>
+      <td class="r" style="font-weight:700; color:${n.short ? "var(--warn)" : "var(--ok)"}">${n.short ? "-" + NF(n.shortfall) : "충분"}</td>
+      ${money ? `<td class="r auto">${n.short && n.amount ? NF(n.amount) : ""}</td>` : ""}</tr>`).join("")
+    || `<tr><td colspan="${money ? 5 : 4}" class="auto">소요 자재가 없습니다</td></tr>`;
+  $("planNeeds").innerHTML = noBom + `
+    <div style="font-size:12px; margin-bottom:6px;">부족 <b style="color:var(--warn)">${d.short_cnt || 0}종</b>${money && d.short_amount ? ` · 예상 매입액 <b>₩${NF(d.short_amount)}</b>` : ""}</div>
+    <table style="width:100%; font-size:11.5px;">
+      <thead><tr style="color:var(--muted);"><th style="text-align:left;">자재</th><th class="r">필요량</th><th class="r">현재고</th><th class="r">부족</th>${money ? '<th class="r">예상액</th>' : ""}</tr></thead>
+      <tbody class="num">${rows}</tbody></table>`;
+  $("planToPo").style.display = (d.short_cnt || 0) ? "" : "none";
+}
+$("planToPo").onclick = () => {
+  const short = (PLAN.needs?.needs || []).filter(n => n.short);
+  if (!short.length) return toast("부족한 자재가 없습니다");
+  closePlan();
+  poBulkFromItems(short.map(n => ({ material_id: n.material_id, name: n.name, unit: n.unit,
+    qty: Math.ceil(n.shortfall * 100) / 100 })));
 };
 
 /* ── 월간 마감 리포트 — 생산·출고·자재 사용액·발주 입고액·노무비 한 장 요약 (admin) ── */
@@ -5678,7 +5774,7 @@ async function loadCosts() {
   $("anaCostCard").style.display = "";
   if (!COSTS) COSTS = await api("/api/costs");
   const d = COSTS;
-  $("anaCostSub").textContent = `노무비 배분: 최근 30일 ₩${NF(d.labor_total)} ÷ 양품 ${NF(d.good_total)}개 = 개당 ₩${NF(d.labor_rate)}`;
+  $("anaCostSub").textContent = `자재비 = 배합비 × 실입고 단가(없으면 기준 단가) · 노무비 배분: 최근 30일 ₩${NF(d.labor_total)} ÷ 양품 ${NF(d.good_total)}개 = 개당 ₩${NF(d.labor_rate)} (생산 수량 비례)`;
   // 신뢰도 경고: 단가 미입력 자재가 있으면 원가가 실제보다 낮게 계산됨
   const missTotal = d.rows.reduce((s, r) => s + r.missing, 0);
   $("anaCostWarn").innerHTML = (missTotal || d.no_bom)
@@ -5715,7 +5811,8 @@ $("anaCostBody").addEventListener("click", e => {
   $("costHint").textContent = `판매가 ${r.sell > 0 ? "₩" + NF(r.sell) : "미입력"} · 원가 ₩${NF(Math.round(cost * 10) / 10)}`
     + (r.sell > 0 ? ` · 마진 ₩${NF(Math.round((r.sell - cost) * 10) / 10)}` : "");
   $("costBody").innerHTML = r.detail.map(m => `<tr ${m.price <= 0 ? 'style="color:var(--warn)"' : ""}>
-      <td>${esc(m.name)}${m.price <= 0 ? ' <span class="chip warn">단가 미입력</span>' : ""}</td>
+      <td>${esc(m.name)}${m.price <= 0 ? ' <span class="chip warn">단가 미입력</span>'
+        : m.src === "기준" ? ' <span class="chip" title="실입고 단가 기록이 없어 기준 단가로 계산">기준</span>' : ""}</td>
       <td class="r">${NF(m.qty)} ${esc(m.unit)}</td>
       <td class="r">${m.price > 0 ? NF(m.price) : "—"}</td>
       <td class="r">${m.cost > 0 ? NF(m.cost) : "—"}</td></tr>`).join("")
@@ -5979,11 +6076,38 @@ async function openMatHistory(mid) {
     const last = pts[pts.length - 1], prev = pts.length > 1 ? pts[pts.length - 2] : null;
     const chg = prev && prev.price ? (last.price >= prev.price ? " · 직전 대비 ▲" : " · 직전 대비 ▼")
       + Math.abs((last.price - prev.price) / prev.price * 100).toFixed(1) + "%" : "";
+    // 거래처별 단가 비교 — 소싱·협상용 (같은 자재를 여러 곳에서 살 때 어디가 싼지)
+    const byPa = new Map();
+    pts.forEach(p => {
+      const k = p.partner || "미지정";
+      if (!byPa.has(k)) byPa.set(k, []);
+      byPa.get(k).push(p);
+    });
+    const paRows = [...byPa.entries()].map(([name, arr]) => {
+      const prices = arr.map(x => x.price);
+      const lastPt = arr[arr.length - 1];   // pts가 날짜순이라 그룹 내 마지막이 최신
+      return { name, cnt: arr.length, last: lastPt.price, lastDate: lastPt.date,
+        min: Math.min(...prices), avg: prices.reduce((s, v) => s + v, 0) / prices.length };
+    });
+    const cheapest = Math.min(...paRows.map(r => r.last));
+    paRows.sort((a, b) => a.last - b.last);
+    const paTable = byPa.size >= 1 ? `
+      <table style="width:100%; margin-top:10px; font-size:11.5px;">
+        <thead><tr style="color:var(--muted);"><th style="text-align:left;">거래처</th><th class="r">최근 단가</th><th class="r">평균</th><th class="r">최저</th><th class="r">건수</th><th style="text-align:right;">최근 발주</th></tr></thead>
+        <tbody class="num">${paRows.map(r => `<tr>
+          <td style="text-align:left; font-weight:700;">${esc(r.name)}${r.last === cheapest && byPa.size > 1 ? ' <span class="chip" style="background:var(--ok-soft); color:var(--ok);">최저가</span>' : ""}</td>
+          <td class="r" style="font-weight:700;">${NF(r.last)}</td>
+          <td class="r">${NF(Math.round(r.avg))}</td>
+          <td class="r">${NF(r.min)}</td>
+          <td class="r">${r.cnt}</td>
+          <td class="auto" style="text-align:right;">${r.lastDate.slice(5)}</td></tr>`).join("")}</tbody>
+      </table>` : "";
     priceSec = `
     <div style="border:1px solid var(--line-soft); border-radius:10px; padding:10px 12px; margin-bottom:12px;">
       <div style="font-size:12.5px; font-weight:800; margin-bottom:4px;">💰 단가 추이
-        <span class="auto" style="font-weight:500">— 발주 입고 단가 ${pts.length}건 · 최근 ${NF(last.price)}원/${esc(d.unit)}${chg}</span></div>
+        <span class="auto" style="font-weight:500">— 입고 단가 ${pts.length}건 · 최근 ${NF(last.price)}원/${esc(d.unit)}${chg}</span></div>
       <div style="height:150px;"><canvas id="mhPriceCv"></canvas></div>
+      ${paTable}
     </div>`;
   } else if (priceD) {
     // 단가 기록이 아직 없어도 기능 안내는 보여준다 — 어디서 생기는 데이터인지 알 수 있게
@@ -6893,12 +7017,12 @@ document.addEventListener("input", e => {
 });
 
 /* ── 모달 공통 닫기 ─────────────────── */
-["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "dispOverlay", "lotSplitOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay", "meOverlay", "poListOverlay", "poViewOverlay", "poRecvOverlay", "poCsvOverlay", "poSettleOverlay", "poBulkOverlay", "monthRepOverlay"].forEach(id => {
+["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "dispOverlay", "lotSplitOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay", "meOverlay", "poListOverlay", "poViewOverlay", "poRecvOverlay", "poCsvOverlay", "poSettleOverlay", "poBulkOverlay", "monthRepOverlay", "planOverlay"].forEach(id => {
   $(id).addEventListener("click", e => { if (e.target.id === id) $(id).classList.remove("on"); });
 });
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") {
-    ["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay", "meOverlay", "poListOverlay", "poViewOverlay", "poRecvOverlay", "poCsvOverlay", "poSettleOverlay", "poBulkOverlay", "monthRepOverlay"].forEach(id => $(id).classList.remove("on"));
+    ["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay", "meOverlay", "poListOverlay", "poViewOverlay", "poRecvOverlay", "poCsvOverlay", "poSettleOverlay", "poBulkOverlay", "monthRepOverlay", "planOverlay"].forEach(id => $(id).classList.remove("on"));
     hidePad();
   }
 });

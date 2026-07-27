@@ -40,7 +40,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.24.1"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.25.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -1299,6 +1299,37 @@ def lowstock(request: Request):
         return {"items": items}
     finally:
         con.close()
+
+
+def latest_material_prices(con, upto=None):
+    """자재별 최신 실입고 단가 {mid: price}.
+    발주 입고 단가(purchase_order.items) + 일일 입고 직접 단가(material_in, 발주 유래 행 제외)를
+    날짜순으로 합쳐 각 자재의 가장 최근 값을 남긴다. upto(YYYY-MM-DD) 지정 시 그 날짜까지만."""
+    priced = []   # (날짜, material_id, price)
+    q1 = "SELECT received_at, items FROM purchase_order WHERE received_at!=''"
+    p1 = []
+    if upto:
+        q1 += " AND substr(received_at,1,10)<=?"
+        p1.append(upto)
+    q1 += " ORDER BY received_at"
+    for r in con.execute(q1, p1):
+        try:
+            its = json.loads(r["items"] or "[]")
+        except ValueError:
+            continue
+        for it in its:
+            if it.get("material_id") and (it.get("price") or 0) > 0:
+                priced.append((r["received_at"][:10], it["material_id"], it["price"]))
+    q2 = "SELECT date, material_id, price FROM material_in WHERE price>0 AND note NOT LIKE '발주 #%'"
+    p2 = []
+    if upto:
+        q2 += " AND date<=?"
+        p2.append(upto)
+    q2 += " ORDER BY date"
+    for r in con.execute(q2, p2):
+        priced.append((r["date"], r["material_id"], r["price"]))
+    priced.sort(key=lambda x: x[0])
+    return {mid: price for _, mid, price in priced}
 
 
 @app.get("/api/matprice/{mid}")
@@ -2756,6 +2787,28 @@ def dashboard(request: Request):
                                              ELSE p.unit_price END),0) a
             FROM shipment s JOIN product p ON p.id=s.product_id
             WHERE s.date BETWEEN ? AND ?""", (ma, mb)).fetchone()["a"]
+        # 이번달 매입액 = 발주 입고분(입고일 기준) + 일일 입고 단가 입력분 (단가 미입력 제외)
+        buy_month = 0.0
+        for r in con.execute("""SELECT items FROM purchase_order
+                WHERE received_at!='' AND substr(received_at,1,10) BETWEEN ? AND ?""", (ma, mb)):
+            try:
+                for it in json.loads(r["items"] or "[]"):
+                    if (it.get("price") or 0) > 0:
+                        buy_month += (it.get("recv") or it.get("qty") or 0) * it["price"]
+            except ValueError:
+                pass
+        buy_month += con.execute("""SELECT COALESCE(SUM(qty*price),0) a FROM material_in
+            WHERE price>0 AND note NOT LIKE '발주 #%' AND date BETWEEN ? AND ?""",
+            (ma, mb)).fetchone()["a"]
+        # 이번달 노무비 (직원 개인시간→라인 폴백 + 용역 상세→구방식 폴백)
+        labor_month = con.execute("""
+            SELECT COALESCE(SUM(
+              (SELECT COALESCE(SUM(s.wage * CASE WHEN sm.hours>0 THEN sm.hours ELSE st.work_hours END),0)
+                 FROM staffing_member sm JOIN staff s ON s.id=sm.staff_id WHERE sm.staffing_id=st.id)
+              + COALESCE((SELECT SUM(sa.hours * sa.wage) FROM staffing_agency sa
+                          WHERE sa.staffing_id=st.id),
+                         st.agency_hours * st.agency_wage)),0) v
+            FROM staffing st WHERE st.date BETWEEN ? AND ?""", (ma, mb)).fetchone()["v"]
 
         # 5) 거래처별 출고 비중 (이번달)
         ship_partner = rows(con.execute("""
@@ -2820,7 +2873,9 @@ def dashboard(request: Request):
                 "prod_stock_qty": prod_stock_qty,
                 "prod_stock_amt": (prod_stock_amt if admin else None),
                 "prod_low_cnt": len(prod_low),
-                "money": ({"prod": prod_month, "ship": ship_month, "label": base[:7]} if admin else None),
+                "money": ({"prod": prod_month, "ship": ship_month, "buy": buy_month,
+                           "label": base[:7]} if admin else None),
+                "month_labor": (round(labor_month) if can_labor else None),
                 "ship_partner": ship_partner, "util": util, "top_prod": top_prod,
                 "week": [wa, wb], "month_label": base[:7]}
     finally:
@@ -3004,22 +3059,8 @@ def month_report(request: Request, ym: str = ""):
             FROM material_daily md JOIN material m ON m.id=md.material_id
             WHERE md.date BETWEEN ? AND ? AND md.used_qty>0
             GROUP BY m.id ORDER BY used DESC""", (a, b)))
-        # 마지막 단가: 발주 입고 단가 + 일일 입고 직접 입력 단가를 날짜순으로 합쳐 자재별 최신값
-        priced = []   # (날짜, material_id, price)
-        for r in con.execute("""SELECT received_at, items FROM purchase_order
-                WHERE received_at!='' AND substr(received_at,1,10)<=? ORDER BY received_at""", (b,)):
-            try:
-                its = json.loads(r["items"] or "[]")
-            except ValueError:
-                continue
-            for it in its:
-                if (it.get("price") or 0) > 0:
-                    priced.append((r["received_at"][:10], it.get("material_id"), it["price"]))
-        for r in con.execute("""SELECT date, material_id, price FROM material_in
-                WHERE price>0 AND note NOT LIKE '발주 #%' AND date<=? ORDER BY date""", (b,)):
-            priced.append((r["date"], r["material_id"], r["price"]))
-        priced.sort(key=lambda x: x[0])
-        last_price = {mid: price for _, mid, price in priced}
+        # 자재별 최신 실입고 단가 (발주 입고 + 일일 입고, 월말 이전) — 없으면 기준 단가로 폴백(아래)
+        last_price = latest_material_prices(con, upto=b)
         for r in used:
             r["price"] = last_price.get(r["id"]) or r["unit_price"] or 0
             r["amount"] = round(r["used"] * r["price"])
@@ -3829,6 +3870,22 @@ def day_save(request: Request, date: str, body: dict):
 COUNT_UNITS_SET = {"개", "ea", "EA", "매", "장", "롤", "박스", "묶음", "봉", "set", "세트", "팩"}
 
 
+def bom_qty_per_unit(m, b):
+    """제품 1개당 이 자재 소요량 — 자재 단위 기준 (원가·소요량 계산 공통 환산).
+    개수 단위 자재는 1÷개입수, 그 외는 배합 단위↔자재 단위(g/kg) 환산."""
+    mu = (m["unit"] or "").strip()
+    if mu in COUNT_UNITS_SET and (m["pack_count"] or 0) > 0:
+        return 1.0 / float(m["pack_count"])
+    qty = float(b["qty_per_unit"] or 0)
+    bu = (b["unit"] or "g").lower()
+    if bu != mu.lower():
+        if bu == "g" and mu.lower() == "kg":
+            qty /= 1000
+        elif bu == "kg" and mu.lower() == "g":
+            qty *= 1000
+    return qty
+
+
 @app.get("/api/costs")
 def costs(request: Request):
     if not mcan(request, "cost"):
@@ -3850,6 +3907,7 @@ def costs(request: Request):
             "SELECT COALESCE(SUM(prod_qty - defect_qty),0) v FROM production WHERE date>=?",
             (since,)).fetchone()["v"]
         labor_rate = (lab / good) if good > 0 else 0.0
+        latest = latest_material_prices(con)   # 자재별 실입고 단가 (발주 입고 + 일일 입고) — 없으면 기준 단가
         boms = {}
         for b in con.execute("SELECT product_id, material_id, qty_per_unit, unit FROM bom"):
             boms.setdefault(b["product_id"], []).append(b)
@@ -3866,23 +3924,17 @@ def costs(request: Request):
                 if not m:
                     continue
                 mu = (m["unit"] or "").strip()
-                if mu in COUNT_UNITS_SET and (m["pack_count"] or 0) > 0:
-                    qty = 1.0 / float(m["pack_count"])   # 개수 자재: 1개당 = 1 ÷ 개입수
-                else:
-                    qty = float(b["qty_per_unit"] or 0)
-                    bu = (b["unit"] or "g").lower()
-                    if bu != mu.lower():                 # 배합 단위 ↔ 자재 단위 환산
-                        if bu == "g" and mu.lower() == "kg":
-                            qty /= 1000
-                        elif bu == "kg" and mu.lower() == "g":
-                            qty *= 1000
-                price = float(m["unit_price"] or 0)
+                qty = bom_qty_per_unit(m, b)
+                # 실입고 단가 우선(발주·일일 입고) → 없으면 기준 단가 → 그것도 없으면 0(미입력)
+                actual = float(latest.get(b["material_id"]) or 0)
+                price = actual if actual > 0 else float(m["unit_price"] or 0)
+                psrc = "실입고" if actual > 0 else ("기준" if price > 0 else "")
                 cost = qty * price
                 if price <= 0:
                     missing += 1
                 mat_cost += cost
                 detail.append({"name": m["name"], "qty": round(qty, 5), "unit": mu,
-                               "price": price, "cost": round(cost, 2)})
+                               "price": price, "cost": round(cost, 2), "src": psrc})
             detail.sort(key=lambda x: -x["cost"])
             out.append({"id": p["id"], "name": p["name"], "image": p["image"],
                         "sell": float(p["unit_price"] or 0),
@@ -4070,6 +4122,64 @@ def bom_estimate(product_id: int):
                             "kind": r["kind"], "qty_per_unit": round(per, 4),
                             "unit": r["unit"], "days": r["days"]})
         return out
+    finally:
+        con.close()
+
+
+@app.post("/api/planneeds")
+def plan_needs(request: Request, body: dict):
+    """생산계획(제품별 계획수량) → 배합비 전개로 자재 소요량 + 현재고 + 부족분.
+    현재고 = 자재별 최신 실사(material_daily.real_qty, lowstock와 동일 기준).
+    부족분은 그대로 [일괄 발주]로 넘길 수 있다."""
+    require_stock_duty(request)
+    plans = [(p.get("product_id"), float(p.get("qty") or 0))
+             for p in (body.get("plans") or [])
+             if p.get("product_id") and float(p.get("qty") or 0) > 0]
+    if not plans:
+        return {"plans": [], "needs": []}
+    con = connect()
+    try:
+        mats = {r["id"]: r for r in con.execute(
+            "SELECT id, name, unit, pack_count, unit_price, safety_stock, partner_id FROM material")}
+        boms = {}
+        for b in con.execute("SELECT product_id, material_id, qty_per_unit, unit FROM bom"):
+            boms.setdefault(b["product_id"], []).append(b)
+        stock = {r["material_id"]: r["real_qty"] for r in con.execute("""
+            SELECT md.material_id, md.real_qty FROM material_daily md
+            JOIN (SELECT material_id mid, MAX(date) d FROM material_daily GROUP BY material_id) x
+              ON x.mid=md.material_id AND x.d=md.date""")}
+        need = {}
+        plan_out, no_bom = [], []
+        for pid, qty in plans:
+            pr = con.execute("SELECT name FROM product WHERE id=?", (pid,)).fetchone()
+            nm = pr["name"] if pr else str(pid)
+            rows_b = boms.get(pid)
+            plan_out.append({"product_id": pid, "name": nm, "qty": qty, "bom": bool(rows_b)})
+            if not rows_b:
+                no_bom.append(nm)
+                continue
+            for b in rows_b:
+                m = mats.get(b["material_id"])
+                if not m:
+                    continue
+                need[b["material_id"]] = need.get(b["material_id"], 0) + bom_qty_per_unit(m, b) * qty
+        latest = latest_material_prices(con)
+        pa_names = {r["id"]: r["name"] for r in con.execute("SELECT id, name FROM partner")}
+        out = []
+        for mid, req in need.items():
+            m = mats[mid]
+            have = float(stock.get(mid) or 0)
+            short = req - have
+            price = latest.get(mid) or m["unit_price"] or 0
+            out.append({"material_id": mid, "name": m["name"], "unit": m["unit"] or "",
+                        "need": round(req, 3), "stock": round(have, 3),
+                        "shortfall": round(short, 3) if short > 0 else 0, "short": short > 0,
+                        "partner": pa_names.get(m["partner_id"], "") if m["partner_id"] else "",
+                        "price": price, "amount": round(short * price) if short > 0 and price else 0})
+        out.sort(key=lambda x: (not x["short"], x["name"]))
+        return {"plans": plan_out, "needs": out, "no_bom": no_bom,
+                "short_cnt": sum(1 for x in out if x["short"]),
+                "short_amount": sum(x["amount"] for x in out)}
     finally:
         con.close()
 
