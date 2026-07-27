@@ -40,7 +40,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.26.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.27.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -2423,11 +2423,21 @@ def po_send(request: Request, body: dict):
         raise HTTPException(400, "메일 주소 형식이 올바르지 않습니다")
     subject = (body.get("subject") or "").strip() or "[리바이프로덕트] 발주서"
     html = body.get("html") or ""
+    attachments = body.get("attachments") or []
+    attach_names = ", ".join((a.get("name") or "file") for a in attachments)
     con = connect()
     try:
         username = request.state.user.get("username", "")
-        send_mail(con, username, to, subject, html, body.get("attachments") or [],
-                  sender_label_of(con, username), cc=cc)
+        try:
+            send_mail(con, username, to, subject, html, attachments,
+                      sender_label_of(con, username), cc=cc)
+        except HTTPException as e:   # 실패도 보낸 메일함에 남긴다 (원인 확인용)
+            log_sent_mail(con, username, to, cc, subject, html, attach_names,
+                          body.get("po_id") or 0, "failed", str(e.detail))
+            con.commit()
+            raise
+        log_sent_mail(con, username, to, cc, subject, html, attach_names,
+                      body.get("po_id") or 0, "sent", "")
         po_id = body.get("po_id")
         po_partner = ""
         if po_id:
@@ -2443,6 +2453,123 @@ def po_send(request: Request, body: dict):
         if po_id:
             chat_system(f"📤 발주서 #{po_id} 메일 발송" + (f" — {po_partner}" if po_partner else "")
                         + f" (받는사람 {', '.join(to)})")
+        return {"ok": True}
+    finally:
+        con.close()
+
+
+def log_sent_mail(con, username, to, cc, subject, html, attach_names, po_id, status, error):
+    """보낸 메일 이력 기록 — 성공·실패 모두. (본문은 재발송·미리보기용, 첨부는 이름만)"""
+    con.execute("""INSERT INTO sent_mail(username, to_addr, cc, subject, body_html, attach_names, po_id, status, error)
+        VALUES(?,?,?,?,?,?,?,?,?)""",
+                (username, ", ".join(to) if isinstance(to, list) else (to or ""),
+                 ", ".join(cc) if isinstance(cc, list) else (cc or ""),
+                 subject, html, attach_names, int(po_id or 0), status, error[:500]))
+
+
+@app.get("/api/sentmail")
+def sent_mail_list(request: Request, limit: int = 50):
+    """내 보낸 메일함 — 최신순. 관리자는 전원 기록을 본다."""
+    me = request.state.user["username"]
+    con = connect()
+    try:
+        if request.state.user["role"] == "admin":
+            q = ("SELECT id, username, to_addr, cc, subject, attach_names, po_id, status, error, at"
+                 " FROM sent_mail ORDER BY id DESC LIMIT ?")
+            p = (max(1, min(limit, 200)),)
+        else:
+            q = ("SELECT id, username, to_addr, cc, subject, attach_names, po_id, status, error, at"
+                 " FROM sent_mail WHERE username=? ORDER BY id DESC LIMIT ?")
+            p = (me, max(1, min(limit, 200)))
+        return {"items": rows(con.execute(q, p)), "me": me}
+    finally:
+        con.close()
+
+
+@app.get("/api/sentmail/{mid}")
+def sent_mail_get(request: Request, mid: int):
+    """보낸 메일 한 건 상세 (본문 포함) — 본인 또는 관리자."""
+    me = request.state.user["username"]
+    con = connect()
+    try:
+        r = con.execute("SELECT * FROM sent_mail WHERE id=?", (mid,)).fetchone()
+        if not r:
+            raise HTTPException(404, "메일 기록이 없습니다")
+        if r["username"] != me and request.state.user["role"] != "admin":
+            raise HTTPException(403, "본인이 보낸 메일만 볼 수 있습니다")
+        return dict(r)
+    finally:
+        con.close()
+
+
+@app.post("/api/sentmail/{mid}/resend")
+def sent_mail_resend(request: Request, mid: int):
+    """같은 받는사람·제목·본문으로 재발송 — 원본 첨부는 포함되지 않는다 (이력엔 이름만 저장)."""
+    require_stock_duty(request)
+    me = request.state.user["username"]
+    con = connect()
+    try:
+        r = con.execute("SELECT * FROM sent_mail WHERE id=?", (mid,)).fetchone()
+        if not r:
+            raise HTTPException(404, "메일 기록이 없습니다")
+        if r["username"] != me and request.state.user["role"] != "admin":
+            raise HTTPException(403, "본인이 보낸 메일만 재발송할 수 있습니다")
+        to = [t.strip() for t in (r["to_addr"] or "").replace(";", ",").split(",") if t.strip()]
+        cc = [t.strip() for t in (r["cc"] or "").replace(";", ",").split(",") if t.strip()]
+        if not to:
+            raise HTTPException(400, "받는사람이 없습니다")
+        try:
+            send_mail(con, me, to, r["subject"], r["body_html"], [], sender_label_of(con, me), cc=cc)
+        except HTTPException as e:
+            log_sent_mail(con, me, to, cc, r["subject"], r["body_html"], "", r["po_id"], "failed", str(e.detail))
+            con.commit()
+            raise
+        log_sent_mail(con, me, to, cc, r["subject"], r["body_html"], "", r["po_id"], "sent", "")
+        con.commit()
+        return {"ok": True}
+    finally:
+        con.close()
+
+
+@app.get("/api/mailtemplates")
+def mail_templates(request: Request):
+    """메일 상용구 목록 (팀 공용) — 정렬순."""
+    con = connect()
+    try:
+        return rows(con.execute(
+            "SELECT id, name, body, created_by, at FROM mail_template ORDER BY sort, id"))
+    finally:
+        con.close()
+
+
+@app.post("/api/mailtemplates")
+def mail_template_save(request: Request, body: dict):
+    """상용구 추가 또는 수정(id 지정 시). 게스트는 미들웨어가 차단."""
+    name = (body.get("name") or "").strip()[:60]
+    text = body.get("body") or ""
+    if not name:
+        raise HTTPException(400, "상용구 이름을 입력해주세요")
+    tid = body.get("id")
+    con = connect()
+    try:
+        if tid:
+            con.execute("UPDATE mail_template SET name=?, body=? WHERE id=?", (name, text, tid))
+        else:
+            cur = con.execute("INSERT INTO mail_template(name, body, created_by) VALUES(?,?,?)",
+                              (name, text, request.state.user.get("username", "")))
+            tid = cur.lastrowid
+        con.commit()
+        return {"ok": True, "id": tid}
+    finally:
+        con.close()
+
+
+@app.delete("/api/mailtemplates/{tid}")
+def mail_template_delete(request: Request, tid: int):
+    con = connect()
+    try:
+        con.execute("DELETE FROM mail_template WHERE id=?", (tid,))
+        con.commit()
         return {"ok": True}
     finally:
         con.close()

@@ -5373,6 +5373,7 @@ $("poMailBtn").onclick = () => {
     + `<hr style="margin:14px 0; border:none; border-top:1px solid #ccc;">` + buildPoDoc();
   POMAIL.files = [];
   renderPmFiles();
+  loadMailTemplates();   // 상용구 드롭다운 채우기
   $("pmHint").textContent = pa
     ? (pa.email ? "" : "이 거래처에 저장된 이메일이 없습니다 — 주소를 입력하면 거래처 정보에도 저장됩니다")
     : "등록되지 않은 거래처입니다 — 메일 주소를 직접 입력해주세요";
@@ -5531,6 +5532,94 @@ $("pmSend").onclick = async () => {
     loadPoHistory();
   } catch (err) { /* api()가 오류 토스트 표시 */ }
   finally { $("pmSend").disabled = false; $("pmSend").textContent = "📧 보내기"; }
+};
+
+/* ── 메일 상용구(템플릿) — 팀 공용. 작성 화면에서 삽입/저장, 내 설정에서 관리 ── */
+let MAIL_TMPL = [];
+async function loadMailTemplates() {
+  try { MAIL_TMPL = await api("/api/mailtemplates"); } catch (e) { MAIL_TMPL = []; }
+  const sel = $("pmTmpl");
+  if (sel) sel.innerHTML = '<option value="">📝 상용구 넣기…</option>'
+    + MAIL_TMPL.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join("");
+  renderTmplManage();
+}
+function renderTmplManage() {
+  const box = $("tmplList"); if (!box) return;
+  box.innerHTML = MAIL_TMPL.length ? MAIL_TMPL.map(t => `
+    <div style="display:flex; align-items:center; gap:8px; padding:6px 8px; border-bottom:1px solid var(--line-soft); font-size:12.5px;">
+      <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(t.name)}</span>
+      <button class="btn ghost sm" data-tmpldel="${t.id}" style="color:var(--crit)">삭제</button>
+    </div>`).join("")
+    : '<div class="auto" style="padding:8px; font-size:12px;">저장된 상용구가 없습니다 — 메일 작성 화면에서 [💾 현재 본문 저장]으로 추가하세요</div>';
+}
+$("tmplList").addEventListener("click", async e => {
+  const b = e.target.closest("[data-tmpldel]"); if (!b) return;
+  if (!confirm("이 상용구를 삭제할까요?")) return;
+  try { await api("/api/mailtemplates/" + b.dataset.tmpldel, { method: "DELETE" }); } catch (e2) { return; }
+  await loadMailTemplates();
+  toast("상용구를 삭제했습니다");
+});
+$("pmTmpl").addEventListener("change", e => {
+  const t = MAIL_TMPL.find(x => x.id === +e.target.value);
+  e.target.value = "";
+  if (!t) return;
+  $("pmMsg").focus();
+  document.execCommand("insertHTML", false, t.body || "");   // 커서 위치에 삽입
+});
+$("pmTmplSave").onclick = async () => {
+  const html = $("pmMsg").innerHTML.trim();
+  if (!html) return toast("저장할 본문이 없습니다");
+  const name = prompt("상용구 이름을 입력하세요 (예: 발주 인사말)");
+  if (!name || !name.trim()) return;
+  try {
+    await api("/api/mailtemplates", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: name.trim(), body: html }) });
+    await loadMailTemplates();
+    toast("📝 상용구로 저장했습니다 — 다음부터 [상용구 넣기]로 불러올 수 있습니다");
+  } catch (e) { /* api 토스트 */ }
+};
+
+/* ── 보낸 메일함 (내 설정 › 보낸 메일) ── */
+const SENT = { items: [], cur: null };
+async function loadSentMail() {
+  let d;
+  try { d = await api("/api/sentmail"); } catch (e) { return; }
+  SENT.items = d.items || [];
+  const isAdmin = ROLE === "admin";
+  $("sentList").innerHTML = SENT.items.length ? SENT.items.map(m => `
+    <div class="sentrow" data-sentid="${m.id}" style="padding:7px 10px; border-bottom:1px solid var(--line-soft); cursor:pointer; font-size:12.5px;">
+      <div style="display:flex; align-items:center; gap:6px;">
+        <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:700;">${esc(m.subject || "(제목 없음)")}</span>
+        ${m.status === "failed" ? '<span class="chip warn">실패</span>' : '<span class="chip" style="background:var(--ok-soft);color:var(--ok);">발송</span>'}
+      </div>
+      <div class="auto" style="font-size:11px; margin-top:2px;">→ ${esc(m.to_addr || "")}${m.attach_names ? " · 📎" + esc(m.attach_names) : ""}</div>
+      <div class="auto" style="font-size:10.5px;">${(m.at || "").slice(0, 16)}${isAdmin ? " · " + esc(m.username) : ""}${m.po_id ? " · 발주 #" + m.po_id : ""}</div>
+    </div>`).join("")
+    : '<div class="auto" style="padding:12px;">보낸 메일이 아직 없습니다</div>';
+}
+$("sentList").addEventListener("click", async e => {
+  const r = e.target.closest("[data-sentid]"); if (!r) return;
+  let m;
+  try { m = await api("/api/sentmail/" + r.dataset.sentid); } catch (e2) { return; }
+  SENT.cur = m;
+  $("sentViewMeta").innerHTML = `<b>제목</b> ${esc(m.subject || "(없음)")}<br>`
+    + `<b>받는사람</b> ${esc(m.to_addr || "")}${m.cc ? ` · <b>참조</b> ${esc(m.cc)}` : ""}<br>`
+    + `<b>보낸시각</b> ${(m.at || "").slice(0, 16)}${m.status === "failed" ? ` · <span style="color:var(--crit)">실패: ${esc(m.error || "")}</span>` : ""}`
+    + `${m.attach_names ? `<br><b>원본 첨부</b> 📎 ${esc(m.attach_names)} <span class="auto">(재발송에는 포함되지 않습니다)</span>` : ""}`;
+  $("sentViewBody").innerHTML = m.body_html || "<span class='auto'>본문 없음</span>";
+  $("sentViewOverlay").classList.add("on");
+});
+$("sentResend").onclick = async () => {
+  if (!SENT.cur) return;
+  if (!confirm(`이 메일을 같은 받는사람에게 다시 보낼까요?\n\n받는사람: ${SENT.cur.to_addr}\n제목: ${SENT.cur.subject}\n\n(원본 첨부는 포함되지 않습니다)`)) return;
+  $("sentResend").disabled = true; $("sentResend").textContent = "보내는 중…";
+  try {
+    await api("/api/sentmail/" + SENT.cur.id + "/resend", { method: "POST" });
+    toast("↪ 재발송했습니다");
+    $("sentViewOverlay").classList.remove("on");
+    loadSentMail();
+  } catch (e) { /* api 토스트 */ }
+  finally { $("sentResend").disabled = false; $("sentResend").textContent = "↪ 재발송"; }
 };
 async function doLkSearch() {
   const q = $("lkSearch").value.trim();
@@ -7017,12 +7106,12 @@ document.addEventListener("input", e => {
 });
 
 /* ── 모달 공통 닫기 ─────────────────── */
-["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "dispOverlay", "lotSplitOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay", "meOverlay", "poListOverlay", "poViewOverlay", "poRecvOverlay", "poCsvOverlay", "poSettleOverlay", "poBulkOverlay", "monthRepOverlay", "planOverlay"].forEach(id => {
+["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "dispOverlay", "lotSplitOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay", "meOverlay", "poListOverlay", "poViewOverlay", "poRecvOverlay", "poCsvOverlay", "poSettleOverlay", "poBulkOverlay", "monthRepOverlay", "planOverlay", "sentViewOverlay"].forEach(id => {
   $(id).addEventListener("click", e => { if (e.target.id === id) $(id).classList.remove("on"); });
 });
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") {
-    ["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay", "meOverlay", "poListOverlay", "poViewOverlay", "poRecvOverlay", "poCsvOverlay", "poSettleOverlay", "poBulkOverlay", "monthRepOverlay", "planOverlay"].forEach(id => $(id).classList.remove("on"));
+    ["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay", "meOverlay", "poListOverlay", "poViewOverlay", "poRecvOverlay", "poCsvOverlay", "poSettleOverlay", "poBulkOverlay", "monthRepOverlay", "planOverlay", "sentViewOverlay"].forEach(id => $(id).classList.remove("on"));
     hidePad();
   }
 });
@@ -7860,6 +7949,7 @@ function openMe(tab) {
   $("meWho").textContent = $("userLbl").textContent;   // 아이디 · 역할 · 담당 그대로 표시
   meTab(tab || "info");
   loadSmtp();
+  loadMailTemplates();   // 상용구 관리 목록
   renderSignPreview();
   $("meOverlay").classList.add("on");
 }
@@ -7867,6 +7957,7 @@ window.closeMe = () => $("meOverlay").classList.remove("on");
 function meTab(t) {
   document.querySelectorAll("#meTabs button").forEach(b => b.classList.toggle("on", b.dataset.metab === t));
   document.querySelectorAll("[id^='mePane_']").forEach(p => { p.style.display = p.id === "mePane_" + t ? "" : "none"; });
+  if (t === "sent") loadSentMail();   // 보낸 메일함은 탭 열 때 로드
 }
 $("meTabs").addEventListener("click", e => {
   const b = e.target.closest("button[data-metab]");

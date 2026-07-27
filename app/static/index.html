@@ -1522,6 +1522,14 @@
         <input id="pmCc" list="pmMailDl" placeholder="참조로 받을 주소 (없으면 비워두세요)" autocomplete="off"></div>
       <datalist id="pmMailDl"></datalist>
       <div class="fld full"><label>제목</label><input id="pmSubject"></div>
+      <div class="fld full"><label>상용구</label>
+        <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+          <select id="pmTmpl" class="mini-input" style="width:auto; min-width:160px;">
+            <option value="">📝 상용구 넣기…</option>
+          </select>
+          <button class="btn sm" id="pmTmplSave" type="button" title="지금 작성한 본문을 상용구로 저장합니다">💾 현재 본문 저장</button>
+          <span class="auto" style="font-size:11px;">관리(삭제)는 [내 설정 › 메일]에서</span>
+        </div></div>
       <div class="fld full"><label>메시지</label>
         <div id="pmToolbar">
           <select data-cmd="fontName" title="글꼴">
@@ -1564,6 +1572,19 @@
     <div class="modal-foot">
       <button class="btn" onclick="closePoMail()">취소</button>
       <button class="btn primary" id="pmSend">📧 보내기</button>
+    </div>
+  </div>
+</div>
+
+<!-- 보낸 메일 상세 (내 설정 › 보낸 메일) -->
+<div class="overlay" id="sentViewOverlay" style="z-index:62;">
+  <div class="modal" style="width:min(720px, 94vw);">
+    <h3>📤 보낸 메일</h3>
+    <p class="hint" id="sentViewMeta" style="margin:0 0 8px;"></p>
+    <div id="sentViewBody" style="max-height:56vh; overflow-y:auto; border:1px solid var(--line-soft); border-radius:10px; padding:14px; background:#fff;"></div>
+    <div class="modal-foot">
+      <button class="btn" onclick="document.getElementById('sentViewOverlay').classList.remove('on')">닫기</button>
+      <button class="btn primary" id="sentResend" title="같은 받는사람·제목·본문으로 다시 보냅니다 (원본 첨부 제외)">↪ 재발송</button>
     </div>
   </div>
 </div>
@@ -1823,6 +1844,7 @@
     <div class="tabs" id="meTabs" style="margin:0 0 12px;">
       <button class="on" data-metab="info">개인정보</button>
       <button data-metab="mail">📧 메일</button>
+      <button data-metab="sent">📤 보낸 메일</button>
       <button data-metab="sign">✍ 사인</button>
     </div>
     <div id="mePane_info">
@@ -1851,6 +1873,15 @@
         <button class="btn" id="smtpTest" title="내 주소로 테스트 메일을 보내 설정을 확인합니다">📨 테스트 발송</button>
         <span class="auto" id="smtpState" style="font-size:12px;"></span>
       </div>
+      <div style="margin-top:16px; border-top:1px solid #e2e4e9; padding-top:12px;">
+        <div style="font-size:12.5px; font-weight:800; color:var(--muted); margin:0 0 6px;">📝 메일 상용구 (팀 공용)</div>
+        <p class="hint" style="margin:0 0 8px;">자주 쓰는 본문을 저장해두면 메일 작성 화면에서 한 번에 넣을 수 있습니다.</p>
+        <div id="tmplList" style="max-height:180px; overflow-y:auto;"></div>
+      </div>
+    </div>
+    <div id="mePane_sent" style="display:none;">
+      <p class="hint" style="margin:0 0 8px;">내가 보낸 메일 이력입니다. 클릭하면 내용을 보고 <b>재발송</b>할 수 있습니다 (원본 첨부는 재발송에 포함되지 않습니다).</p>
+      <div id="sentList" style="max-height:340px; overflow-y:auto; border:1px solid var(--line-soft); border-radius:8px;"></div>
     </div>
     <div id="mePane_sign" style="display:none;">
       <p class="hint" style="margin:0 0 10px;">발주서 서명란에 들어가는 <b>내 사인</b>입니다. 사인 사진(종이에 쓴 것도 OK)을 올리면

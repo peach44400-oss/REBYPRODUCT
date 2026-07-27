@@ -224,6 +224,32 @@ CREATE TABLE IF NOT EXISTS user_setting (
   PRIMARY KEY(username, key)
 );
 
+-- 보낸 메일 이력 (발주서 등 모든 발송 기록 — 사용자별 보낸 메일함·재발송용)
+CREATE TABLE IF NOT EXISTS sent_mail (
+  id INTEGER PRIMARY KEY,
+  username TEXT NOT NULL,              -- 보낸 사람 (로그인 계정)
+  to_addr TEXT DEFAULT '',            -- 받는사람 (쉼표 구분)
+  cc TEXT DEFAULT '',                 -- 참조
+  subject TEXT DEFAULT '',
+  body_html TEXT DEFAULT '',          -- 본문 HTML (재발송·미리보기용)
+  attach_names TEXT DEFAULT '',       -- 첨부 파일명 (쉼표 구분 · 데이터는 저장 안 함)
+  po_id INTEGER DEFAULT 0,            -- 연결된 발주서 (있으면)
+  status TEXT DEFAULT 'sent',         -- sent(성공) / failed(실패)
+  error TEXT DEFAULT '',              -- 실패 사유
+  at TEXT DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_sentmail_user ON sent_mail(username, id);
+
+-- 메일 상용구(템플릿) — 자주 쓰는 본문을 저장해 한 번에 삽입 (팀 공용)
+CREATE TABLE IF NOT EXISTS mail_template (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  body TEXT DEFAULT '',               -- 본문 HTML
+  sort INTEGER DEFAULT 0,
+  created_by TEXT DEFAULT '',
+  at TEXT DEFAULT (datetime('now','localtime'))
+);
+
 -- 자재 사용처: 자재×제품×일 실측 사용량 (원료수불부 매트릭스)
 -- product_id NULL = 기타 사용 (생산과 무관한 자재 사용 — 테스트/청소/타용도)
 CREATE TABLE IF NOT EXISTS material_usage (
