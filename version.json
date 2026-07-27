@@ -1,5 +1,5 @@
 {
-  "version": "1.28.1",
+  "version": "1.28.2",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· 사이드바 하단 정리 — DB 상태 줄바꿈 표시, 버튼 2×2 배치 ([내 설정][✉ 메일 보내기] / [관리][로그아웃])"
+  "notes": "· 메일 작성 창은 배경을 클릭해도 닫히지 않게 수정 — 작성 중인 메일이 실수로 사라지지 않습니다 (닫기는 [취소] 버튼)"
 }

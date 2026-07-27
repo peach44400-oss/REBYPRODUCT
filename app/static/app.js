@@ -7154,8 +7154,9 @@ document.addEventListener("input", e => {
   }
 });
 
-/* ── 모달 공통 닫기 ─────────────────── */
-["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "dispOverlay", "lotSplitOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "poMailOverlay", "meOverlay", "poListOverlay", "poViewOverlay", "poRecvOverlay", "poCsvOverlay", "poSettleOverlay", "poBulkOverlay", "monthRepOverlay", "planOverlay", "sentViewOverlay"].forEach(id => {
+/* ── 모달 공통 닫기 ───────────────────
+   메일 작성(poMailOverlay)은 배경 클릭으로 닫지 않는다 — 작성 중인 메일이 실수로 사라지지 않게 (닫기는 [취소] 버튼으로) */
+["mstOverlay", "useOverlay", "stopOverlay", "anaOverlay", "dispOverlay", "lotSplitOverlay", "packSetOverlay", "staffDayOverlay", "poOverlay", "meOverlay", "poListOverlay", "poViewOverlay", "poRecvOverlay", "poCsvOverlay", "poSettleOverlay", "poBulkOverlay", "monthRepOverlay", "planOverlay", "sentViewOverlay"].forEach(id => {
   $(id).addEventListener("click", e => { if (e.target.id === id) $(id).classList.remove("on"); });
 });
 document.addEventListener("keydown", e => {
