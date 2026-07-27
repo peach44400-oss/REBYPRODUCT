@@ -40,7 +40,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.25.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.26.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -846,7 +846,7 @@ def _backfill_matin_po():
 
 
 def _expiry_alert_once():
-    """소비기한 임박(7일 이내)·만료 LOT을 채팅 시스템 메시지로 — 해당 LOT이 있을 때만 게시."""
+    """소비기한 임박(7일 이내)·만료 LOT + 안전재고 미달 자재를 채팅 시스템 메시지로 — 해당 건이 있을 때만."""
     con = connect()
     try:
         today = dt.date.today()
@@ -862,16 +862,33 @@ def _expiry_alert_once():
                     continue
                 if dleft <= 7:
                     found.append((dleft, p["name"], l["qty"], l["expiry"]))
-        if not found:
-            return
-        n_exp = sum(1 for f in found if f[0] < 0)
-        lines = [f"⏰ 소비기한 아침 알림 — 만료 {n_exp}건 · 임박(7일 이내) {len(found) - n_exp}건"]
-        for dleft, name, qty, exp in sorted(found)[:8]:
-            tag = f"D+{-dleft} 만료" if dleft < 0 else ("오늘 만료" if dleft == 0 else f"D-{dleft}")
-            lines.append(f"· {name} {tag} ({qty:g}개, 기한 {exp})")
-        if len(found) > 8:
-            lines.append(f"· 외 {len(found) - 8}건 — LOT 관리에서 확인")
-        chat_system("\n".join(lines))
+        if found:
+            n_exp = sum(1 for f in found if f[0] < 0)
+            lines = [f"⏰ 소비기한 아침 알림 — 만료 {n_exp}건 · 임박(7일 이내) {len(found) - n_exp}건"]
+            for dleft, name, qty, exp in sorted(found)[:8]:
+                tag = f"D+{-dleft} 만료" if dleft < 0 else ("오늘 만료" if dleft == 0 else f"D-{dleft}")
+                lines.append(f"· {name} {tag} ({qty:g}개, 기한 {exp})")
+            if len(found) > 8:
+                lines.append(f"· 외 {len(found) - 8}건 — LOT 관리에서 확인")
+            chat_system("\n".join(lines))
+        # 안전재고 미달 자재 (미발주분만) — lowstock와 동일 기준
+        low = rows(con.execute("""
+            SELECT m.name, m.unit, m.safety_stock safety, md.real_qty stock, md.order_qty, md.order_date
+            FROM material m
+            JOIN (SELECT material_id, real_qty, order_qty, order_date,
+                         ROW_NUMBER() OVER (PARTITION BY material_id ORDER BY date DESC) rn
+                  FROM material_daily) md ON md.material_id=m.id AND md.rn=1
+            WHERE m.status!='중단' AND m.safety_stock>0 AND md.real_qty < m.safety_stock
+            ORDER BY (md.real_qty - m.safety_stock)"""))
+        todo = [r for r in low if not ((r["order_qty"] or 0) > 0 or (r["order_date"] or ""))]
+        if todo:
+            lines = [f"📦 안전재고 미달 아침 알림 — {len(todo)}종 발주 필요"]
+            for r in todo[:8]:
+                short = round((r["safety"] or 0) - (r["stock"] or 0), 1)
+                lines.append(f"· {r['name']} 재고 {r['stock']:g}{r['unit'] or ''} (부족 {short:g})")
+            if len(todo) > 8:
+                lines.append(f"· 외 {len(todo) - 8}종 — 발주 관리에서 확인")
+            chat_system("\n".join(lines))
     finally:
         con.close()
 
@@ -1435,9 +1452,31 @@ def audit_list(request: Request, q: str = "", limit: int = 300):
 
 
 # ── 접속 인원(presence) + 사내 채팅 ──────────
-CHAT_MSG_COLS = "id, username, text, kind, mentions, file, fname, fkind, at"
+# 답장 대상(rt.*)까지 한 번에 — reply_to가 가리키는 원 메시지의 작성자·본문 미리보기
+CHAT_SEL = """SELECT c.id, c.username, c.text, c.kind, c.mentions, c.file, c.fname, c.fkind, c.at,
+  c.reply_to, c.pinned, c.edited, c.deleted,
+  rt.username r_user, rt.text r_text, rt.deleted r_deleted
+  FROM chat c LEFT JOIN chat rt ON rt.id=c.reply_to"""
+CHAT_REACT_EMOJIS = {"👍", "✅", "❤️", "😂", "👀", "🙏"}   # 확인·공감용 (자유 입력 금지 — 목록 통제)
 _PURGED = {"day": ""}      # 하루 1회만 보관주기 정리
+CHAT_VER = {"v": 0}        # 수정·삭제·반응·고정 등 '기존 메시지 변경'마다 +1 → 프론트가 그날 대화를 다시 그림
 DAY_SAVED_BY = {}          # 날짜 → 마지막 저장자 (동시 편집 알림 문구용 · 재시작 시 비어도 무방)
+
+
+def bump_chat():
+    CHAT_VER["v"] += 1
+
+
+def chat_extras(con, day):
+    """그날 메시지의 이모지 반응 맵과 고정(공지) 목록 — 프론트 렌더용.
+    reactions = {msg_id: {emoji: [사용자…]}}, pinned = 고정 메시지 목록(최신 먼저)."""
+    reactions = {}
+    for r in con.execute("""SELECT cr.msg_id, cr.emoji, cr.username FROM chat_reaction cr
+            JOIN chat c ON c.id=cr.msg_id WHERE c.day=?""", (day,)):
+        reactions.setdefault(r["msg_id"], {}).setdefault(r["emoji"], []).append(r["username"])
+    pinned = rows(con.execute(f"{CHAT_SEL} WHERE c.day=? AND c.pinned=1 AND c.deleted=0"
+                              " ORDER BY c.id DESC", (day,)))
+    return reactions, pinned
 
 
 def chat_usernames():
@@ -1504,7 +1543,7 @@ def presence(request: Request, after: int = 0, read: int = 0, edit: str = ""):
                                                     at=datetime('now','localtime')""", (me, read))
             con.commit()
         msgs = rows(con.execute(
-            f"SELECT {CHAT_MSG_COLS} FROM chat WHERE day=? AND id>? ORDER BY id LIMIT 200",
+            f"{CHAT_SEL} WHERE c.day=? AND c.id>? ORDER BY c.id LIMIT 200",
             (today, after)))
         last = con.execute("SELECT COALESCE(MAX(id),0) m FROM chat WHERE day=?",
                            (today,)).fetchone()["m"]
@@ -1515,12 +1554,14 @@ def presence(request: Request, after: int = 0, read: int = 0, edit: str = ""):
         mention = con.execute("""SELECT COUNT(*) c FROM chat
             WHERE day=? AND id>? AND username!=? AND mentions LIKE ?""",
             (today, myread, me, f"%,{me},%")).fetchone()["c"]
+        reactions, pinned = chat_extras(con, today)
     finally:
         con.close()
     return {"online": online, "count": len(online), "me": me, "messages": msgs,
             "last_id": last, "day": today, "reads": reads, "mention_unread": mention,
             "users": chat_usernames(), "mver": MASTERS_VER["v"],
-            "viewers": viewers, "day_ver": day_ver, "day_by": DAY_SAVED_BY.get(edit)}
+            "viewers": viewers, "day_ver": day_ver, "day_by": DAY_SAVED_BY.get(edit),
+            "chat_ver": CHAT_VER["v"], "reactions": reactions, "pinned": pinned}
 
 
 @app.get("/api/chat/day")
@@ -1530,13 +1571,15 @@ def chat_day(d: str = ""):
     con = chat_connect()
     try:
         msgs = rows(con.execute(
-            f"SELECT {CHAT_MSG_COLS} FROM chat WHERE day=? ORDER BY id LIMIT 500", (day,)))
+            f"{CHAT_SEL} WHERE c.day=? ORDER BY c.id LIMIT 500", (day,)))
         prev = con.execute("SELECT MAX(day) v FROM chat WHERE day<?", (day,)).fetchone()["v"]
         nxt = con.execute("SELECT MIN(day) v FROM chat WHERE day>?", (day,)).fetchone()["v"]
         reads = {r["username"]: r["last_id"] for r in con.execute(
             "SELECT username, last_id FROM chat_read")}
+        reactions, pinned = chat_extras(con, day)
         return {"day": day, "messages": msgs, "prev": prev, "next": nxt, "reads": reads,
-                "today": dt.date.today().isoformat(), "retention": CHAT_RETENTION_DAYS}
+                "today": dt.date.today().isoformat(), "retention": CHAT_RETENTION_DAYS,
+                "chat_ver": CHAT_VER["v"], "reactions": reactions, "pinned": pinned}
     finally:
         con.close()
 
@@ -1570,15 +1613,133 @@ def chat_send(request: Request, body: dict):
         stored = f"{today}_{seq}_{safe}"
         (CHAT_DIR / stored).write_bytes(raw)
         fname = orig
+    reply_to = int(body.get("reply_to") or 0)
     con = chat_connect()
     try:
+        if reply_to:   # 답장 대상이 실제로 존재하는 메시지인지 확인 (엉뚱한 id 방지)
+            if not con.execute("SELECT 1 FROM chat WHERE id=?", (reply_to,)).fetchone():
+                reply_to = 0
         cur = con.execute(
-            """INSERT INTO chat(day, username, text, mentions, file, fname, fkind)
-               VALUES(?,?,?,?,?,?,?)""",
+            """INSERT INTO chat(day, username, text, mentions, file, fname, fkind, reply_to)
+               VALUES(?,?,?,?,?,?,?,?)""",
             (dt.date.today().isoformat(), request.state.user["username"], text,
-             parse_mentions(text), stored, fname, fkind))
+             parse_mentions(text), stored, fname, fkind, reply_to))
         con.commit()
         return {"id": cur.lastrowid}
+    finally:
+        con.close()
+
+
+@app.post("/api/chat/{mid}/react")
+def chat_react(request: Request, mid: int, body: dict):
+    """이모지 반응 토글 — 있으면 제거, 없으면 추가 (작업 지시 확인 등)."""
+    emoji = (body.get("emoji") or "").strip()
+    if emoji not in CHAT_REACT_EMOJIS:
+        raise HTTPException(400, "허용되지 않은 이모지입니다")
+    me = request.state.user["username"]
+    con = chat_connect()
+    try:
+        if not con.execute("SELECT 1 FROM chat WHERE id=? AND deleted=0", (mid,)).fetchone():
+            raise HTTPException(404, "메시지가 없습니다")
+        ex = con.execute("SELECT 1 FROM chat_reaction WHERE msg_id=? AND username=? AND emoji=?",
+                         (mid, me, emoji)).fetchone()
+        if ex:
+            con.execute("DELETE FROM chat_reaction WHERE msg_id=? AND username=? AND emoji=?",
+                        (mid, me, emoji))
+        else:
+            con.execute("INSERT INTO chat_reaction(msg_id, username, emoji) VALUES(?,?,?)",
+                        (mid, me, emoji))
+        con.commit()
+        bump_chat()
+        return {"ok": True, "on": not ex}
+    finally:
+        con.close()
+
+
+@app.put("/api/chat/{mid}")
+def chat_edit(request: Request, mid: int, body: dict):
+    """내 메시지 본문 수정 (작성자 본인만). 첨부·시스템 메시지·삭제된 메시지는 수정 불가."""
+    me = request.state.user["username"]
+    text = (body.get("text") or "").strip()[:1000]
+    if not text:
+        raise HTTPException(400, "메시지를 입력하세요")
+    con = chat_connect()
+    try:
+        m = con.execute("SELECT username, kind, deleted FROM chat WHERE id=?", (mid,)).fetchone()
+        if not m:
+            raise HTTPException(404, "메시지가 없습니다")
+        if m["username"] != me or m["kind"] != "user" or m["deleted"]:
+            raise HTTPException(403, "본인이 보낸 메시지만 수정할 수 있습니다")
+        con.execute("UPDATE chat SET text=?, mentions=?, edited=1 WHERE id=?",
+                    (text, parse_mentions(text), mid))
+        con.commit()
+        bump_chat()
+        return {"ok": True}
+    finally:
+        con.close()
+
+
+@app.delete("/api/chat/{mid}")
+def chat_delete(request: Request, mid: int):
+    """메시지 삭제 — 본인 또는 관리자. 자리는 '삭제된 메시지'로 남기고 본문·첨부만 지운다."""
+    user = request.state.user
+    me = user["username"]
+    con = chat_connect()
+    try:
+        m = con.execute("SELECT username, kind, file, deleted FROM chat WHERE id=?", (mid,)).fetchone()
+        if not m:
+            raise HTTPException(404, "메시지가 없습니다")
+        if m["deleted"]:
+            return {"ok": True}
+        if m["username"] != me and user["role"] != "admin":
+            raise HTTPException(403, "본인이 보낸 메시지만 삭제할 수 있습니다 (관리자는 모두 가능)")
+        if m["file"]:
+            try:
+                (CHAT_DIR / m["file"]).unlink(missing_ok=True)
+            except OSError:
+                pass
+        con.execute("UPDATE chat SET deleted=1, text='', file='', fname='', fkind='', pinned=0 WHERE id=?",
+                    (mid,))
+        con.execute("DELETE FROM chat_reaction WHERE msg_id=?", (mid,))
+        con.commit()
+        bump_chat()
+        return {"ok": True}
+    finally:
+        con.close()
+
+
+@app.post("/api/chat/{mid}/pin")
+def chat_pin(request: Request, mid: int, body: dict):
+    """공지 고정/해제 — 로그인 사용자(게스트 제외, 미들웨어가 차단). 상단 배너로 표시된다."""
+    pin = 1 if body.get("pin") else 0
+    con = chat_connect()
+    try:
+        m = con.execute("SELECT kind, deleted FROM chat WHERE id=?", (mid,)).fetchone()
+        if not m or m["deleted"]:
+            raise HTTPException(404, "메시지가 없습니다")
+        con.execute("UPDATE chat SET pinned=? WHERE id=?", (pin, mid))
+        con.commit()
+        bump_chat()
+        return {"ok": True, "pinned": bool(pin)}
+    finally:
+        con.close()
+
+
+@app.get("/api/chat/search")
+def chat_search(request: Request, q: str = "", limit: int = 40):
+    """전체 기간 대화 검색 — 본문 부분일치(삭제분 제외), 최신 먼저."""
+    q = (q or "").strip()
+    if len(q) < 1:
+        return {"results": []}
+    con = chat_connect()
+    try:
+        res = rows(con.execute(
+            f"{CHAT_SEL} WHERE c.deleted=0 AND c.kind='user' AND c.text LIKE ? ESCAPE '\\'"
+            " ORDER BY c.id DESC LIMIT ?",
+            ("%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%", max(1, min(limit, 100)))))
+        for r in res:
+            r["day"] = con.execute("SELECT day FROM chat WHERE id=?", (r["id"],)).fetchone()["day"]
+        return {"results": res, "q": q}
     finally:
         con.close()
 
@@ -1969,6 +2130,8 @@ def po_receive(request: Request, po_id: int, body: dict):
                     (json.dumps(items, ensure_ascii=False), request.state.user.get("username", ""), po_id))
         audit(con, "receive_po", f"발주서 #{po_id} 입고 처리 → {rdate} · {len(recvs)}품목 (재고 자동 반영)")
         con.commit()
+        chat_system(f"📥 발주 #{po_id} 입고 완료" + (f" — {pname}" if pname else "")
+                    + f" ({len(recvs)}품목, 재고 자동 반영)")
         return {"ok": True, "date": rdate}
     finally:
         con.close()
@@ -2266,12 +2429,20 @@ def po_send(request: Request, body: dict):
         send_mail(con, username, to, subject, html, body.get("attachments") or [],
                   sender_label_of(con, username), cc=cc)
         po_id = body.get("po_id")
+        po_partner = ""
         if po_id:
             con.execute("UPDATE purchase_order SET sent_at=datetime('now','localtime'), sent_to=? WHERE id=?",
                         (", ".join(to + cc), po_id))
+            pr = con.execute("""SELECT COALESCE(pa.name, NULLIF(po.partner_name,''), '') nm
+                FROM purchase_order po LEFT JOIN partner pa ON pa.id=po.partner_id
+                WHERE po.id=?""", (po_id,)).fetchone()
+            po_partner = pr["nm"] if pr else ""
         audit(con, "send_po", f"발주서{'#' + str(po_id) if po_id else ''} 메일 발송 → {', '.join(to)}"
               + (f" (참조 {', '.join(cc)})" if cc else ""))
         con.commit()
+        if po_id:
+            chat_system(f"📤 발주서 #{po_id} 메일 발송" + (f" — {po_partner}" if po_partner else "")
+                        + f" (받는사람 {', '.join(to)})")
         return {"ok": True}
     finally:
         con.close()

@@ -414,6 +414,10 @@ CREATE TABLE IF NOT EXISTS chat (
   file TEXT DEFAULT '',                -- 첨부 저장 파일명 (ChatFile/)
   fname TEXT DEFAULT '',               -- 첨부 원본 파일명 (표시·다운로드용)
   fkind TEXT DEFAULT '',               -- image(인라인 표시) / file(다운로드 링크)
+  reply_to INTEGER DEFAULT 0,          -- 답장 대상 메시지 id (0=일반)
+  pinned INTEGER DEFAULT 0,            -- 공지 고정 (1=상단 고정)
+  edited INTEGER DEFAULT 0,            -- 수정됨 표시
+  deleted INTEGER DEFAULT 0,           -- 삭제됨 (본문·첨부는 비우고 자리만 남김)
   at TEXT DEFAULT (datetime('now','localtime'))
 );
 CREATE INDEX IF NOT EXISTS idx_chat_day ON chat(day, id);
@@ -424,6 +428,16 @@ CREATE TABLE IF NOT EXISTS chat_read (
   last_id INTEGER NOT NULL DEFAULT 0,
   at TEXT DEFAULT (datetime('now','localtime'))
 );
+
+-- 이모지 반응 (작업 지시 확인 등) — 메시지×사용자×이모지 조합
+CREATE TABLE IF NOT EXISTS chat_reaction (
+  msg_id INTEGER NOT NULL,
+  username TEXT NOT NULL,
+  emoji TEXT NOT NULL,
+  at TEXT DEFAULT (datetime('now','localtime')),
+  PRIMARY KEY(msg_id, username, emoji)
+);
+CREATE INDEX IF NOT EXISTS idx_chat_reaction_msg ON chat_reaction(msg_id);
 """
 
 
@@ -470,7 +484,9 @@ def init_chat_db() -> None:
         con.execute("CREATE INDEX IF NOT EXISTS idx_chat_day ON chat(day, id)")
     for col, ddl in (("kind", "TEXT NOT NULL DEFAULT 'user'"), ("mentions", "TEXT DEFAULT ''"),
                      ("file", "TEXT DEFAULT ''"), ("fname", "TEXT DEFAULT ''"),
-                     ("fkind", "TEXT DEFAULT ''")):
+                     ("fkind", "TEXT DEFAULT ''"),
+                     ("reply_to", "INTEGER DEFAULT 0"), ("pinned", "INTEGER DEFAULT 0"),
+                     ("edited", "INTEGER DEFAULT 0"), ("deleted", "INTEGER DEFAULT 0")):
         if col not in cols:
             con.execute(f"ALTER TABLE chat ADD COLUMN {col} {ddl}")
     con.commit()

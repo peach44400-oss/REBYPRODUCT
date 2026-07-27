@@ -418,6 +418,44 @@
   #chatBadge.ment{background:#F59E0B;}
   #chatInputRow{display:flex; gap:6px; padding:8px 10px; border-top:1px solid var(--line);}
   #chatInput{flex:1; min-width:0; border:1px solid var(--line); border-radius:10px; padding:7px 10px; font:inherit; font-size:12.5px; background:var(--surface); color:var(--ink);}
+  /* 메시지 안 답장 인용 */
+  .creply{font-size:10.5px; border-left:3px solid var(--accent, #6366F1); padding:2px 6px; margin-bottom:3px;
+    background:rgba(99,102,241,.08); border-radius:0 6px 6px 0; color:var(--muted); cursor:pointer;}
+  .creply b{color:var(--ink);}
+  .cdel{font-style:italic; color:var(--muted); opacity:.8;}
+  .cedited{font-size:9.5px; color:var(--muted); margin-left:3px;}
+  /* 이모지 반응 칩 */
+  .creacts{display:flex; flex-wrap:wrap; gap:3px; margin-top:4px;}
+  .creact{font-size:11px; border:1px solid var(--line); background:var(--surface); border-radius:11px;
+    padding:0 6px; cursor:pointer; line-height:1.7; user-select:none;}
+  .creact.on{background:#E0E7FF; border-color:#A5B4FC; color:#3730A3; font-weight:700;}
+  .cpickrow{display:none; gap:2px; margin-top:4px;}
+  .cpickrow.on{display:flex;}
+  .cpickrow button{font-size:14px; border:1px solid var(--line); background:var(--surface); border-radius:8px; cursor:pointer; padding:1px 5px;}
+  .cpickrow button:hover{background:var(--bg);}
+  /* 메시지 hover 액션 툴바 */
+  .cmsg{position:relative;}
+  .cacts{position:absolute; top:-10px; display:none; gap:1px; background:var(--surface);
+    border:1px solid var(--line); border-radius:8px; box-shadow:0 2px 8px rgba(0,0,0,.12); padding:1px;}
+  .cmsg.them .cacts{right:4px;} .cmsg.me .cacts{left:4px;}
+  .cmsg:hover .cacts{display:flex;}
+  .cacts button{border:0; background:none; cursor:pointer; font-size:13px; padding:2px 4px; border-radius:6px; line-height:1;}
+  .cacts button:hover{background:var(--bg);}
+  /* 공지 고정 배너 */
+  #chatPinned{display:none; flex-direction:column; gap:3px; padding:6px 10px; border-bottom:1px solid var(--line);
+    background:#FFFBEB; max-height:110px; overflow-y:auto;}
+  #chatPinned.on{display:flex;}
+  .cpin{display:flex; align-items:flex-start; gap:5px; font-size:11px; color:#854D0E;}
+  .cpin .cpx{flex:1; word-break:break-word;}
+  .cpin button{border:0; background:none; cursor:pointer; color:#B45309; font-size:11px; padding:0 2px;}
+  .cpin .cpgo{cursor:pointer;}
+  /* 검색 */
+  #chatSearchRow{display:none; gap:6px; padding:6px 10px; border-bottom:1px solid var(--line); background:var(--bg);}
+  #chatSearchRow.on{display:flex;}
+  #chatSearchInp{flex:1; min-width:0; border:1px solid var(--line); border-radius:8px; padding:5px 8px; font:inherit; font-size:12px;}
+  .csr{padding:6px 8px; border-bottom:1px solid var(--line-soft); cursor:pointer; font-size:11.5px;}
+  .csr:hover{background:var(--bg);} .csr .csrmeta{font-size:10px; color:var(--muted);}
+  #chatHead .chbtn{border:1px solid var(--line); background:#fff; border-radius:7px; cursor:pointer; font-size:12px; padding:2px 6px; color:var(--ink);}
   .lot-scroll{max-height:62vh; overflow-y:auto;}
   .lot-scroll thead th{position:sticky; top:0; background:var(--surface); z-index:2;
     box-shadow:0 1px 0 var(--line);}
@@ -1853,7 +1891,12 @@
     <div id="chatHead">
       <b>사내 채팅</b>
       <span id="chatOnline" class="hint"></span>
+      <button id="chatSearchBtn" class="chbtn" title="대화 검색">🔍</button>
       <button id="chatClose" title="닫기">✕</button>
+    </div>
+    <div id="chatSearchRow">
+      <input id="chatSearchInp" placeholder="대화 검색… (Enter)" autocomplete="off">
+      <button id="chatSearchX" class="chbtn" title="검색 닫기">✕</button>
     </div>
     <div id="chatDayNav">
       <button id="chatPrev" title="이전 대화">◀</button>
@@ -1861,8 +1904,13 @@
       <button id="chatNext" title="다음 대화">▶</button>
       <button id="chatToday" title="오늘 대화로">오늘</button>
     </div>
+    <div id="chatPinned"></div>
     <div id="chatMsgs"></div>
     <div id="chatMentions"></div>
+    <div id="chatReplyRow" style="display:none; align-items:center; gap:6px; padding:5px 10px; border-top:1px solid var(--line); background:var(--accent-soft, #EEF2FF); font-size:11.5px;">
+      <span id="chatReplyLbl" style="flex:1; word-break:break-all;"></span>
+      <button id="chatReplyDel" title="취소" style="border:0; background:transparent; cursor:pointer; color:var(--muted);">✕</button>
+    </div>
     <div id="chatFileRow"><span id="chatFileName"></span><button id="chatFileDel" title="첨부 취소">✕</button></div>
     <div id="chatInputRow">
       <button id="chatAttach" title="사진·파일 첨부 (8MB 이하)">📎</button>

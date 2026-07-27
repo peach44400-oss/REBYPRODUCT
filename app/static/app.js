@@ -7364,7 +7364,38 @@ async function startApp(me) {
 /* ── 접속 인원 + 채팅 ───────────────────── */
 const CHAT = { lastId: 0, open: false, unread: 0, started: false, day: null,
   viewDay: null,      // null = 오늘 대화(실시간), 날짜 문자열 = 지난 대화 보기(읽기 전용)
-  me: "", users: [], reads: {}, mentionUnread: 0, pending: null, mentList: [], mentIdx: -1 };
+  me: "", users: [], reads: {}, mentionUnread: 0, pending: null, mentList: [], mentIdx: -1,
+  ver: null, replyTo: null, editId: null, pinned: [], searchMode: false };
+const CHAT_TITLE0 = document.title;   // 탭 배지용 원래 제목
+let _chatActx = null;                 // 알림 소리 (WebAudio — 첫 사용자 조작 후 활성)
+function chatBeep() {
+  try {
+    if (!_chatActx) _chatActx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = _chatActx.createOscillator(), g = _chatActx.createGain();
+    o.connect(g); g.connect(_chatActx.destination); o.type = "sine"; o.frequency.value = 660;
+    const n = _chatActx.currentTime;
+    g.gain.setValueAtTime(0.001, n); g.gain.exponentialRampToValueAtTime(0.15, n + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.001, n + 0.25); o.start(); o.stop(n + 0.26);
+  } catch (e) { /* 오디오 차단 시 무시 */ }
+}
+// 데스크톱 알림 — 채팅이 닫혀 있거나 다른 탭을 보고 있을 때만
+function chatNotify(msgs) {
+  const hidden = document.hidden || !CHAT.open;
+  const others = (msgs || []).filter(m => m.username !== CHAT.me && m.kind !== "system" && !m.deleted);
+  if (!others.length || !hidden) return;
+  chatBeep();
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  const m = others[others.length - 1];
+  const mine = (m.mentions || "").includes("," + CHAT.me + ",");
+  try {
+    const n = new Notification(mine ? `📢 ${m.username}님이 호출했습니다` : `💬 ${m.username}`,
+      { body: (m.text || "(첨부)").slice(0, 90), tag: "reby-chat", renotify: true });
+    n.onclick = () => { window.focus(); if (!CHAT.open) toggleChat(); n.close(); };
+  } catch (e) { /* 무시 */ }
+}
+function updateTabTitle() {
+  document.title = (CHAT.unread > 0 ? `(${CHAT.unread > 99 ? "99+" : CHAT.unread}${CHAT.mentionUnread > 0 ? "❗" : ""}) ` : "") + CHAT_TITLE0;
+}
 function startPresence() {
   if (CHAT.started) return;
   CHAT.started = true;
@@ -7384,15 +7415,151 @@ function startPresence() {
   $("chatAttach").onclick = () => $("chatFile").click();
   $("chatFile").addEventListener("change", chatPickFile);
   $("chatFileDel").onclick = () => { CHAT.pending = null; $("chatFileRow").classList.remove("on"); };
+  $("chatReplyDel").onclick = chatClearReply;
+  // 메시지 액션 (반응·답장·수정·삭제·고정·인용 이동) — 이벤트 위임
+  $("chatMsgs").addEventListener("click", chatMsgClick);
+  $("chatPinned").addEventListener("click", chatPinnedClick);
+  // 검색
+  $("chatSearchBtn").onclick = () => {
+    const on = $("chatSearchRow").classList.toggle("on");
+    if (on) { $("chatSearchInp").focus(); } else chatSearchClose();
+  };
+  $("chatSearchX").onclick = chatSearchClose;
+  $("chatSearchInp").addEventListener("keydown", e => {
+    if (e.key === "Enter") chatDoSearch();
+    if (e.key === "Escape") chatSearchClose();
+  });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && CHAT.open) { CHAT.unread = 0; renderChatBadge(); } });
   pollPresence();
   setInterval(pollPresence, 8000);
 }
+async function chatReloadToday() {
+  const el = $("chatMsgs");
+  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+  const r = await api("/api/chat/day?d=" + encodeURIComponent(CHAT.day || todayISO()));
+  el.innerHTML = chatDayHeader(r.day) + r.messages.map(m => chatMsgHtml(m, CHAT.me)).join("");
+  CHAT.lastId = r.messages.length ? r.messages[r.messages.length - 1].id : CHAT.lastId;
+  applyReactions(r.reactions); renderPinned(r.pinned);
+  refreshReadMarks(CHAT.me, r.reads);
+  if (atBottom) el.scrollTop = el.scrollHeight;
+}
+/* 메시지 액션 클릭 처리 */
+function chatMsgClick(e) {
+  const go = e.target.closest("[data-cgo]");
+  if (go) { chatScrollTo(+go.dataset.cgo); return; }
+  const sr = e.target.closest("[data-csrday]");
+  if (sr) { chatOpenSearchHit(sr.dataset.csrday, +sr.dataset.csrid); return; }
+  if (ROLE === "guest") return;   // 게스트 = 읽기 전용
+  if (CHAT.viewDay) {   // 지난 대화 = 읽기 전용 (반응/수정 등 불가)
+    const re0 = e.target.closest("[data-remoji]");
+    if (re0) toast("지난 대화에는 반응할 수 없습니다 — [오늘]에서 이용하세요");
+    return;
+  }
+  const re = e.target.closest("[data-remoji]");
+  if (re) { const host = re.closest("[data-mid]"); chatReact(+host.dataset.mid, re.dataset.remoji); return; }
+  const pk = e.target.closest("[data-cpick]");
+  if (pk) { pk.closest("[data-mid]").querySelector(".cpickrow").classList.toggle("on"); return; }
+  const rp = e.target.closest("[data-creply]");
+  if (rp) { chatSetReply(+rp.dataset.creply); return; }
+  const ed = e.target.closest("[data-cedit]");
+  if (ed) { chatStartEdit(+ed.dataset.cedit); return; }
+  const dl = e.target.closest("[data-cdel]");
+  if (dl) { chatDelete(+dl.dataset.cdel); return; }
+  const pn = e.target.closest("[data-cpin]");
+  if (pn) { chatPin(+pn.dataset.cpin, pn.dataset.pinned !== "1"); return; }
+}
+function chatPinnedClick(e) {
+  const go = e.target.closest("[data-cpingo]");
+  if (go) { chatScrollTo(+go.dataset.cpingo); return; }
+  const un = e.target.closest("[data-cunpin]");
+  if (un) { chatPin(+un.dataset.cunpin, false); return; }
+}
+function chatScrollTo(mid) {
+  const el = $("chatMsgs").querySelector(`[data-mid="${mid}"]`);
+  if (!el) { toast("그 메시지는 이 대화에 없습니다"); return; }
+  el.scrollIntoView({ block: "center" });
+  el.style.transition = "background .3s"; const o = el.style.background;
+  el.style.background = "#FEF08A"; setTimeout(() => { el.style.background = o; }, 700);
+}
+async function chatReact(mid, emoji) {
+  try {
+    await api(`/api/chat/${mid}/react`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ emoji }) });
+  } catch (e) { return; }
+  pollPresence();
+}
+function chatSetReply(mid) {
+  const el = $("chatMsgs").querySelector(`[data-mid="${mid}"]`); if (!el) return;
+  CHAT.editId = null;
+  CHAT.replyTo = { id: mid, user: el.dataset.user || "", text: decodeURIComponent(el.dataset.text || "") };
+  $("chatReplyLbl").innerHTML = `↩ <b>${esc(CHAT.replyTo.user)}</b>에게 답장: ${esc(CHAT.replyTo.text.slice(0, 40))}`;
+  $("chatReplyRow").style.display = "flex";
+  $("chatInput").focus();
+}
+function chatStartEdit(mid) {
+  const el = $("chatMsgs").querySelector(`[data-mid="${mid}"]`); if (!el) return;
+  CHAT.replyTo = null; CHAT.editId = mid;
+  $("chatInput").value = decodeURIComponent(el.dataset.text || "");
+  $("chatReplyLbl").innerHTML = "✏ 메시지 수정 중 — Enter로 저장, ✕로 취소";
+  $("chatReplyRow").style.display = "flex";
+  $("chatInput").focus();
+}
+function chatClearReply() {
+  CHAT.replyTo = null; CHAT.editId = null;
+  $("chatReplyRow").style.display = "none";
+  if ($("chatInput")) { /* 수정 취소 시 입력창은 비운다 */ if (document.activeElement === $("chatInput")) $("chatInput").value = ""; }
+}
+async function chatDelete(mid) {
+  if (!confirm("이 메시지를 삭제할까요?")) return;
+  try { await api(`/api/chat/${mid}`, { method: "DELETE" }); } catch (e) { return; }
+  pollPresence();
+}
+async function chatPin(mid, on) {
+  try {
+    await api(`/api/chat/${mid}/pin`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pin: on }) });
+  } catch (e) { return; }
+  pollPresence();
+}
+/* 검색 */
+async function chatDoSearch() {
+  const q = $("chatSearchInp").value.trim();
+  if (!q) return;
+  let r;
+  try { r = await api("/api/chat/search?q=" + encodeURIComponent(q)); } catch (e) { return; }
+  CHAT.searchMode = true;
+  const hi = (s) => esc(s).replace(new RegExp("(" + q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "gi"), '<mark>$1</mark>');
+  $("chatMsgs").innerHTML = `<div class="cday">🔍 "${esc(q)}" 검색 — ${r.results.length}건</div>` +
+    (r.results.map(m => `<div class="csr" data-csrday="${m.day}" data-csrid="${m.id}">
+      <div>${hi((m.text || "").slice(0, 120))}</div>
+      <div class="csrmeta">${esc(m.username)} · ${m.day} ${(m.at || "").slice(11, 16)}</div></div>`).join("")
+      || '<div class="cday">검색 결과가 없습니다</div>');
+}
+function chatSearchClose() {
+  $("chatSearchRow").classList.remove("on"); $("chatSearchInp").value = "";
+  CHAT.searchMode = false;
+  if (CHAT.viewDay) chatOpenDay(CHAT.viewDay); else chatGoToday();
+}
+async function chatOpenSearchHit(day, mid) {
+  chatSearchClose();
+  if (day === (CHAT.day || todayISO())) { await chatGoToday(); }
+  else { await chatOpenDay(day); }
+  setTimeout(() => chatScrollTo(mid), 150);
+}
 const chatDayHeader = d => `<div class="cday">— ${d} (${dowOf(d)}) —</div>`;
-// 메시지 한 건 → HTML (시스템 / 멘션 / 첨부 / 읽음 표시)
+const REACT_EMOJIS = ["👍", "✅", "❤️", "😂", "👀", "🙏"];
+// 메시지 한 건 → HTML (시스템 / 멘션 / 첨부 / 읽음 / 답장 / 반응 / 고정 / 수정·삭제)
 function chatMsgHtml(m, me) {
   const t = (m.at || "").slice(11, 16);
-  if (m.kind === "system")
-    return `<div class="csys">${esc(m.text)}<span class="cat">${t}</span></div>`;
+  const past = !!CHAT.viewDay || ROLE === "guest";   // 지난 대화·게스트 = 읽기 전용 (액션 툴바 숨김)
+  const canPin = ROLE !== "guest";
+  if (m.deleted)
+    return `<div class="cmsg them" data-mid="${m.id}"><span class="cdel">🚫 삭제된 메시지</span><span class="cat">${t}</span></div>`;
+  if (m.kind === "system") {
+    const pin = (canPin && !past)
+      ? `<div class="cacts"><button data-cpin="${m.id}" data-pinned="${m.pinned ? 1 : 0}" title="${m.pinned ? "고정 해제" : "공지 고정"}">${m.pinned ? "📌" : "📍"}</button></div>` : "";
+    return `<div class="cmsg" data-mid="${m.id}" data-sys="1" style="align-self:center; max-width:92%; background:none; border:0; padding:0;">
+      ${pin}<div class="csys">${esc(m.text).replace(/\n/g, "<br>")}<span class="cat">${t}</span></div>
+      <div class="creacts" data-racts></div></div>`;
+  }
   const mine = m.username === me;
   const mentioned = !mine && (m.mentions || "").includes("," + me + ",");
   let body = esc(m.text);
@@ -7410,9 +7577,46 @@ function chatMsgHtml(m, me) {
       ? `<a href="${url}" target="_blank"><img class="cimg" src="${url}" alt="${esc(m.fname)}"></a>`
       : `<a class="cfile" href="${url}" download="${esc(m.fname)}">📎 ${esc(m.fname)}</a>`;
   }
-  return `<div class="cmsg ${mine ? "me" : "them"}${mentioned ? " mentioned" : ""}" data-mid="${m.id}">
-    ${mine ? "" : `<div class="cwho">${esc(m.username)}</div>`}${body}${att}
-    <span class="cat">${mine ? `<span class="cread" data-cread="${m.id}"></span>` : ""}${t}</span></div>`;
+  const reply = m.reply_to
+    ? `<div class="creply" data-cgo="${m.reply_to}">↩ <b>${esc(m.r_user || "")}</b> ${m.r_deleted ? "(삭제된 메시지)" : esc((m.r_text || "").slice(0, 50))}</div>` : "";
+  const acts = past ? "" : `<div class="cacts">
+    <button data-cpick="${m.id}" title="반응">😊</button>
+    <button data-creply="${m.id}" title="답장">↩</button>
+    ${mine ? `<button data-cedit="${m.id}" title="수정">✏</button>` : ""}
+    ${(mine || ROLE === "admin") ? `<button data-cdel="${m.id}" title="삭제">🗑</button>` : ""}
+    ${canPin ? `<button data-cpin="${m.id}" data-pinned="${m.pinned ? 1 : 0}" title="${m.pinned ? "고정 해제" : "공지 고정"}">${m.pinned ? "📌" : "📍"}</button>` : ""}
+  </div>`;
+  const pickrow = past ? "" : `<div class="cpickrow">${REACT_EMOJIS.map(e =>
+    `<button class="creact" data-remoji="${e}">${e}</button>`).join("")}</div>`;
+  return `<div class="cmsg ${mine ? "me" : "them"}${mentioned ? " mentioned" : ""}" data-mid="${m.id}"
+      data-user="${esc(m.username)}" data-text="${encodeURIComponent(m.text || "")}">
+    ${acts}${reply}${mine ? "" : `<div class="cwho">${esc(m.username)}</div>`}${body}${att}
+    ${pickrow}<div class="creacts" data-racts></div>
+    <span class="cat">${mine ? `<span class="cread" data-cread="${m.id}"></span>` : ""}${t}${m.edited ? '<span class="cedited">(수정됨)</span>' : ""}</span></div>`;
+}
+// 이모지 반응 칩 채우기 — 폴링/재로드마다 최신 반응 맵으로 갱신
+function applyReactions(map) {
+  map = map || {};
+  document.querySelectorAll("#chatMsgs [data-racts]").forEach(el => {
+    const host = el.closest("[data-mid]"); if (!host) return;
+    const r = map[+host.dataset.mid];
+    el.innerHTML = r ? Object.entries(r).map(([emo, users]) =>
+      `<button class="creact${users.includes(CHAT.me) ? " on" : ""}" data-remoji="${emo}"
+        title="${users.map(esc).join(", ")}">${emo} ${users.length}</button>`).join("") : "";
+  });
+}
+// 공지 고정 배너 (상단)
+function renderPinned(list) {
+  CHAT.pinned = list || [];
+  const box = $("chatPinned");
+  if (!CHAT.pinned.length) { box.classList.remove("on"); box.innerHTML = ""; return; }
+  box.classList.add("on");
+  box.innerHTML = CHAT.pinned.map(m => {
+    const txt = m.deleted ? "(삭제됨)" : (m.text || "(첨부)");
+    return `<div class="cpin"><span>📌</span>
+      <span class="cpx cpgo" data-cpingo="${m.id}"><b>${esc(m.username)}</b> ${esc(txt.slice(0, 90))}${txt.length > 90 ? "…" : ""}</span>
+      ${ROLE !== "guest" ? `<button data-cunpin="${m.id}" title="고정 해제">✕</button>` : ""}</div>`;
+  }).join("");
 }
 // 내 메시지의 '읽음 N' — 나 말고 그 메시지 id까지 읽은 사람 수
 function refreshReadMarks(me, reads) {
@@ -7445,9 +7649,11 @@ async function chatStep(dir) {
 async function chatOpenDay(d) {
   const r = await api("/api/chat/day?d=" + encodeURIComponent(d));
   if (r.day === r.today) { await chatGoToday(); return; }
+  chatClearReply();
   CHAT.viewDay = r.day;
   $("chatMsgs").innerHTML = chatDayHeader(r.day) +
     (r.messages.map(m => chatMsgHtml(m, CHAT.me)).join("") || '<div class="cday">대화 없음</div>');
+  applyReactions(r.reactions); renderPinned(r.pinned);
   refreshReadMarks(CHAT.me, r.reads);
   renderChatNav();
   $("chatMsgs").scrollTop = $("chatMsgs").scrollHeight;
@@ -7487,6 +7693,7 @@ function chatInputKey(e) {
   }
   if (open && (e.key === "Enter" || e.key === "Tab")) { e.preventDefault(); chatMentionPick(CHAT.mentList[CHAT.mentIdx]); return; }
   if (open && e.key === "Escape") { $("chatMentions").classList.remove("on"); CHAT.mentList = []; return; }
+  if (e.key === "Escape" && (CHAT.editId || CHAT.replyTo)) { chatClearReply(); return; }
   if (e.key === "Enter") chatSend();
 }
 /* 첨부 */
@@ -7506,6 +7713,11 @@ function toggleChat() {
   if (CHAT.open) {
     CHAT.unread = 0; CHAT.mentionUnread = 0; renderChatBadge();
     renderChatNav();
+    // 첫 열림에 데스크톱 알림 권한 요청 + 소리(오디오컨텍스트) 활성 (사용자 조작 필요)
+    if ("Notification" in window && Notification.permission === "default") {
+      try { Notification.requestPermission(); } catch (e) { }
+    }
+    try { if (_chatActx && _chatActx.state === "suspended") _chatActx.resume(); } catch (e) { }
     pollPresence();     // 열자마자 '읽음'을 기록해 상대에게 읽음 표시가 뜨게
     setTimeout(() => { $("chatMsgs").scrollTop = $("chatMsgs").scrollHeight; $("chatInput").focus(); }, 30);
   }
@@ -7517,13 +7729,15 @@ function renderChatBadge() {
   b.classList.toggle("on", CHAT.unread > 0 || ment);
   b.classList.toggle("ment", ment);           // 나를 부른 메시지가 있으면 주황
   $("chatToggle").title = ment ? "나를 호출한 메시지가 있습니다" : "";
+  updateTabTitle();                           // 탭 제목에 미읽음 개수 배지
 }
 async function pollPresence() {
   try {
     const past = !!CHAT.viewDay;      // 지난 대화 보기 중엔 오늘 메시지를 화면에 그리지 않는다
+    const busy = past || CHAT.searchMode;   // 지난 대화·검색 결과 표시 중엔 오늘 메시지 렌더 건너뜀
     const usedAfter = CHAT.lastId;
     // 패널을 열고 오늘 대화를 보고 있으면 '여기까지 읽음'을 같이 기록 (읽음 표시)
-    const readQ = (CHAT.open && !past && CHAT.lastId) ? `&read=${CHAT.lastId}` : "";
+    const readQ = (CHAT.open && !busy && CHAT.lastId) ? `&read=${CHAT.lastId}` : "";
     // 일일 입력 화면을 보고 있으면 그 날짜를 알려 '동시 편집' 감지에 참여 (다른 화면이면 빠짐)
     const editQ = (document.querySelector("#scr-entry.on") && E.date) ? `&edit=${E.date}` : "";
     let d = await api(`/api/presence?after=${usedAfter}${readQ}${editQ}`);
@@ -7547,7 +7761,7 @@ async function pollPresence() {
       const first = CHAT.day == null;
       CHAT.day = d.day;
       CHAT.lastId = 0;
-      if (!past) {
+      if (!busy) {
         $("chatMsgs").innerHTML = chatDayHeader(d.day);
         if (!first) { CHAT.unread = 0; }                    // 날짜가 바뀌면 미읽음도 초기화
         // 위 요청은 옛 lastId로 나갔으므로, 그날 대화를 처음부터 다시 받아 채운다
@@ -7567,17 +7781,27 @@ async function pollPresence() {
         if (document.querySelector("#scr-items.on") && !mQuick && mTab !== "bom") renderMasters();
       }
     }
-    if (past) { renderChatBadge(); return; }   // 지난 대화 보는 중 — 오늘 메시지는 배지로만 알림
+    if (busy) { renderChatBadge(); return; }   // 지난 대화·검색 보는 중 — 오늘 메시지는 배지로만 알림
+    // 기존 메시지 변경(수정·삭제·반응·고정) 감지 → 그날 대화를 통째로 다시 그림 (새 메시지 흐름과 별개)
+    let reloaded = false;
+    if (d.chat_ver != null && CHAT.ver != null && d.chat_ver !== CHAT.ver) {
+      await chatReloadToday(); reloaded = true;
+    }
+    if (d.chat_ver != null) CHAT.ver = d.chat_ver;
     if (d.messages && d.messages.length) {
-      const atBottom = (() => { const el = $("chatMsgs"); return el.scrollHeight - el.scrollTop - el.clientHeight < 40; })();
-      $("chatMsgs").insertAdjacentHTML("beforeend", d.messages.map(m => chatMsgHtml(m, d.me)).join(""));
+      if (!reloaded) {
+        const atBottom = (() => { const el = $("chatMsgs"); return el.scrollHeight - el.scrollTop - el.clientHeight < 40; })();
+        $("chatMsgs").insertAdjacentHTML("beforeend", d.messages.map(m => chatMsgHtml(m, d.me)).join(""));
+        if (CHAT.open && atBottom) $("chatMsgs").scrollTop = $("chatMsgs").scrollHeight;
+      }
       CHAT.lastId = d.last_id;
-      const fresh = d.messages.filter(m => m.username !== d.me && m.kind !== "system").length;
+      const fresh = d.messages.filter(m => m.username !== d.me && m.kind !== "system" && !m.deleted).length;
       if (!CHAT.open && fresh) CHAT.unread += fresh;
-      if (CHAT.open && atBottom) $("chatMsgs").scrollTop = $("chatMsgs").scrollHeight;
+      chatNotify(d.messages);   // 데스크톱 알림·소리 (닫혀 있거나 다른 탭일 때)
     } else if (d.last_id) {
       CHAT.lastId = d.last_id;
     }
+    applyReactions(d.reactions); renderPinned(d.pinned);
     renderChatBadge();
     refreshReadMarks(d.me, d.reads);   // 다른 사람이 읽으면 내 메시지의 '읽음 N'이 늘어난다
   } catch (e) { /* 폴링 일시 오류 무시 */ }
@@ -7585,13 +7809,28 @@ async function pollPresence() {
 async function chatSend() {
   if (CHAT.viewDay) return;                       // 지난 대화 보기는 읽기 전용
   const inp = $("chatInput"), text = inp.value.trim(), file = CHAT.pending;
+  // 수정 모드 — 본문만 PUT (첨부·답장 없음)
+  if (CHAT.editId) {
+    if (!text) return;
+    const eid = CHAT.editId;
+    try {
+      await api(`/api/chat/${eid}`, { method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }) });
+    } catch (e) { return; }
+    inp.value = ""; chatClearReply();
+    $("chatMentions").classList.remove("on"); CHAT.mentList = [];
+    pollPresence();
+    return;
+  }
   if (!text && !file) return;
+  const reply_to = CHAT.replyTo ? CHAT.replyTo.id : 0;
   inp.value = "";
   CHAT.pending = null; $("chatFileRow").classList.remove("on");
+  chatClearReply();
   $("chatMentions").classList.remove("on"); CHAT.mentList = [];
   try {
     await api("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, file }) });
+      body: JSON.stringify({ text, file, reply_to }) });
   } catch (e) {   // 실패하면 입력 내용·첨부를 되돌려 준다
     inp.value = text; CHAT.pending = file;
     if (file) $("chatFileRow").classList.add("on");
