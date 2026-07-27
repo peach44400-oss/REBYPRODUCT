@@ -661,13 +661,13 @@
       <div id="lowpNote"></div>
     </div>
     <div class="side-foot">
-      <div><span class="dot"></span><span id="dbStatus">DB 연결됨</span></div>
+      <div style="display:flex; align-items:flex-start;"><span class="dot" style="margin-top:5px;"></span><span id="dbStatus" style="line-height:1.5;">DB 연결됨</span></div>
       <div id="userBox" style="margin-top:8px; display:none;">
         <span id="userLbl" style="color:var(--side-ink); font-weight:700; cursor:pointer; text-decoration:underline dotted; text-underline-offset:3px;"
               title="클릭하면 내 설정(개인정보·메일)이 열립니다"></span>
-        <div style="display:flex; gap:5px; margin-top:6px;">
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:5px; margin-top:6px;">
           <button class="btn sm sfbtn" id="btnPw" title="개인정보(비밀번호)·메일 계정 설정">내 설정</button>
-          <button class="btn sm sfbtn" id="btnCompose" title="일반 메일을 작성해 보냅니다 (발주서와 무관)">✉ 메일</button>
+          <button class="btn sm sfbtn" id="btnCompose" title="일반 메일을 작성해 보냅니다 (발주서와 무관)">✉ 메일 보내기</button>
           <button class="btn sm sfbtn" id="btnAdmin" style="display:none;" title="백업/복원 · 데이터 점검">관리</button>
           <button class="btn sm sfbtn" id="btnLogout">로그아웃</button>
         </div>

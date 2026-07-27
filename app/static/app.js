@@ -7481,7 +7481,7 @@ async function startApp(me) {
   loadLowStock();   // 사이드바 '발주 필요' 알림 (자재 담당·admin)
   $("navPoStat").style.display = canStock ? "" : "none";   // 발주 현황 탭 — 자재 담당·admin
   api("/api/mysign").then(s => { MYSIGN.img = s.img || ""; }).catch(() => { });   // 내 사인 (발주서 서명란)
-  $("dbStatus").textContent = `DB 연결됨 · 제품 ${M.product.length} · 자재 ${M.raw.length + M.sub.length}`;
+  $("dbStatus").innerHTML = `DB 연결됨<br>제품 ${M.product.length} · 자재 ${M.raw.length + M.sub.length}`;
   // 권한 실시간 반영: admin이 권한을 바꾸면(서버 세션은 즉시 교체됨) 화면도 20초 내 자동 새로고침
   setInterval(async () => {
     try {
