@@ -667,6 +667,7 @@
               title="클릭하면 내 설정(개인정보·메일)이 열립니다"></span>
         <div style="display:flex; gap:5px; margin-top:6px;">
           <button class="btn sm sfbtn" id="btnPw" title="개인정보(비밀번호)·메일 계정 설정">내 설정</button>
+          <button class="btn sm sfbtn" id="btnCompose" title="일반 메일을 작성해 보냅니다 (발주서와 무관)">✉ 메일</button>
           <button class="btn sm sfbtn" id="btnAdmin" style="display:none;" title="백업/복원 · 데이터 점검">관리</button>
           <button class="btn sm sfbtn" id="btnLogout">로그아웃</button>
         </div>
@@ -1513,8 +1514,8 @@
 <!-- 발주서 메일 작성 모달 -->
 <div class="overlay" id="poMailOverlay">
   <div class="modal" style="width:min(840px, 96vw);">
-    <h3>📧 발주서 메일 보내기</h3>
-    <p class="hint">보낸 사람은 로그인 사용자 이름·직급으로 표시됩니다 · 아래 <b>발주서 미리보기</b>가 메시지 뒤에 자동으로 붙어 발송됩니다.</p>
+    <h3 id="pmTitle">📧 발주서 메일 보내기</h3>
+    <p class="hint" id="pmTopHint">보낸 사람은 로그인 사용자 이름·직급으로 표시됩니다 · 아래 <b>발주서 미리보기</b>가 메시지 뒤에 자동으로 붙어 발송됩니다.</p>
     <div class="fgrid">
       <div class="fld"><label>받는 메일 (쉼표로 여러 명 · 거래처 이름만 넣어도 자동 변환)</label>
         <input id="pmTo" list="pmMailDl" placeholder="예: order@company.co.kr 또는 거래처명" autocomplete="off"></div>
@@ -1541,15 +1542,23 @@
           <button type="button" data-cmd="bold" title="굵게"><b>가</b></button>
           <button type="button" data-cmd="italic" title="기울임"><i>가</i></button>
           <button type="button" data-cmd="underline" title="밑줄"><u>가</u></button>
-          <button type="button" data-color="#111111" title="검정" style="color:#111; font-weight:800;">가</button>
-          <button type="button" data-color="#C2372C" title="빨강" style="color:#C2372C; font-weight:800;">가</button>
-          <button type="button" data-color="#1D4ED8" title="파랑" style="color:#1D4ED8; font-weight:800;">가</button>
-          <input type="color" id="pmColor" value="#c2372c" title="다른 색 직접 선택">
+          <button type="button" data-cmd="strikeThrough" title="취소선"><s>가</s></button>
+          <button type="button" data-color="#111111" title="글자색 검정" style="color:#111; font-weight:800;">가</button>
+          <button type="button" data-color="#C2372C" title="글자색 빨강" style="color:#C2372C; font-weight:800;">가</button>
+          <button type="button" data-color="#1D4ED8" title="글자색 파랑" style="color:#1D4ED8; font-weight:800;">가</button>
+          <input type="color" id="pmColor" value="#c2372c" title="글자색 직접 선택">
+          <button type="button" id="pmHilite" title="형광펜(배경색)" style="background:#FEF08A; font-weight:800;">가</button>
           <button type="button" data-cmd="justifyLeft" title="왼쪽 정렬">⯇</button>
           <button type="button" data-cmd="justifyCenter" title="가운데 정렬">☰</button>
-          <button type="button" data-cmd="insertUnorderedList" title="목록">•≡</button>
-          <button type="button" id="pmImgBtn" title="이미지 삽입 (본문에 들어감)">🖼 이미지</button>
+          <button type="button" data-cmd="justifyRight" title="오른쪽 정렬">⯈</button>
+          <button type="button" data-cmd="insertUnorderedList" title="글머리 목록">•≡</button>
+          <button type="button" data-cmd="insertOrderedList" title="번호 목록">1≡</button>
+          <button type="button" id="pmLink" title="링크 넣기">🔗</button>
+          <button type="button" id="pmHr" title="구분선 넣기">―</button>
+          <button type="button" id="pmImgBtn" title="이미지 삽입 (본문에 들어감 · 넣은 뒤 클릭하면 크기 조절)">🖼 이미지</button>
           <input type="file" id="pmImgFile" accept="image/*" style="display:none;">
+          <button type="button" data-cmd="undo" title="실행 취소">↶</button>
+          <button type="button" data-cmd="redo" title="다시 실행">↷</button>
           <button type="button" data-cmd="removeFormat" title="서식 지우기">지움</button>
           <span id="pmImgSize" style="display:none; gap:3px; align-items:center;">
             <span class="auto" style="font-size:11px; margin:0 2px 0 6px;">이미지 크기</span>
@@ -1557,6 +1566,8 @@
             <button type="button" data-imgw="50">50%</button>
             <button type="button" data-imgw="75">75%</button>
             <button type="button" data-imgw="100">100%</button>
+            <input type="range" id="pmImgRange" min="10" max="100" value="50" title="이미지 크기 슬라이더" style="width:90px; vertical-align:middle;">
+            <span id="pmImgPct" class="auto" style="font-size:11px; min-width:34px; display:inline-block;">50%</span>
             <button type="button" data-imgdel style="color:var(--crit);">삭제</button>
           </span>
         </div>
@@ -1880,8 +1891,11 @@
       </div>
     </div>
     <div id="mePane_sent" style="display:none;">
-      <p class="hint" style="margin:0 0 8px;">내가 보낸 메일 이력입니다. 클릭하면 내용을 보고 <b>재발송</b>할 수 있습니다 (원본 첨부는 재발송에 포함되지 않습니다).</p>
-      <div id="sentList" style="max-height:340px; overflow-y:auto; border:1px solid var(--line-soft); border-radius:8px;"></div>
+      <div style="display:flex; align-items:center; gap:8px; margin:0 0 8px;">
+        <p class="hint" style="flex:1; margin:0;">내가 보낸 메일 이력입니다. 클릭하면 내용을 보고 <b>재발송</b>할 수 있습니다.</p>
+        <button class="btn sm primary" id="meCompose">✉ 새 메일 쓰기</button>
+      </div>
+      <div id="sentList" style="max-height:320px; overflow-y:auto; border:1px solid var(--line-soft); border-radius:8px;"></div>
     </div>
     <div id="mePane_sign" style="display:none;">
       <p class="hint" style="margin:0 0 10px;">발주서 서명란에 들어가는 <b>내 사인</b>입니다. 사인 사진(종이에 쓴 것도 OK)을 올리면

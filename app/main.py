@@ -40,7 +40,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.27.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.28.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -2453,6 +2453,40 @@ def po_send(request: Request, body: dict):
         if po_id:
             chat_system(f"📤 발주서 #{po_id} 메일 발송" + (f" — {po_partner}" if po_partner else "")
                         + f" (받는사람 {', '.join(to)})")
+        return {"ok": True}
+    finally:
+        con.close()
+
+
+@app.post("/api/mail/send")
+def mail_send(request: Request, body: dict):
+    """일반 메일 발송 — 발주서와 무관한 자유 메일 (문의·안내 등). 로그인 사용자(게스트 제외)."""
+    def parse_addrs(v):
+        return [t.strip() for t in str(v or "").replace(";", ",").split(",") if t.strip()]
+
+    to = parse_addrs(body.get("to"))
+    cc = parse_addrs(body.get("cc"))
+    if not to:
+        raise HTTPException(400, "받는 메일 주소를 입력해주세요")
+    if any("@" not in t for t in to + cc):
+        raise HTTPException(400, "메일 주소 형식이 올바르지 않습니다")
+    subject = (body.get("subject") or "").strip() or "[리바이프로덕트]"
+    html = body.get("html") or ""
+    attachments = body.get("attachments") or []
+    attach_names = ", ".join((a.get("name") or "file") for a in attachments)
+    con = connect()
+    try:
+        username = request.state.user.get("username", "")
+        try:
+            send_mail(con, username, to, subject, html, attachments,
+                      sender_label_of(con, username), cc=cc)
+        except HTTPException as e:
+            log_sent_mail(con, username, to, cc, subject, html, attach_names, 0, "failed", str(e.detail))
+            con.commit()
+            raise
+        log_sent_mail(con, username, to, cc, subject, html, attach_names, 0, "sent", "")
+        audit(con, "send_mail", f"메일 발송 → {', '.join(to)}" + (f" (참조 {', '.join(cc)})" if cc else ""))
+        con.commit()
         return {"ok": True}
     finally:
         con.close()
