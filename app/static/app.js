@@ -7500,6 +7500,13 @@ async function startApp(me) {
   MPERM = new Set(me.money_perms || []);
   $("loginOverlay").style.display = "none";
   $("userBox").style.display = "";
+  // 약한/기본 비밀번호 경고 — 인터넷 노출 시 위험. [내 설정]에서 바꾸도록 유도
+  if (me.weak_pw) {
+    setTimeout(() => {
+      toast("⚠ 비밀번호가 너무 쉽습니다 — [내 설정]에서 강력한 비밀번호로 바꿔주세요 (외부 접속 보안)");
+      if (confirm("현재 비밀번호가 너무 쉽습니다.\n외부 접속을 켜두면 보안에 위험합니다.\n\n지금 비밀번호를 바꾸시겠어요?")) openMe("info");
+    }, 800);
+  }
   const dutyLbl = (ROLE === "admin" || MYDUTY.size === DUTY_KEYS.length) ? ""
     : MYDUTY.size === 0 ? " · 담당 없음(입력 불가)"
     : " · " + [...MYDUTY].map(k => DUTY_LABELS[k]).join("·");

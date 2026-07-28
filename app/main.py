@@ -8,6 +8,7 @@ import re
 import sys
 import json
 import time
+import hmac
 import base64
 import sqlite3
 import hashlib
@@ -40,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.29.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.30.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -63,6 +64,7 @@ app = FastAPI(title="martin_stock")
 
 # 요청 처리 중인 로그인 사용자 (audit_log에 '누가'를 남기기 위한 컨텍스트)
 CURRENT_USER = contextvars.ContextVar("current_user", default="")
+SESSION_TTL = 24 * 3600   # 유휴 세션 만료(초) — 마지막 활동 후 이 시간 지나면 자동 로그아웃
 
 # 기준정보 변경 버전 — presence 폴링에 실어 다른 접속자 브라우저의 캐시를 자동 갱신
 MASTERS_VER = {"v": 1}
@@ -175,7 +177,38 @@ SESSIONS = {}
 
 
 def hashpw(pw: str) -> str:
+    """(구) 단순 SHA-256 — 기존 해시 검증·자동 업그레이드용으로만 남긴다."""
     return hashlib.sha256(("rebyproduct:" + pw).encode()).hexdigest()
+
+
+PBKDF2_ITER = 200_000   # 비밀번호 해싱 반복 — DB 유출 시 크래킹을 어렵게
+
+def make_password(pw: str) -> str:
+    """개인 salt + PBKDF2(sha256) 해시 — 저장 형식: pbkdf2$반복$salt$해시."""
+    salt = secrets.token_bytes(16)
+    dk = hashlib.pbkdf2_hmac("sha256", (pw or "").encode(), salt, PBKDF2_ITER)
+    return f"pbkdf2${PBKDF2_ITER}${salt.hex()}${dk.hex()}"
+
+def verify_password(stored: str, pw: str) -> bool:
+    """새 방식(pbkdf2$…)과 구 방식(SHA-256) 둘 다 검증. 타이밍 공격 방지로 compare_digest."""
+    if not stored:
+        return False
+    if stored.startswith("pbkdf2$"):
+        try:
+            _, iter_s, salt_hex, hash_hex = stored.split("$")
+            dk = hashlib.pbkdf2_hmac("sha256", (pw or "").encode(), bytes.fromhex(salt_hex), int(iter_s))
+            return hmac.compare_digest(dk.hex(), hash_hex)
+        except Exception:
+            return False
+    return hmac.compare_digest(stored, hashpw(pw))
+
+# 약한/기본 비밀번호 — 로그인 시 경고를 띄운다 (인터넷 노출 계정 보호)
+WEAK_PWS = {"1", "0", "12", "123", "1234", "12345", "123456", "1234567", "12345678",
+            "0000", "1111", "0930", "admin", "password", "passwd", "qwerty", "reby",
+            "rebyproduct", "1q2w3e", "aaaa", "1212", "1004"}
+
+def is_weak_password(pw: str) -> bool:
+    return len(pw or "") < 6 or (pw or "").lower() in WEAK_PWS
 
 
 def ensure_admin():
@@ -184,7 +217,7 @@ def ensure_admin():
         n = con.execute("SELECT COUNT(*) FROM users WHERE role='admin'").fetchone()[0]
         if n == 0:
             con.execute("INSERT OR IGNORE INTO users(username, pw_hash, role) VALUES(?,?,?)",
-                        ("admin", hashpw("1"), "admin"))
+                        ("admin", make_password("1"), "admin"))   # 첫 실행용 — 로그인 시 '약한 비밀번호' 경고가 뜬다
             con.commit()
     finally:
         con.close()
@@ -193,10 +226,16 @@ def ensure_admin():
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
+    sid = request.cookies.get("sid")
     if path.startswith("/api/") and path != "/api/login":
-        user = SESSIONS.get(request.cookies.get("sid"))
+        user = SESSIONS.get(sid)
         if not user:
             return JSONResponse({"detail": "로그인이 필요합니다"}, status_code=401)
+        # 유휴 세션 만료 — 마지막 활동 후 SESSION_TTL 지나면 자동 로그아웃 (브라우저가 열려 있으면 폴링이 갱신)
+        if time.time() - user.get("seen", 0) > SESSION_TTL:
+            SESSIONS.pop(sid, None)
+            return JSONResponse({"detail": "오래 사용하지 않아 로그아웃되었습니다 — 다시 로그인해주세요"},
+                                status_code=401)
         if (user["role"] == "guest" and request.method in ("POST", "PUT", "DELETE")
                 and path not in ("/api/logout", "/api/password", "/api/chat")):
             return JSONResponse({"detail": "보기 전용(guest) 계정입니다 — 입력·수정 권한이 없습니다"},
@@ -208,6 +247,10 @@ async def auth_middleware(request: Request, call_next):
     # 화면 파일은 항상 재검증 — exe 업데이트 후 브라우저가 옛 app.js를 캐시로 쓰는 문제 방지
     if path == "/" or path.startswith("/static"):
         response.headers["Cache-Control"] = "no-cache"
+    # 보안 헤더 — 클릭재킹(iframe 삽입)·MIME 스니핑 방지, 외부로 주소 유출 최소화
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "same-origin"
     return response
 
 
@@ -229,25 +272,34 @@ def login(body: dict, response: Response, request: Request):
     rec = LOGIN_FAILS.get(ip)
     if rec and rec[1] > now:
         raise HTTPException(429, "로그인 시도가 너무 많습니다 — 잠시 후(약 10분) 다시 시도해주세요")
+    pw = body.get("password") or ""
     con = connect()
     try:
         u = con.execute("SELECT * FROM users WHERE username=?",
                         ((body.get("username") or "").strip(),)).fetchone()
-        if not u or u["pw_hash"] != hashpw(body.get("password") or ""):
+        if not u or not verify_password(u["pw_hash"], pw):
             r = LOGIN_FAILS.get(ip) or [0, 0]
             r[0] += 1
             r[1] = now + LOGIN_LOCK_SEC if r[0] >= LOGIN_MAX else 0
             LOGIN_FAILS[ip] = r
             raise HTTPException(401, "아이디 또는 비밀번호가 올바르지 않습니다")
         LOGIN_FAILS.pop(ip, None)   # 성공하면 실패 기록 초기화
+        # 구 방식(SHA-256) 해시면 이번 로그인에서 PBKDF2로 자동 업그레이드
+        if not str(u["pw_hash"]).startswith("pbkdf2$"):
+            con.execute("UPDATE users SET pw_hash=? WHERE id=?", (make_password(pw), u["id"]))
+        audit(con, "login", f"로그인 — {ip}")
+        con.commit()
         token = secrets.token_hex(16)
         duty = (u["duty"] if "duty" in u.keys() else "all") or "all"
         mp = (u["money_perms"] if "money_perms" in u.keys() else "") or ""
         SESSIONS[token] = {"id": u["id"], "username": u["username"], "role": u["role"],
-                           "duty": duty, "money_perms": mp, "seen": time.time()}
-        response.set_cookie("sid", token, httponly=True, samesite="lax")
+                           "duty": duty, "money_perms": mp, "seen": time.time(),
+                           "weak_pw": is_weak_password(pw)}
+        https = request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
+        response.set_cookie("sid", token, httponly=True, samesite="lax", secure=https)
         return {"username": u["username"], "role": u["role"], "duty": duty,
-                "money_perms": sorted(money_set(SESSIONS[token]))}
+                "money_perms": sorted(money_set(SESSIONS[token])),
+                "weak_pw": is_weak_password(pw)}
     finally:
         con.close()
 
@@ -263,7 +315,7 @@ def logout(request: Request, response: Response):
 def me(request: Request):
     u = request.state.user
     return {"username": u["username"], "role": u["role"], "duty": u.get("duty", "all"),
-            "money_perms": sorted(money_set(u))}
+            "money_perms": sorted(money_set(u)), "weak_pw": bool(u.get("weak_pw"))}
 
 
 @app.post("/api/password")
@@ -272,12 +324,17 @@ def change_password(request: Request, body: dict):
     con = connect()
     try:
         row = con.execute("SELECT pw_hash FROM users WHERE id=?", (u["id"],)).fetchone()
-        if row["pw_hash"] != hashpw(body.get("old") or ""):
+        if not verify_password(row["pw_hash"], body.get("old") or ""):
             raise HTTPException(400, "기존 비밀번호가 올바르지 않습니다")
-        if not (body.get("new") or "").strip():
-            raise HTTPException(400, "새 비밀번호를 입력하세요")
-        con.execute("UPDATE users SET pw_hash=? WHERE id=?", (hashpw(body["new"]), u["id"]))
+        new = (body.get("new") or "").strip()
+        if len(new) < 6:
+            raise HTTPException(400, "새 비밀번호는 6자 이상이어야 합니다")
+        if is_weak_password(new):
+            raise HTTPException(400, "너무 쉬운 비밀번호입니다 — 다른 비밀번호를 사용해주세요")
+        con.execute("UPDATE users SET pw_hash=? WHERE id=?", (make_password(new), u["id"]))
         con.commit()
+        # 세션의 약한 비밀번호 경고 해제
+        u["weak_pw"] = False
         return {"ok": True}
     finally:
         con.close()
@@ -478,6 +535,8 @@ def users_create(request: Request, body: dict):
     duty = norm_duty(body.get("duty") if body.get("duty") is not None else "all")
     if not name or not pw:
         raise HTTPException(400, "아이디와 비밀번호를 입력하세요")
+    if len(pw) < 6:
+        raise HTTPException(400, "비밀번호는 6자 이상이어야 합니다")
     if role not in ("admin", "op", "guest"):
         raise HTTPException(400, "권한은 admin/op/guest 중 하나여야 합니다")
     if role == "admin":
@@ -486,7 +545,7 @@ def users_create(request: Request, body: dict):
     try:
         try:
             con.execute("INSERT INTO users(username, pw_hash, role, duty) VALUES(?,?,?,?)",
-                        (name, hashpw(pw), role, duty))
+                        (name, make_password(pw), role, duty))
         except Exception:
             raise HTTPException(400, "이미 존재하는 아이디입니다")
         con.commit()
