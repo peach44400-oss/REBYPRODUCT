@@ -1,5 +1,5 @@
 {
-  "version": "1.28.2",
+  "version": "1.29.0",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· 메일 작성 창은 배경을 클릭해도 닫히지 않게 수정 — 작성 중인 메일이 실수로 사라지지 않습니다 (닫기는 [취소] 버튼)"
+  "notes": "외부 접속(인터넷) 원클릭\n· cloudflared.exe를 프로그램 폴더에 두면 실행 시 자동으로 외부 접속 주소(HTTPS) 생성 — 주소는 [관리 도구]와 채팅에서 확인 (재시작하면 주소 변경)\n· [관리 도구]에서 외부 접속 켜기/끄기\n· 보안: 로그인 8회 실패 시 10분 자동 차단 (무차별 대입 방어)"
 }

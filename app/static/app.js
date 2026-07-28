@@ -7176,10 +7176,55 @@ async function openAdmin() {
   $("updMsg").textContent = "";
   UPD.latest = null;
   loadBackups();
+  loadTunnel();
   updCheck(true);   // 열 때 조용히 현재 버전 표시(있으면 새 버전도)
 }
 window.closeAdmin = () => $("adminOverlay").classList.remove("on");
 $("btnAdmin").onclick = openAdmin;
+
+/* ── 외부 접속(cloudflared 터널) ── */
+let TUN = { timer: null };
+async function loadTunnel() {
+  let d;
+  try { d = await api("/api/tunnel"); } catch (e) { return; }
+  const on = d.enabled && (d.running || d.starting);
+  $("tunToggle").textContent = d.enabled ? "외부 접속 끄기" : "외부 접속 켜기";
+  $("tunToggle").classList.toggle("primary", !d.enabled);
+  $("tunToggle").disabled = !d.available;
+  if (!d.available) {
+    $("tunState").innerHTML = '<span style="color:var(--warn)">cloudflared.exe가 프로그램 폴더에 없습니다</span>';
+    $("tunUrlRow").style.display = "none"; $("tunSec").textContent = ""; return;
+  }
+  $("tunState").textContent = !d.enabled ? "꺼짐"
+    : d.url ? "🟢 접속 가능" : d.starting ? "주소 만드는 중…" : (d.error || "연결 대기 중…");
+  $("tunState").style.color = d.url ? "var(--ok)" : "var(--muted)";
+  if (d.url) { $("tunUrl").value = d.url; $("tunUrlRow").style.display = "flex"; }
+  else $("tunUrlRow").style.display = "none";
+  $("tunSec").innerHTML = d.enabled
+    ? "⚠ 인터넷에 열려 있습니다 — <b>모든 계정 비밀번호를 강력하게</b> 설정하고, 주소는 직원에게만 알려주세요. (로그인 8회 실패 시 10분 차단됩니다)"
+    : "";
+  // 켜졌는데 아직 주소가 안 나왔으면 잠시 후 다시 확인
+  clearTimeout(TUN.timer);
+  if (d.enabled && !d.url && $("adminOverlay").classList.contains("on"))
+    TUN.timer = setTimeout(loadTunnel, 2500);
+}
+$("tunToggle").onclick = async () => {
+  const turningOn = $("tunToggle").textContent.includes("켜기");
+  if (turningOn && !confirm("외부(인터넷) 접속을 켭니다.\n\n· 회사 밖에서도 접속할 수 있는 주소가 만들어집니다\n· 인터넷에 열리므로 계정 비밀번호를 반드시 강력하게 설정하세요\n\n진행할까요?")) return;
+  $("tunToggle").disabled = true;
+  try {
+    await api("/api/tunnel", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ on: turningOn }) });
+    toast(turningOn ? "외부 접속을 켰습니다 — 주소가 곧 표시됩니다 (채팅에도 올라옵니다)" : "외부 접속을 껐습니다");
+  } catch (e) { /* api 토스트 */ }
+  finally { $("tunToggle").disabled = false; loadTunnel(); }
+};
+$("tunCopy").onclick = () => {
+  const v = $("tunUrl").value;
+  if (!v) return;
+  navigator.clipboard?.writeText(v).then(() => toast("주소를 복사했습니다"),
+    () => { $("tunUrl").select(); document.execCommand("copy"); toast("주소를 복사했습니다"); });
+};
 
 /* ── 내 메일(SMTP) 설정 — 발주서 메일이 각자 자기 계정으로 발송된다 ([내 설정] > 메일) ── */
 async function loadSmtp() {

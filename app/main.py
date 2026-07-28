@@ -40,7 +40,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.28.2"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.29.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -211,14 +211,35 @@ async def auth_middleware(request: Request, call_next):
     return response
 
 
+# 로그인 무차별 대입 방어 — IP(외부 접속 시 Cloudflare가 실제 IP를 CF-Connecting-IP로 전달)별 실패 누적
+LOGIN_FAILS = {}          # ip -> [실패횟수, 잠금해제시각]
+LOGIN_MAX = 8             # 이 횟수 이상 실패하면
+LOGIN_LOCK_SEC = 600      # 10분 잠금
+
+
+def client_ip(request: Request):
+    return (request.headers.get("cf-connecting-ip")
+            or (request.client.host if request.client else "?"))
+
+
 @app.post("/api/login")
-def login(body: dict, response: Response):
+def login(body: dict, response: Response, request: Request):
+    ip = client_ip(request)
+    now = time.time()
+    rec = LOGIN_FAILS.get(ip)
+    if rec and rec[1] > now:
+        raise HTTPException(429, "로그인 시도가 너무 많습니다 — 잠시 후(약 10분) 다시 시도해주세요")
     con = connect()
     try:
         u = con.execute("SELECT * FROM users WHERE username=?",
                         ((body.get("username") or "").strip(),)).fetchone()
         if not u or u["pw_hash"] != hashpw(body.get("password") or ""):
+            r = LOGIN_FAILS.get(ip) or [0, 0]
+            r[0] += 1
+            r[1] = now + LOGIN_LOCK_SEC if r[0] >= LOGIN_MAX else 0
+            LOGIN_FAILS[ip] = r
             raise HTTPException(401, "아이디 또는 비밀번호가 올바르지 않습니다")
+        LOGIN_FAILS.pop(ip, None)   # 성공하면 실패 기록 초기화
         token = secrets.token_hex(16)
         duty = (u["duty"] if "duty" in u.keys() else "all") or "all"
         mp = (u["money_perms"] if "money_perms" in u.keys() else "") or ""
@@ -265,6 +286,126 @@ def change_password(request: Request, body: dict):
 def require_admin(request: Request):
     if request.state.user["role"] != "admin":
         raise HTTPException(403, "관리자(admin)만 가능합니다")
+
+
+# ── 앱 전역 설정(app_setting) 헬퍼 ──────────────
+def get_app_setting(key, default=""):
+    con = connect()
+    try:
+        r = con.execute("SELECT value FROM app_setting WHERE key=?", (key,)).fetchone()
+        return r["value"] if r else default
+    finally:
+        con.close()
+
+
+def set_app_setting(key, value):
+    con = connect()
+    try:
+        con.execute("INSERT OR REPLACE INTO app_setting(key, value) VALUES(?,?)", (key, str(value)))
+        con.commit()
+    finally:
+        con.close()
+
+
+# ── 외부 접속 터널(Cloudflare quick tunnel) 관리 ──────────────
+# cloudflared.exe가 프로그램 폴더에 있으면, 실행 시 자동으로 외부 접속 주소(HTTPS)를 만든다.
+# 도메인 없이 쓰는 빠른 터널이라 PC를 재시작하면 주소가 바뀐다 → 새 주소를 채팅에 자동 게시.
+TUNNEL = {"proc": None, "url": "", "starting": False, "err": ""}
+SERVE_PORT = {"v": 8600}
+
+
+def cloudflared_path():
+    p = DATA_BASE / "cloudflared.exe"
+    return p if p.exists() else None
+
+
+def tunnel_enabled():
+    v = get_app_setting("tunnel_enabled", "")
+    if v == "":
+        return cloudflared_path() is not None   # 설정 없으면: cloudflared가 있으면 기본 켬
+    return v == "1"
+
+
+def start_tunnel():
+    import subprocess
+    if TUNNEL["proc"] and TUNNEL["proc"].poll() is None:
+        return   # 이미 실행 중
+    cf = cloudflared_path()
+    if not cf:
+        TUNNEL["err"] = "cloudflared.exe가 프로그램 폴더에 없습니다"
+        return
+    TUNNEL["err"] = ""
+    TUNNEL["url"] = ""
+    TUNNEL["starting"] = True
+    port = SERVE_PORT["v"]
+    flags = 0x08000000 if os.name == "nt" else 0   # CREATE_NO_WINDOW — 검은 창이 안 뜨게
+    try:
+        p = subprocess.Popen(
+            [str(cf), "tunnel", "--no-autoupdate", "--url", f"http://localhost:{port}"],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace", creationflags=flags)
+    except Exception as e:
+        TUNNEL["err"] = f"실행 실패: {e}"
+        TUNNEL["starting"] = False
+        return
+    TUNNEL["proc"] = p
+
+    def reader():
+        rx = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
+        try:
+            for line in p.stdout:
+                if not TUNNEL["url"]:
+                    m = rx.search(line)
+                    if m:
+                        TUNNEL["url"] = m.group(0)
+                        TUNNEL["starting"] = False
+                        chat_system(f"🌐 외부 접속 주소가 준비됐습니다 — {TUNNEL['url']}\n"
+                                    "(로그인 필요 · PC를 재시작하면 주소가 바뀝니다)")
+        except Exception:
+            pass
+        TUNNEL["starting"] = False
+    threading.Thread(target=reader, daemon=True).start()
+
+
+def stop_tunnel():
+    p = TUNNEL.get("proc")
+    if p and p.poll() is None:
+        try:
+            p.terminate()
+        except Exception:
+            pass
+    TUNNEL["proc"] = None
+    TUNNEL["url"] = ""
+    TUNNEL["starting"] = False
+
+
+@app.get("/api/tunnel")
+def tunnel_status(request: Request):
+    require_admin(request)
+    running = bool(TUNNEL["proc"] and TUNNEL["proc"].poll() is None)
+    return {"available": cloudflared_path() is not None, "enabled": tunnel_enabled(),
+            "running": running, "url": TUNNEL["url"], "starting": TUNNEL["starting"],
+            "error": TUNNEL["err"]}
+
+
+@app.post("/api/tunnel")
+def tunnel_toggle(request: Request, body: dict):
+    require_admin(request)
+    if not cloudflared_path():
+        raise HTTPException(400, "cloudflared.exe가 프로그램 폴더에 없습니다 — 먼저 내려받아 넣어주세요")
+    on = bool(body.get("on"))
+    set_app_setting("tunnel_enabled", "1" if on else "0")
+    if on:
+        start_tunnel()
+    else:
+        stop_tunnel()
+    con = connect()
+    try:
+        audit(con, "tunnel", "외부 접속 " + ("켜기" if on else "끄기"))
+        con.commit()
+    finally:
+        con.close()
+    return {"ok": True, "on": on}
 
 
 # ── 금액 열람 권한 ──
@@ -4642,6 +4783,7 @@ if __name__ == "__main__":
     ensure_admin()
     _backfill_matin_po()          # v1.24 이전 발주 입고분에 거래처·단가 소급 (빈 행만)
     port = int(os.environ.get("PORT", "8600"))
+    SERVE_PORT["v"] = port
     url = f"http://127.0.0.1:{port}"
     # 같은 네트워크(공유기)의 다른 PC에서 접속할 수 있는 LAN 주소 탐지
     lan_ip = ""
@@ -4665,5 +4807,9 @@ if __name__ == "__main__":
     threading.Thread(target=_backup_scheduler, daemon=True).start()
     # 소비기한 아침 알림: 매일 7시 이후 1회, 임박·만료 LOT이 있으면 채팅에 게시
     threading.Thread(target=_alert_scheduler, daemon=True).start()
+    # 외부 접속 터널: cloudflared.exe가 옆에 있고 켜져 있으면 자동 시작 (개발 실행 PORT 지정 시엔 생략)
+    if not os.environ.get("PORT") and tunnel_enabled() and cloudflared_path():
+        print("  외부 접속(cloudflared) 시작 중… 주소는 [관리 도구]·채팅에서 확인하세요")
+        threading.Timer(2.0, start_tunnel).start()
     # 0.0.0.0 = 같은 네트워크의 다른 PC도 접속 가능 (로그인으로 접근 통제)
     uvicorn.run(app, host=os.environ.get("HOST", "0.0.0.0"), port=port, log_level="warning")
