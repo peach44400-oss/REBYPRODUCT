@@ -5278,15 +5278,16 @@ async function loadLedger(date) {
     renderLedger();
   } catch (e) { /* api 토스트 */ }
 }
-function renderLedger() { if (LEDGER.data) $("ledgerBody").innerHTML = buildLedgerDoc(LEDGER.data); }
+function renderLedger() { if (LEDGER.data) $("ledgerBody").innerHTML = buildLedgerDoc(LEDGER.data, false); }
 $("ledgerAll").addEventListener("change", e => { LEDGER.showAll = e.target.checked; renderLedger(); });
 $("ledgerDate").addEventListener("change", e => { if (e.target.value) loadLedger(e.target.value); });
 $("ledgerPrevBtn").onclick = () => { const p = LEDGER.data && LEDGER.data.prev; p ? loadLedger(p) : toast("이전 기록이 없습니다"); };
 $("ledgerNextBtn").onclick = () => { const n = LEDGER.data && LEDGER.data.next; n ? loadLedger(n) : toast("다음 기록이 없습니다"); };
 $("ledgerTodayBtn").onclick = () => loadLedger(todayISO());
-function buildLedgerDoc(d) {
+function buildLedgerDoc(d, forPrint) {
   const NFv = v => (v == null || v === "") ? "" : Number(Math.round(v * 1000) / 1000).toLocaleString("ko-KR");
   const showAll = LEDGER.showAll;
+  const sticky1 = forPrint ? "" : " position:sticky; left:0; z-index:1;";   // 인쇄에선 sticky 끔(어긋남 방지)
   // 기본: 실제로 움직인 것만 — 생산된 제품(열) + 사용/입고 있는 자재(행). '전체 품목' 체크 시 모두.
   const prods = showAll ? (d.products || []) : (d.products || []).filter(p => (d.col_total[p.id] || 0) > 0);
   const rows2 = showAll ? (d.rows || [])
@@ -5296,7 +5297,7 @@ function buildLedgerDoc(d) {
   const TH = "border:1px solid #333; background:#eef0f2; font-weight:700; font-size:9.5px; text-align:center; vertical-align:middle; white-space:normal; word-break:keep-all; line-height:1.2; padding:3px 4px;";
   const THp = TH + " width:52px;";
   const head = `<tr>
-    <th style="${TH} min-width:120px; position:sticky; left:0; z-index:1;">원부재료명</th>
+    <th style="${TH} min-width:120px;${sticky1}">원부재료명</th>
     <th style="${TH} width:46px;">전일<br>재고</th>
     <th style="${TH} width:46px;">금일<br>입고</th>
     ${prods.map(p => `<th style="${THp}">${esc(p.name)}</th>`).join("")}
@@ -5304,13 +5305,13 @@ function buildLedgerDoc(d) {
     <th style="${TH} width:46px;">사용후<br>재고</th>
     <th style="${TH} width:64px;">소비<br>기한</th></tr>`;
   const totalRow = `<tr style="background:#f7f7f9; font-weight:700;">
-    <td style="${TD} text-align:center; position:sticky; left:0; background:#f7f7f9;">합 계</td>
+    <td style="${TD} text-align:center;${forPrint ? "" : " position:sticky; left:0; background:#f7f7f9;"}">합 계</td>
     <td style="${TD}"></td>
     <td style="${TD} text-align:right;">${NFv(d.in_total)}</td>
     ${prods.map(p => `<td style="${TD} text-align:right;">${d.col_total[p.id] ? NFv(d.col_total[p.id]) : ""}</td>`).join("")}
     <td style="${TD}"></td><td style="${TD}"></td><td style="${TD}"></td></tr>`;
   const body = rows2.map(r => `<tr>
-    <td style="${TD} text-align:left; white-space:nowrap; position:sticky; left:0; background:#fff;">${esc(r.name)}</td>
+    <td style="${TD} text-align:left; white-space:nowrap;${forPrint ? "" : " position:sticky; left:0; background:#fff;"}">${esc(r.name)}</td>
     <td style="${TD} text-align:right; color:#555;">${NFv(r.prev)}</td>
     <td style="${TD} text-align:right; ${r.in ? 'color:#0a7a2f; font-weight:700;' : ''}">${NFv(r.in)}</td>
     ${prods.map(p => { const q = r.usage[p.id]; return `<td style="${TD} text-align:right;">${q ? NFv(q) : ""}</td>`; }).join("")}
@@ -5319,28 +5320,33 @@ function buildLedgerDoc(d) {
     <td style="${TD} text-align:center; font-size:8.5px; white-space:nowrap;">${esc(r.expiry || "")}</td></tr>`).join("");
   const dow = ["일", "월", "화", "수", "목", "금", "토"][new Date(d.date + "T00:00").getDay()];
   const TDm = "border:1px solid #333; padding:2px 6px; font-size:11px;";
-  const approve = `<table style="border-collapse:collapse; float:right;">
-    <tr><td rowspan="2" style="${TDm} text-align:center; writing-mode:vertical-rl; letter-spacing:4px; background:#eef0f2;">결재</td>
+  const approve = `<table style="border-collapse:collapse; display:inline-table;">
+    <tr><td rowspan="2" style="${TDm} text-align:center; writing-mode:vertical-rl; letter-spacing:3px; background:#eef0f2;">결 재</td>
       <td style="${TDm} text-align:center; background:#eef0f2; width:54px;">작성</td>
       <td style="${TDm} text-align:center; background:#eef0f2; width:54px;">확인</td>
       <td style="${TDm} text-align:center; background:#eef0f2; width:54px;">승인</td></tr>
     <tr><td style="${TDm} height:34px;"></td><td style="${TDm}"></td><td style="${TDm}"></td></tr></table>`;
+  // 상단 머리: 왼쪽=작성정보 / 가운데=제목 / 오른쪽=결재란 — float 대신 3칸 표(인쇄에서 안 밀림)
+  const header = `<table style="width:100%; border-collapse:collapse; margin:0 0 8px; border:0;"><tr>
+    <td style="border:0; vertical-align:top; width:32%; font-size:11px; line-height:1.9;">
+      ● 작성일 : <b>${d.date} (${dow})</b><br>● 원재료명 : 전제품 원재료 수불
+      ${showAll ? "" : `<br><span style="color:#888;">사용 자재 ${rows2.length}종 · 생산 제품 ${prods.length}종</span>`}</td>
+    <td style="border:0; text-align:center; vertical-align:middle;">
+      <span style="font-size:23px; font-weight:800; letter-spacing:10px;">원 료 수 불 부</span></td>
+    <td style="border:0; text-align:right; vertical-align:top; width:210px;">${approve}</td></tr></table>`;
   const emptyMsg = showAll ? "기록이 없습니다" : "이 날짜에는 사용·입고 기록이 없습니다 (빈 양식은 [전체 품목] 체크)";
-  return `<div style="font-family:'Malgun Gothic',sans-serif; color:#111;">
-    ${approve}
-    <h1 style="font-size:22px; text-align:center; letter-spacing:10px; margin:0 0 10px;">원 료 수 불 부</h1>
-    <div style="font-size:11px; margin:0 0 8px; clear:both;">● 작성일 : <b>${d.date} (${dow})</b> &nbsp;&nbsp; ● 원재료명 : 전제품 원재료 수불
-      ${showAll ? "" : ` &nbsp;·&nbsp; <span style="color:#888;">사용 자재 ${rows2.length}종 · 생산 제품 ${prods.length}종</span>`}</div>
-    <div style="overflow:auto;"><table style="border-collapse:collapse; width:max-content;">
-      <thead>${head}${totalRow}</thead><tbody>${body || `<tr><td style="${TD}" colspan="99">${emptyMsg}</td></tr>`}</tbody>
-    </table></div></div>`;
+  const tbl = `<table style="border-collapse:collapse; ${forPrint ? "width:100%;" : "width:max-content;"}">
+      <thead>${head}${totalRow}</thead><tbody>${body || `<tr><td style="${TD}" colspan="99">${emptyMsg}</td></tr>`}</tbody></table>`;
+  const wrap = forPrint ? tbl : `<div style="overflow:auto;">${tbl}</div>`;
+  return `<div style="font-family:'Malgun Gothic',sans-serif; color:#111;">${header}${wrap}</div>`;
 }
 function ledgerPrint() {
   if (!LEDGER.data) return;
-  $("poPrintArea").innerHTML = buildLedgerDoc(LEDGER.data);
+  $("poPrintArea").innerHTML = buildLedgerDoc(LEDGER.data, true);   // 인쇄용(폭 100%·sticky·overflow 없음)
   const st = document.createElement("style");
   st.id = "ledgerPageStyle";
-  st.textContent = "@page{size:A4 landscape; margin:6mm;} @media print{#poPrintArea table{font-size:7px !important;} #poPrintArea td, #poPrintArea th{padding:1px 2px !important;}}";
+  // 가로 A4 + poPrintArea 자체 여백 제거(빈 페이지 방지) — 폰트는 표의 인라인 값 사용
+  st.textContent = "@page{size:A4 landscape; margin:7mm;} @media print{#poPrintArea{padding:0 !important;}}";
   document.head.appendChild(st);
   document.body.classList.add("po-print");
   const done = () => { document.body.classList.remove("po-print"); st.remove(); window.removeEventListener("afterprint", done); };

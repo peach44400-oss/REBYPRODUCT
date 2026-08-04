@@ -1,5 +1,5 @@
 {
-  "version": "1.31.1",
+  "version": "1.31.2",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· 원료수불부 개선 — 기본은 실제 사용/입고된 자재·생산된 제품만 표시(빈 칸 제거), 제품 이름을 세로 회전 대신 엑셀처럼 가로 줄바꿈으로 정렬. 빈 양식이 필요하면 [전체 품목] 체크"
+  "notes": "· 원료수불부 인쇄 레이아웃 수정 — 빈 페이지·표 밀림 없이 상단(작성정보/제목/결재란) 정렬 후 표가 한 페이지 폭을 채우도록 개선 (가로 A4)"
 }
