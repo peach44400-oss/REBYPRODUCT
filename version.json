@@ -1,5 +1,5 @@
 {
-  "version": "1.31.4",
+  "version": "1.32.0",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· 원료수불부 — 화면(팝업)과 인쇄를 동일한 모양으로 통일 (보는 그대로 인쇄됨). 화면에서도 표가 영역을 고르게 채웁니다"
+  "notes": "· 원료수불부 — 인쇄 전에 숫자 칸을 직접 임시 수정 후 인쇄 가능 (저장 안 됨). [↺ 초기화]로 원래 데이터로 되돌립니다"
 }

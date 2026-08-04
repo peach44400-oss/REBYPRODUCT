@@ -5284,6 +5284,7 @@ $("ledgerDate").addEventListener("change", e => { if (e.target.value) loadLedger
 $("ledgerPrevBtn").onclick = () => { const p = LEDGER.data && LEDGER.data.prev; p ? loadLedger(p) : toast("이전 기록이 없습니다"); };
 $("ledgerNextBtn").onclick = () => { const n = LEDGER.data && LEDGER.data.next; n ? loadLedger(n) : toast("다음 기록이 없습니다"); };
 $("ledgerTodayBtn").onclick = () => loadLedger(todayISO());
+$("ledgerReset").onclick = () => { renderLedger(); toast("임시 수정을 원래 데이터로 되돌렸습니다"); };
 function buildLedgerDoc(d, forPrint) {
   const NFv = v => (v == null || v === "") ? "" : Number(Math.round(v * 1000) / 1000).toLocaleString("ko-KR");
   const showAll = LEDGER.showAll;
@@ -5306,20 +5307,21 @@ function buildLedgerDoc(d, forPrint) {
     <th style="${TH} ${W(1.2)}">당일<br>사용</th>
     <th style="${TH} ${W(1.2)}">사용후<br>재고</th>
     <th style="${TH} ${W(1.6)}">소비<br>기한</th></tr>`;
+  const ED = 'class="lcell" contenteditable="true"';   // 임시 편집 가능 셀 (인쇄 전 수정용, 저장 안 됨)
   const totalRow = `<tr style="background:#f7f7f9; font-weight:700;">
     <td style="${TD} text-align:center;">합 계</td>
     <td style="${TD}"></td>
-    <td style="${TD} text-align:right;">${NFv(d.in_total)}</td>
-    ${prods.map(p => `<td style="${TD} text-align:right;">${d.col_total[p.id] ? NFv(d.col_total[p.id]) : ""}</td>`).join("")}
+    <td style="${TD} text-align:right;" ${ED}>${NFv(d.in_total)}</td>
+    ${prods.map(p => `<td style="${TD} text-align:right;" ${ED}>${d.col_total[p.id] ? NFv(d.col_total[p.id]) : ""}</td>`).join("")}
     <td style="${TD}"></td><td style="${TD}"></td><td style="${TD}"></td></tr>`;
   const body = rows2.map(r => `<tr>
     <td style="${TD} text-align:left; white-space:normal;">${esc(r.name)}</td>
-    <td style="${TD} text-align:right; color:#555;">${NFv(r.prev)}</td>
-    <td style="${TD} text-align:right; ${r.in ? 'color:#0a7a2f; font-weight:700;' : ''}">${NFv(r.in)}</td>
-    ${prods.map(p => { const q = r.usage[p.id]; return `<td style="${TD} text-align:right;">${q ? NFv(q) : ""}</td>`; }).join("")}
-    <td style="${TD} text-align:right;">${NFv(r.used)}</td>
-    <td style="${TD} text-align:right; font-weight:700;">${NFv(r.real)}</td>
-    <td style="${TD} text-align:center; font-size:8.5px; white-space:nowrap;">${esc(r.expiry || "")}</td></tr>`).join("");
+    <td style="${TD} text-align:right; color:#555;" ${ED}>${NFv(r.prev)}</td>
+    <td style="${TD} text-align:right; ${r.in ? 'color:#0a7a2f; font-weight:700;' : ''}" ${ED}>${NFv(r.in)}</td>
+    ${prods.map(p => { const q = r.usage[p.id]; return `<td style="${TD} text-align:right;" ${ED}>${q ? NFv(q) : ""}</td>`; }).join("")}
+    <td style="${TD} text-align:right;" ${ED}>${NFv(r.used)}</td>
+    <td style="${TD} text-align:right; font-weight:700;" ${ED}>${NFv(r.real)}</td>
+    <td style="${TD} text-align:center; font-size:8.5px; white-space:nowrap;" ${ED}>${esc(r.expiry || "")}</td></tr>`).join("");
   const dow = ["일", "월", "화", "수", "목", "금", "토"][new Date(d.date + "T00:00").getDay()];
   const TDm = "border:1px solid #333; padding:2px 6px; font-size:11px;";
   const approve = `<table style="border-collapse:collapse; display:inline-table;">
@@ -5343,7 +5345,7 @@ function buildLedgerDoc(d, forPrint) {
 }
 function ledgerPrint() {
   if (!LEDGER.data) return;
-  $("poPrintArea").innerHTML = buildLedgerDoc(LEDGER.data, true);   // 인쇄용(폭 100%·sticky·overflow 없음)
+  $("poPrintArea").innerHTML = $("ledgerBody").innerHTML;   // 지금 화면(임시 수정 포함) 그대로 인쇄
   const st = document.createElement("style");
   st.id = "ledgerPageStyle";
   // 가로 A4 + poPrintArea 자체 여백 제거(빈 페이지 방지) — 폰트는 표의 인라인 값 사용

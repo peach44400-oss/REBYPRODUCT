@@ -416,6 +416,11 @@
   #chatAttach{border:1px solid var(--line); background:#fff; border-radius:8px; cursor:pointer; padding:0 8px; font-size:14px;}
   #chatAttach:disabled, #chatInput:disabled{opacity:.5; cursor:default;}
   #chatBadge.ment{background:#F59E0B;}
+  /* 원료수불부 — 임시 편집 셀 (인쇄 전 숫자 수정용, 저장 안 됨) */
+  .lcell{cursor:text;}
+  .lcell:hover{background:#FFFBE6 !important;}
+  .lcell:focus{outline:2px solid #6366F1; background:#fff !important;}
+  @media print{ .lcell{outline:none !important; background:transparent !important;} }
   #chatInputRow{display:flex; gap:6px; padding:8px 10px; border-top:1px solid var(--line);}
   #chatInput{flex:1; min-width:0; border:1px solid var(--line); border-radius:10px; padding:7px 10px; font:inherit; font-size:12.5px; background:var(--surface); color:var(--ink);}
   /* 메시지 안 답장 인용 */
@@ -1424,8 +1429,9 @@
       <button class="btn sm" id="ledgerTodayBtn">오늘</button>
       <label style="font-size:12px; display:flex; align-items:center; gap:4px; cursor:pointer;" title="체크하면 사용/입고가 없는 자재·제품도 모두 표시 (빈 양식 인쇄용)">
         <input type="checkbox" id="ledgerAll"> 전체 품목</label>
+      <button class="btn sm" id="ledgerReset" title="임시로 고친 숫자를 원래 데이터로 되돌립니다">↺ 초기화</button>
       <span class="spacer"></span>
-      <span class="auto" style="font-size:11px;">🖨 인쇄 시 <b>가로 방향</b>·'페이지에 맞춤'을 선택하세요</span>
+      <span class="auto" style="font-size:11px;">숫자 칸을 클릭해 임시 수정 가능(저장 안 됨) · 인쇄는 <b>가로 방향</b></span>
       <button class="btn sm" id="ledgerPdf" title="인쇄 창에서 'PDF로 저장' 선택">📑 PDF</button>
       <button class="btn sm primary" id="ledgerPrintBtn">🖨 인쇄</button>
     </div>
