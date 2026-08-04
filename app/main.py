@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.30.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.31.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -4504,6 +4504,55 @@ def analytics():
             " FROM production WHERE defect_qty>0 GROUP BY date, reason"))
         return {"products": products, "prod": prod, "ship": ship, "disp": disp,
                 "defect": defect, "reasons": reasons}
+    finally:
+        con.close()
+
+
+@app.get("/api/ledger")
+def ledger(request: Request, date: str = ""):
+    """원료수불부 — 종이 양식(파일철) 그대로: 행=원재료, 열=제품별 사용량.
+    자재별 전일재고·금일입고·당일사용·사용후재고 + 제품별 사용량 + 입고 소비기한. 하루 단위."""
+    date = date or dt.date.today().isoformat()
+    con = connect()
+    try:
+        products = rows(con.execute(
+            "SELECT id, name FROM product WHERE status!='단종' ORDER BY sort, id"))
+        mats = rows(con.execute(
+            "SELECT id, name, unit FROM material WHERE kind='raw' AND status!='중단' ORDER BY sort, id"))
+        md = {r["material_id"]: r for r in con.execute(
+            "SELECT material_id, prev_qty, in_qty, used_qty, real_qty FROM material_daily WHERE date=?",
+            (date,))}
+        usage = {}   # material_id -> {product_id: qty}
+        for r in con.execute("""SELECT material_id, product_id, SUM(qty) q FROM material_usage
+                WHERE date=? AND product_id IS NOT NULL GROUP BY material_id, product_id""", (date,)):
+            usage.setdefault(r["material_id"], {})[r["product_id"]] = r["q"]
+        expiry = {}   # 그날 입고분의 제조일·소비기한
+        for r in con.execute("""SELECT material_id,
+                GROUP_CONCAT(DISTINCT NULLIF(expiry,'')) e, GROUP_CONCAT(DISTINCT NULLIF(made_date,'')) m
+                FROM material_in WHERE date=? GROUP BY material_id""", (date,)):
+            expiry[r["material_id"]] = {"expiry": r["e"] or "", "made": r["m"] or ""}
+        out_rows = []
+        col_total = {p["id"]: 0.0 for p in products}
+        in_total = 0.0
+        for m in mats:
+            d = md.get(m["id"])
+            u = usage.get(m["id"], {})
+            ex = expiry.get(m["id"], {})
+            row = {"id": m["id"], "name": m["name"], "unit": m["unit"] or "",
+                   "prev": (d["prev_qty"] if d else None), "in": (d["in_qty"] if d else None),
+                   "used": (d["used_qty"] if d else None), "real": (d["real_qty"] if d else None),
+                   "usage": u, "expiry": ex.get("expiry", ""), "made": ex.get("made", "")}
+            out_rows.append(row)
+            if row["in"]:
+                in_total += row["in"]
+            for pid, q in u.items():
+                if pid in col_total:
+                    col_total[pid] += q
+        prev = con.execute("SELECT MAX(date) v FROM material_daily WHERE date<?", (date,)).fetchone()["v"]
+        nxt = con.execute("SELECT MIN(date) v FROM material_daily WHERE date>?", (date,)).fetchone()["v"]
+        return {"date": date, "today": dt.date.today().isoformat(),
+                "products": products, "rows": out_rows,
+                "col_total": col_total, "in_total": in_total, "prev": prev, "next": nxt}
     finally:
         con.close()
 
