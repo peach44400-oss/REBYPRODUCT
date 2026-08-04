@@ -1,5 +1,5 @@
 {
-  "version": "1.31.2",
+  "version": "1.31.3",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· 원료수불부 인쇄 레이아웃 수정 — 빈 페이지·표 밀림 없이 상단(작성정보/제목/결재란) 정렬 후 표가 한 페이지 폭을 채우도록 개선 (가로 A4)"
+  "notes": "· 원료수불부 인쇄 — 열 폭을 비율대로 계산해 한 페이지를 고르게 채우도록 수정 (원부재료명 열만 커지던 문제 해결)"
 }

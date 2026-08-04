@@ -5295,15 +5295,18 @@ function buildLedgerDoc(d, forPrint) {
   const TD = "border:1px solid #333; padding:3px 5px; font-size:10px;";
   // 헤더 — 엑셀처럼 가로 줄바꿈(keep-all = 단어 단위), 세로 회전 안 함
   const TH = "border:1px solid #333; background:#eef0f2; font-weight:700; font-size:9.5px; text-align:center; vertical-align:middle; white-space:normal; word-break:keep-all; line-height:1.2; padding:3px 4px;";
-  const THp = TH + " width:52px;";
+  // 인쇄: 열마다 비율(%)로 폭 지정 → table-layout:fixed와 함께 페이지를 '고르게' 채운다 (한 열만 커지지 않게)
+  const N = prods.length || 1;
+  const wSum = 3 + 1.2 * 4 + 1.6 + 1.4 * N;   // 이름3 · 수치4개×1.2 · 소비기한1.6 · 제품×1.4
+  const W = (weight, px) => forPrint ? `width:${(weight / wSum * 100).toFixed(3)}%;` : `width:${px};`;
   const head = `<tr>
-    <th style="${TH} min-width:120px;${sticky1}">원부재료명</th>
-    <th style="${TH} width:46px;">전일<br>재고</th>
-    <th style="${TH} width:46px;">금일<br>입고</th>
-    ${prods.map(p => `<th style="${THp}">${esc(p.name)}</th>`).join("")}
-    <th style="${TH} width:46px;">당일<br>사용</th>
-    <th style="${TH} width:46px;">사용후<br>재고</th>
-    <th style="${TH} width:64px;">소비<br>기한</th></tr>`;
+    <th style="${TH} ${forPrint ? W(3) : "min-width:120px;"}${sticky1}">원부재료명</th>
+    <th style="${TH} ${W(1.2, "46px")}">전일<br>재고</th>
+    <th style="${TH} ${W(1.2, "46px")}">금일<br>입고</th>
+    ${prods.map(p => `<th style="${TH} ${W(1.4, "52px")}">${esc(p.name)}</th>`).join("")}
+    <th style="${TH} ${W(1.2, "46px")}">당일<br>사용</th>
+    <th style="${TH} ${W(1.2, "46px")}">사용후<br>재고</th>
+    <th style="${TH} ${W(1.6, "64px")}">소비<br>기한</th></tr>`;
   const totalRow = `<tr style="background:#f7f7f9; font-weight:700;">
     <td style="${TD} text-align:center;${forPrint ? "" : " position:sticky; left:0; background:#f7f7f9;"}">합 계</td>
     <td style="${TD}"></td>
@@ -5311,7 +5314,7 @@ function buildLedgerDoc(d, forPrint) {
     ${prods.map(p => `<td style="${TD} text-align:right;">${d.col_total[p.id] ? NFv(d.col_total[p.id]) : ""}</td>`).join("")}
     <td style="${TD}"></td><td style="${TD}"></td><td style="${TD}"></td></tr>`;
   const body = rows2.map(r => `<tr>
-    <td style="${TD} text-align:left; white-space:nowrap;${forPrint ? "" : " position:sticky; left:0; background:#fff;"}">${esc(r.name)}</td>
+    <td style="${TD} text-align:left; white-space:${forPrint ? "normal" : "nowrap"};${forPrint ? "" : " position:sticky; left:0; background:#fff;"}">${esc(r.name)}</td>
     <td style="${TD} text-align:right; color:#555;">${NFv(r.prev)}</td>
     <td style="${TD} text-align:right; ${r.in ? 'color:#0a7a2f; font-weight:700;' : ''}">${NFv(r.in)}</td>
     ${prods.map(p => { const q = r.usage[p.id]; return `<td style="${TD} text-align:right;">${q ? NFv(q) : ""}</td>`; }).join("")}
@@ -5335,7 +5338,7 @@ function buildLedgerDoc(d, forPrint) {
       <span style="font-size:23px; font-weight:800; letter-spacing:10px;">원 료 수 불 부</span></td>
     <td style="border:0; text-align:right; vertical-align:top; width:210px;">${approve}</td></tr></table>`;
   const emptyMsg = showAll ? "기록이 없습니다" : "이 날짜에는 사용·입고 기록이 없습니다 (빈 양식은 [전체 품목] 체크)";
-  const tbl = `<table style="border-collapse:collapse; ${forPrint ? "width:100%;" : "width:max-content;"}">
+  const tbl = `<table style="border-collapse:collapse; ${forPrint ? "width:100%; table-layout:fixed;" : "width:max-content;"}">
       <thead>${head}${totalRow}</thead><tbody>${body || `<tr><td style="${TD}" colspan="99">${emptyMsg}</td></tr>`}</tbody></table>`;
   const wrap = forPrint ? tbl : `<div style="overflow:auto;">${tbl}</div>`;
   return `<div style="font-family:'Malgun Gothic',sans-serif; color:#111;">${header}${wrap}</div>`;
