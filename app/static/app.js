@@ -5262,7 +5262,7 @@ $("planToPo").onclick = () => {
 };
 
 /* ── 원료수불부 (파일철 양식) — 날짜별 원료 사용 현황 ── */
-const LEDGER = { data: null };
+const LEDGER = { data: null, showAll: false };
 $("navLedger").onclick = () => openLedger();
 function openLedger(date) {
   const d = date || todayISO();
@@ -5275,55 +5275,64 @@ async function loadLedger(date) {
   try {
     LEDGER.data = await api("/api/ledger?date=" + encodeURIComponent(date));
     $("ledgerDate").value = LEDGER.data.date;
-    $("ledgerBody").innerHTML = buildLedgerDoc(LEDGER.data);
+    renderLedger();
   } catch (e) { /* api 토스트 */ }
 }
+function renderLedger() { if (LEDGER.data) $("ledgerBody").innerHTML = buildLedgerDoc(LEDGER.data); }
+$("ledgerAll").addEventListener("change", e => { LEDGER.showAll = e.target.checked; renderLedger(); });
 $("ledgerDate").addEventListener("change", e => { if (e.target.value) loadLedger(e.target.value); });
 $("ledgerPrevBtn").onclick = () => { const p = LEDGER.data && LEDGER.data.prev; p ? loadLedger(p) : toast("이전 기록이 없습니다"); };
 $("ledgerNextBtn").onclick = () => { const n = LEDGER.data && LEDGER.data.next; n ? loadLedger(n) : toast("다음 기록이 없습니다"); };
 $("ledgerTodayBtn").onclick = () => loadLedger(todayISO());
 function buildLedgerDoc(d) {
   const NFv = v => (v == null || v === "") ? "" : Number(Math.round(v * 1000) / 1000).toLocaleString("ko-KR");
-  const TD = "border:1px solid #333; padding:2px 3px; font-size:9px;";
-  const THr = TD + " background:#eef0f2; font-weight:700; text-align:center; white-space:nowrap;";
-  const THv = "border:1px solid #333; background:#eef0f2; font-weight:700; font-size:8.5px; writing-mode:vertical-rl; white-space:nowrap; padding:4px 1px; height:78px; text-align:left; vertical-align:bottom;";
-  const prods = d.products || [];
+  const showAll = LEDGER.showAll;
+  // 기본: 실제로 움직인 것만 — 생산된 제품(열) + 사용/입고 있는 자재(행). '전체 품목' 체크 시 모두.
+  const prods = showAll ? (d.products || []) : (d.products || []).filter(p => (d.col_total[p.id] || 0) > 0);
+  const rows2 = showAll ? (d.rows || [])
+    : (d.rows || []).filter(r => (r.in || 0) > 0 || (r.used || 0) > 0 || Object.keys(r.usage || {}).length > 0);
+  const TD = "border:1px solid #333; padding:3px 5px; font-size:10px;";
+  // 헤더 — 엑셀처럼 가로 줄바꿈(keep-all = 단어 단위), 세로 회전 안 함
+  const TH = "border:1px solid #333; background:#eef0f2; font-weight:700; font-size:9.5px; text-align:center; vertical-align:middle; white-space:normal; word-break:keep-all; line-height:1.2; padding:3px 4px;";
+  const THp = TH + " width:52px;";
   const head = `<tr>
-    <th style="${THr} min-width:118px; position:sticky; left:0; z-index:1;">원부재료명</th>
-    <th style="${THr}">전일<br>재고</th>
-    <th style="${THr}">금일<br>입고</th>
-    ${prods.map(p => `<th style="${THv}">${esc(p.name)}</th>`).join("")}
-    <th style="${THr}">당일<br>사용</th>
-    <th style="${THr}">사용후<br>재고</th>
-    <th style="${THr}">소비<br>기한</th></tr>`;
+    <th style="${TH} min-width:120px; position:sticky; left:0; z-index:1;">원부재료명</th>
+    <th style="${TH} width:46px;">전일<br>재고</th>
+    <th style="${TH} width:46px;">금일<br>입고</th>
+    ${prods.map(p => `<th style="${THp}">${esc(p.name)}</th>`).join("")}
+    <th style="${TH} width:46px;">당일<br>사용</th>
+    <th style="${TH} width:46px;">사용후<br>재고</th>
+    <th style="${TH} width:64px;">소비<br>기한</th></tr>`;
   const totalRow = `<tr style="background:#f7f7f9; font-weight:700;">
     <td style="${TD} text-align:center; position:sticky; left:0; background:#f7f7f9;">합 계</td>
     <td style="${TD}"></td>
     <td style="${TD} text-align:right;">${NFv(d.in_total)}</td>
     ${prods.map(p => `<td style="${TD} text-align:right;">${d.col_total[p.id] ? NFv(d.col_total[p.id]) : ""}</td>`).join("")}
     <td style="${TD}"></td><td style="${TD}"></td><td style="${TD}"></td></tr>`;
-  const body = (d.rows || []).map(r => `<tr>
+  const body = rows2.map(r => `<tr>
     <td style="${TD} text-align:left; white-space:nowrap; position:sticky; left:0; background:#fff;">${esc(r.name)}</td>
     <td style="${TD} text-align:right; color:#555;">${NFv(r.prev)}</td>
     <td style="${TD} text-align:right; ${r.in ? 'color:#0a7a2f; font-weight:700;' : ''}">${NFv(r.in)}</td>
     ${prods.map(p => { const q = r.usage[p.id]; return `<td style="${TD} text-align:right;">${q ? NFv(q) : ""}</td>`; }).join("")}
     <td style="${TD} text-align:right;">${NFv(r.used)}</td>
     <td style="${TD} text-align:right; font-weight:700;">${NFv(r.real)}</td>
-    <td style="${TD} text-align:center; font-size:7.5px; white-space:nowrap;">${esc(r.expiry || "")}</td></tr>`).join("");
+    <td style="${TD} text-align:center; font-size:8.5px; white-space:nowrap;">${esc(r.expiry || "")}</td></tr>`).join("");
   const dow = ["일", "월", "화", "수", "목", "금", "토"][new Date(d.date + "T00:00").getDay()];
-  const TDm = "border:1px solid #333; padding:2px 6px; font-size:10px;";
+  const TDm = "border:1px solid #333; padding:2px 6px; font-size:11px;";
   const approve = `<table style="border-collapse:collapse; float:right;">
     <tr><td rowspan="2" style="${TDm} text-align:center; writing-mode:vertical-rl; letter-spacing:4px; background:#eef0f2;">결재</td>
-      <td style="${TDm} text-align:center; background:#eef0f2; width:52px;">작성</td>
-      <td style="${TDm} text-align:center; background:#eef0f2; width:52px;">확인</td>
-      <td style="${TDm} text-align:center; background:#eef0f2; width:52px;">승인</td></tr>
+      <td style="${TDm} text-align:center; background:#eef0f2; width:54px;">작성</td>
+      <td style="${TDm} text-align:center; background:#eef0f2; width:54px;">확인</td>
+      <td style="${TDm} text-align:center; background:#eef0f2; width:54px;">승인</td></tr>
     <tr><td style="${TDm} height:34px;"></td><td style="${TDm}"></td><td style="${TDm}"></td></tr></table>`;
+  const emptyMsg = showAll ? "기록이 없습니다" : "이 날짜에는 사용·입고 기록이 없습니다 (빈 양식은 [전체 품목] 체크)";
   return `<div style="font-family:'Malgun Gothic',sans-serif; color:#111;">
     ${approve}
     <h1 style="font-size:22px; text-align:center; letter-spacing:10px; margin:0 0 10px;">원 료 수 불 부</h1>
-    <div style="font-size:11px; margin:0 0 8px; clear:both;">● 작성일 : <b>${d.date} (${dow})</b> &nbsp;&nbsp; ● 원재료명 : 전제품 원재료 수불</div>
+    <div style="font-size:11px; margin:0 0 8px; clear:both;">● 작성일 : <b>${d.date} (${dow})</b> &nbsp;&nbsp; ● 원재료명 : 전제품 원재료 수불
+      ${showAll ? "" : ` &nbsp;·&nbsp; <span style="color:#888;">사용 자재 ${rows2.length}종 · 생산 제품 ${prods.length}종</span>`}</div>
     <div style="overflow:auto;"><table style="border-collapse:collapse; width:max-content;">
-      <thead>${head}${totalRow}</thead><tbody>${body || `<tr><td style="${TD}" colspan="99">기록이 없습니다</td></tr>`}</tbody>
+      <thead>${head}${totalRow}</thead><tbody>${body || `<tr><td style="${TD}" colspan="99">${emptyMsg}</td></tr>`}</tbody>
     </table></div></div>`;
 }
 function ledgerPrint() {
