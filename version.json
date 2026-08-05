@@ -1,5 +1,5 @@
 {
-  "version": "1.35.0",
+  "version": "1.35.1",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· 자재 이력에 '소비기한' 열 추가 — 입고 없이 원래 있던 재고(전일·초기재고)에도 소비기한을 적을 수 있습니다\n· 원료수불부: 한번 적은 소비기한은 다음 날들로 이어져 표시(가장 최근 입고/입력 기준)"
+  "notes": "· 사이드바 깨짐 수정 — 화면이 짧을 때 발주 관리 패널과 하단(계정·버튼)이 겹치던 현상 해결 (넘치면 스크롤)"
 }
