@@ -1,5 +1,5 @@
 {
-  "version": "1.32.0",
+  "version": "1.33.0",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· 원료수불부 — 인쇄 전에 숫자 칸을 직접 임시 수정 후 인쇄 가능 (저장 안 됨). [↺ 초기화]로 원래 데이터로 되돌립니다"
+  "notes": "· 기준정보 관리 → 원재료·부재료에 소비기한(보관일수) 입력 추가 (수정 폼·목록·빠른 편집)\n· 원료수불부: 입고 시 소비기한을 안 넣은 자재는 이 보관일수로 자동 계산해 표시 (회색·기울임 = 자동 계산분)"
 }

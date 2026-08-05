@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.32.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.33.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -135,7 +135,7 @@ MASTER_TABLES = {
     "product": ("product", ["name", "category", "spec", "pack_sizes", "line_id", "unit_price",
                             "shelf_days", "safety_stock", "batch_yield", "status", "note"]),
     "material": ("material", ["kind", "name", "spec", "unit", "pack_count", "pack_set", "unit_price", "partner_id",
-                              "safety_stock", "prod_mult", "prod_per", "status", "note"]),
+                              "safety_stock", "prod_mult", "prod_per", "shelf_days", "status", "note"]),
     "partner": ("partner", ["name", "type", "phone", "contact", "note", "status", "biz_no", "ceo", "mobile", "email"]),
     "staff": ("staff", ["name", "kind", "position", "process", "wage", "join_date", "phone", "status", "note"]),
     "line": ("line", ["name", "process", "std_hours", "parent_id", "note", "status"]),
@@ -1240,8 +1240,8 @@ def master_bulkset(request: Request, mtype: str, body: dict):
     """CSV 일괄 가져오기 — 이름 매칭으로 단가/소비일/안전재고/시급만 갱신 (admin)."""
     require_admin(request)
     allowed = {"product": {"unit_price", "shelf_days", "safety_stock"},
-               "raw": {"unit_price", "safety_stock", "pack_count"},
-               "sub": {"unit_price", "safety_stock", "pack_count"},
+               "raw": {"unit_price", "safety_stock", "pack_count", "shelf_days"},
+               "sub": {"unit_price", "safety_stock", "pack_count", "shelf_days"},
                "staff": {"wage"}}
     if mtype not in allowed:
         raise HTTPException(400, "이 탭은 일괄 가져오기를 지원하지 않습니다")
@@ -4518,7 +4518,7 @@ def ledger(request: Request, date: str = ""):
         products = rows(con.execute(
             "SELECT id, name FROM product WHERE status!='단종' ORDER BY sort, id"))
         mats = rows(con.execute(
-            "SELECT id, name, unit FROM material WHERE kind='raw' AND status!='중단' ORDER BY sort, id"))
+            "SELECT id, name, unit, shelf_days FROM material WHERE kind='raw' AND status!='중단' ORDER BY sort, id"))
         md = {r["material_id"]: r for r in con.execute(
             "SELECT material_id, prev_qty, in_qty, used_qty, real_qty FROM material_daily WHERE date=?",
             (date,))}
@@ -4531,6 +4531,13 @@ def ledger(request: Request, date: str = ""):
                 GROUP_CONCAT(DISTINCT NULLIF(expiry,'')) e, GROUP_CONCAT(DISTINCT NULLIF(made_date,'')) m
                 FROM material_in WHERE date=? GROUP BY material_id""", (date,)):
             expiry[r["material_id"]] = {"expiry": r["e"] or "", "made": r["m"] or ""}
+        # 소비기한 자동 계산용 — 그날까지 가장 최근 입고의 제조일(없으면 입고일). shelf_days와 합쳐 소비기한 추정
+        base_date = {}
+        for r in con.execute("""SELECT mi.material_id, mi.made_date, mi.date FROM material_in mi
+                JOIN (SELECT material_id, MAX(date) mx FROM material_in WHERE date<=? GROUP BY material_id) x
+                  ON x.material_id=mi.material_id AND x.mx=mi.date
+                WHERE mi.date<=?""", (date, date)):
+            base_date[r["material_id"]] = r["made_date"] or r["date"]
         out_rows = []
         col_total = {p["id"]: 0.0 for p in products}
         in_total = 0.0
@@ -4538,10 +4545,19 @@ def ledger(request: Request, date: str = ""):
             d = md.get(m["id"])
             u = usage.get(m["id"], {})
             ex = expiry.get(m["id"], {})
+            exp = ex.get("expiry", "")
+            exp_est = False
+            # 입고 시 소비기한을 안 넣었으면 기준정보 소비일(shelf_days)로 자동 계산 (기준=최근 입고 제조일/입고일)
+            if not exp and (m["shelf_days"] or 0) > 0 and base_date.get(m["id"]):
+                try:
+                    exp = (dt.date.fromisoformat(base_date[m["id"]]) + dt.timedelta(days=int(m["shelf_days"]))).isoformat()
+                    exp_est = True
+                except ValueError:
+                    pass
             row = {"id": m["id"], "name": m["name"], "unit": m["unit"] or "",
                    "prev": (d["prev_qty"] if d else None), "in": (d["in_qty"] if d else None),
                    "used": (d["used_qty"] if d else None), "real": (d["real_qty"] if d else None),
-                   "usage": u, "expiry": ex.get("expiry", ""), "made": ex.get("made", "")}
+                   "usage": u, "expiry": exp, "expiry_est": exp_est, "made": ex.get("made", "")}
             out_rows.append(row)
             if row["in"]:
                 in_total += row["in"]

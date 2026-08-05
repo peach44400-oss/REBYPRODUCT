@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS material (
   safety_stock REAL DEFAULT 0,
   prod_mult REAL,                      -- 부재료: 단위당 수량 (롤당 500매)
   prod_per REAL,                       -- 부재료: 1회 생산 소요량
+  shelf_days INTEGER DEFAULT 0,        -- 소비기한 보관일수 (입고일/제조일 + 이 일수 = 소비기한 · 수불부 소비기한 자동 표시)
   status TEXT DEFAULT '사용중',
   note TEXT DEFAULT '',
   sort INTEGER DEFAULT 0,
@@ -628,6 +629,10 @@ def init_db() -> None:
         con.execute("ALTER TABLE material_in ADD COLUMN partner TEXT DEFAULT ''")
     if "price" not in micols:
         con.execute("ALTER TABLE material_in ADD COLUMN price REAL DEFAULT 0")
+    # 자재 소비기한 보관일수 (기준정보에서 입력 — 수불부 소비기한 자동 표시)
+    mcols = [r[1] for r in con.execute("PRAGMA table_info(material)")]
+    if "shelf_days" not in mcols:
+        con.execute("ALTER TABLE material ADD COLUMN shelf_days INTEGER DEFAULT 0")
     # 거래처: 사업자등록번호·대표자·모바일·이메일 (ERP 가져오기 + 발주서 메일)
     pcols = [r[1] for r in con.execute("PRAGMA table_info(partner)")]
     for col in ("biz_no", "ceo", "mobile", "email"):
