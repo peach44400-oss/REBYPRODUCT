@@ -41,21 +41,28 @@
   .nav-sep::after{content:''; flex:1; height:1px; background:rgba(255,255,255,.08);}
   .nav .cnt{margin-left:auto; background:var(--crit); color:#fff; font-size:11px; font-weight:700;
     padding:1px 7px; border-radius:99px;}
-  /* 사이드바 부족 자재 알림 — 팝업 대신 상주. 길어져도 사이드바를 밀지 않게 목록만 스크롤 */
-  #lowPanel{margin-top:16px; padding:10px 10px 8px; border-radius:10px;
-    background:rgba(194,55,44,.14); border:1px solid rgba(194,55,44,.35); min-height:0;
-    display:flex; flex-direction:column; flex-shrink:0;}
+  /* 발주 필요 — 상단바 배지 + 엑셀 메모 스타일 팝업 */
+  .po-need{position:relative; display:flex; align-items:center;}
+  .po-need-badge{border:1px solid var(--warn); background:var(--warn-soft); color:#8a5a12;
+    font-size:12.5px; font-weight:700; padding:5px 12px; border-radius:999px; white-space:nowrap; line-height:1;}
+  .po-need-badge:hover{filter:brightness(.97);}
+  .po-need-badge:not(.warn){border-color:var(--line); background:var(--surface); color:var(--muted); font-weight:600;}
+  .po-need-badge b{font-weight:800;}
+  .po-memo{position:absolute; top:calc(100% + 9px); right:0; width:300px; max-width:calc(100vw - 24px);
+    background:#FFFCEB; border:1px solid #E8C34D; border-radius:8px; box-shadow:0 10px 30px rgba(80,60,0,.22);
+    padding:11px 11px 9px; z-index:1600; flex-direction:column; max-height:min(70vh,460px); overflow:auto;}
+  .po-memo::before{content:""; position:absolute; top:-7px; right:24px; width:12px; height:12px;
+    background:#FFFCEB; border-left:1px solid #E8C34D; border-top:1px solid #E8C34D; transform:rotate(45deg);}
   .lowp-h{display:flex; align-items:center; justify-content:space-between; gap:6px;
-    font-size:11.5px; color:#FFB4AE; margin-bottom:6px;}
-  .lowp-h b{font-size:12px; color:#FFD5D1;}
-  .lowp-btns{display:flex; gap:4px; margin-bottom:6px;}
-  #lowpPo, #lowpPoList, #lowpBulk, #lowpPlan{flex:1; background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.25); color:#FFD5D1;
-    font-size:11px; padding:3px 6px; border-radius:6px; cursor:pointer; white-space:nowrap;}
-  #lowpPo:hover, #lowpPoList:hover, #lowpBulk:hover, #lowpPlan:hover{background:rgba(255,255,255,.2);}
+    font-size:12px; color:var(--muted); margin-bottom:8px;}
+  .lowp-h b{font-size:12.5px; color:var(--ink);}
+  .lowp-btns{display:flex; gap:5px; margin-bottom:6px;}
+  #lowpPo, #lowpPoList, #lowpBulk, #lowpPlan{flex:1; background:var(--surface); border:1px solid var(--line); color:var(--ink);
+    font-size:11.5px; padding:5px 6px; border-radius:6px; cursor:pointer; white-space:nowrap;}
+  #lowpPo:hover, #lowpPoList:hover, #lowpBulk:hover, #lowpPlan:hover{background:var(--accent-soft);}
   /* 부족 자재가 없을 때 — 경고색 대신 중립 톤 */
-  #lowPanel.ok{background:rgba(255,255,255,.06); border-color:rgba(255,255,255,.18);}
-  #lowPanel.ok .lowp-h b, #lowPanel.ok .lowp-h, #lowPanel.ok #lowpCnt{color:var(--side-muted);}
-  #lowPanel.ok #lowpPo, #lowPanel.ok #lowpPoList, #lowPanel.ok #lowpBulk, #lowPanel.ok #lowpPlan{color:var(--side-ink);}
+  .po-memo.ok{background:#FBFAF5; border-color:var(--line);}
+  .po-memo.ok::before{background:#FBFAF5; border-color:var(--line);}
   /* 기준정보 목록 인쇄 — 열 잘림 방지: 표 축소 + 편집 열·도구 숨김 */
   @media print{
     #scr-items table{font-size:8.5px !important;}
@@ -85,26 +92,27 @@
   #poPrintArea th{background:#f0f0f0; font-weight:700;}
   .po-meta{display:flex; justify-content:space-between; gap:16px; margin-bottom:14px; font-size:13px;}
   .po-meta table{width:auto; min-width:46%;}
-  #lowpCnt{font-size:10.5px; color:#FFB4AE;}
-  #lowpList{display:flex; flex-direction:column; gap:3px; overflow-y:auto; max-height:190px;}
+  #lowpCnt{font-size:11px; color:var(--warn); font-weight:700;}
+  #lowpList{display:flex; flex-direction:column; gap:2px; overflow-y:auto; max-height:230px;}
   .lowp-item{display:flex; align-items:center; justify-content:space-between; gap:6px; width:100%;
-    background:none; border:0; color:var(--side-ink); font-size:11.5px; padding:4px 6px;
+    background:none; border:0; color:var(--ink); font-size:12px; padding:4px 6px;
     border-radius:6px; text-align:left; cursor:pointer;}
-  .lowp-item:hover{background:rgba(255,255,255,.08);}
+  .lowp-item:hover{background:rgba(0,0,0,.05);}
   .lowp-item .nm{overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
-  .lowp-item .qt{flex:none; font-size:11px; color:#FFB4AE; font-weight:700;}
-  .lowp-item.ordered .qt{color:var(--side-muted); font-weight:500;}
-  #lowpNote{font-size:10.5px; color:var(--side-muted); margin-top:6px; line-height:1.45;}
-  #lowpNote button{background:none; border:0; color:#FFB4AE; text-decoration:underline;
-    cursor:pointer; font-size:10.5px; padding:0;}
-  .side-foot{margin-top:auto; padding:12px 10px 0; border-top:1px solid rgba(255,255,255,.08);
-    font-size:11.5px; color:var(--side-muted); flex-shrink:0;}
-  .side-foot .dot{display:inline-block; width:7px; height:7px; border-radius:99px; background:var(--ok); margin-right:6px;}
-  /* 푸터 버튼 3종 — 균등 폭·동일 높이 (이모지·글자수 차이로 어긋나지 않게) */
-  .side-foot .sfbtn{flex:1; height:26px; padding:0 4px; font-size:11px; line-height:1;
-    display:inline-flex; align-items:center; justify-content:center; min-height:0; min-width:0;}
+  .lowp-item .qt{flex:none; font-size:11.5px; color:var(--crit); font-weight:700;}
+  .lowp-item.ordered .qt{color:var(--muted); font-weight:500;}
+  .lowp-item.ordered .nm{color:var(--muted);}
+  #lowpNote{font-size:11px; color:var(--muted); margin-top:6px; line-height:1.45;}
+  #lowpNote button{background:none; border:0; color:var(--warn); text-decoration:underline;
+    cursor:pointer; font-size:11px; padding:0;}
+  /* 상단바 계정 클러스터 */
+  .topacct{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-left:4px;}
+  .topacct #dbStatus{font-size:11px; color:var(--muted); line-height:1.2; white-space:nowrap;}
+  .topacct #userLbl{font-size:12px; color:var(--ink); font-weight:700; cursor:pointer;
+    text-decoration:underline dotted; text-underline-offset:3px; white-space:nowrap;}
   .main{flex:1; min-width:0; padding:22px 28px 40px;}
-  .topbar{display:flex; align-items:baseline; gap:14px; margin-bottom:18px;}
+  .topbar{display:flex; align-items:center; gap:12px; margin-bottom:18px;
+    position:sticky; top:0; z-index:40; background:var(--bg); padding:8px 0;}
   #menuBtn{display:none; border:1px solid var(--line); background:var(--surface); border-radius:8px;
     font-size:17px; padding:4px 11px; cursor:pointer; align-self:center;}
   #sideDim{display:none;}
@@ -639,9 +647,9 @@
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="7" cy="7" r="4.2" stroke="currentColor" stroke-width="1.5"/><path d="m10.2 10.2 3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
         <em>기록 조회</em>
       </button>
-      <button id="navLedger" title="원료수불부 — 날짜별 원료 사용 현황(파일철 양식)으로 보기·인쇄">
+      <button id="navLedger" title="수불부 — 원료·완제품 수불을 날짜별(파일철 양식)로 보기·인쇄">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2.5" y="2" width="11" height="12" rx="1" stroke="currentColor" stroke-width="1.4"/><path d="M5 5.5h6M5 8h6M5 10.5h4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
-        <em>원료수불부</em>
+        <em>수불부</em>
       </button>
       <button data-scr="staff" id="navStaff" style="display:none;" title="관리자 전용 — 사람별 근무시간·노무비 집계">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="6" cy="5" r="2.4" stroke="currentColor" stroke-width="1.4"/><path d="M2 13c0-2.2 1.8-3.6 4-3.6S10 10.8 10 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M11 4.2c1.1.2 1.9 1.1 1.9 2.2 0 1-.7 1.9-1.7 2.1M12 9.6c1.6.3 2.7 1.4 2.7 3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
@@ -654,35 +662,6 @@
         <em>기준정보 관리</em>
       </button>
     </nav>
-    <!-- 부족 자재 알림 — 자재 담당·admin에게만. 팝업 대신 사이드바에 상주해 흐름을 막지 않는다 -->
-    <div id="lowPanel" style="display:none;">
-      <div class="lowp-h"><b id="lowpTitle">⚠ 발주 필요</b><span id="lowpCnt"></span></div>
-      <div class="lowp-btns">
-        <button id="lowpPo" title="부족 자재로 발주서를 만들어 인쇄·메일 발송합니다">📋 발주서</button>
-        <button id="lowpPoList" title="지금까지 만든 발주서 목록 — 발송 기록 확인·재인쇄">📑 이력</button>
-      </div>
-      <div class="lowp-btns">
-        <button id="lowpBulk" title="부족 자재를 거래처별로 묶어 발주서 초안을 한번에 만듭니다">🧾 발주서 일괄</button>
-      </div>
-      <div class="lowp-btns">
-        <button id="lowpPlan" title="생산계획 수량을 입력하면 배합비로 자재 소요량을 계산하고 부족분을 발주로 연결합니다">🗓 생산계획 발주</button>
-      </div>
-      <div id="lowpList"></div>
-      <div id="lowpNote"></div>
-    </div>
-    <div class="side-foot">
-      <div style="display:flex; align-items:flex-start;"><span class="dot" style="margin-top:5px;"></span><span id="dbStatus" style="line-height:1.5;">DB 연결됨</span></div>
-      <div id="userBox" style="margin-top:8px; display:none;">
-        <span id="userLbl" style="color:var(--side-ink); font-weight:700; cursor:pointer; text-decoration:underline dotted; text-underline-offset:3px;"
-              title="클릭하면 내 설정(개인정보·메일)이 열립니다"></span>
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:5px; margin-top:6px;">
-          <button class="btn sm sfbtn" id="btnPw" title="개인정보(비밀번호)·메일 계정 설정">내 설정</button>
-          <button class="btn sm sfbtn" id="btnCompose" title="일반 메일을 작성해 보냅니다 (발주서와 무관)">✉ 메일 보내기</button>
-          <button class="btn sm sfbtn" id="btnAdmin" style="display:none;" title="백업/복원 · 데이터 점검">관리</button>
-          <button class="btn sm sfbtn" id="btnLogout">로그아웃</button>
-        </div>
-      </div>
-    </div>
   </aside>
 
   <div class="main">
@@ -691,6 +670,34 @@
       <h1 id="scrTitle">대시보드</h1>
       <span class="today num" id="todayLbl"></span>
       <span class="spacer"></span>
+      <!-- 발주 필요 배지 + 엑셀 메모 팝업 (자재 담당·admin) -->
+      <div class="po-need" id="poNeedWrap" style="display:none;">
+        <button class="po-need-badge" id="poNeedBadge" title="발주 필요 목록 보기">📋 발주 관리</button>
+        <div id="lowPanel" class="po-memo" style="display:none;">
+          <div class="lowp-h"><b id="lowpTitle">⚠ 발주 필요</b><span id="lowpCnt"></span></div>
+          <div class="lowp-btns">
+            <button id="lowpPo" title="부족 자재로 발주서를 만들어 인쇄·메일 발송합니다">📋 발주서</button>
+            <button id="lowpPoList" title="지금까지 만든 발주서 목록 — 발송 기록 확인·재인쇄">📑 이력</button>
+          </div>
+          <div class="lowp-btns">
+            <button id="lowpBulk" title="부족 자재를 거래처별로 묶어 발주서 초안을 한번에 만듭니다">🧾 발주서 일괄</button>
+          </div>
+          <div class="lowp-btns">
+            <button id="lowpPlan" title="생산계획 수량을 입력하면 배합비로 자재 소요량을 계산하고 부족분을 발주로 연결합니다">🗓 생산계획 발주</button>
+          </div>
+          <div id="lowpList"></div>
+          <div id="lowpNote"></div>
+        </div>
+      </div>
+      <!-- 계정: 로그인 정보 · 내 설정 · 메일 · 관리 · 로그아웃 -->
+      <div class="topacct" id="userBox" style="display:none;">
+        <span id="dbStatus" title="데이터베이스 연결 상태">DB 연결됨</span>
+        <span id="userLbl" title="클릭하면 내 설정(개인정보·메일)이 열립니다"></span>
+        <button class="btn sm" id="btnPw" title="개인정보(비밀번호)·메일 계정 설정">내 설정</button>
+        <button class="btn sm" id="btnCompose" title="일반 메일을 작성해 보냅니다 (발주서와 무관)">✉ 메일 보내기</button>
+        <button class="btn sm" id="btnAdmin" style="display:none;" title="백업/복원 · 데이터 점검">관리</button>
+        <button class="btn sm" id="btnLogout">로그아웃</button>
+      </div>
     </div>
     <div id="sideDim"></div>
 
@@ -1422,8 +1429,15 @@
 <!-- 원료수불부 (파일철 양식) — 날짜별 원료 사용 현황 보기·인쇄 -->
 <div class="overlay" id="ledgerOverlay">
   <div class="modal" style="width:min(1400px, 98vw);">
-    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
-      <h3 style="margin:0;">📋 원료수불부</h3>
+    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
+      <h3 style="margin:0;">📋 수불부</h3>
+      <div class="tabs" id="ledgerTabs" style="margin:0;">
+        <button class="on" data-ltab="raw">원료 수불부</button>
+        <button data-ltab="fin" title="완제품 수불부 — 엑셀 양식이 준비되면 활성화됩니다">완제품 수불부</button>
+      </div>
+    </div>
+    <!-- 원료 수불부 도구 (raw 탭 전용) -->
+    <div id="ledgerRawTools" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
       <button class="btn sm" id="ledgerPrevBtn" title="기록 있는 이전 날짜">◀</button>
       <input type="date" id="ledgerDate" style="font-size:13px; padding:4px 8px; border:1px solid var(--line); border-radius:8px;">
       <button class="btn sm" id="ledgerNextBtn" title="기록 있는 다음 날짜">▶</button>
@@ -1437,6 +1451,13 @@
       <button class="btn sm primary" id="ledgerPrintBtn">🖨 인쇄</button>
     </div>
     <div id="ledgerBody" style="max-height:74vh; overflow:auto; border:1px solid var(--line-soft); border-radius:8px; background:#fff; padding:12px;"></div>
+    <!-- 완제품 수불부 (준비 중 — 엑셀 양식 준비되면 원료 수불부와 동일하게 구현) -->
+    <div id="ledgerFin" style="display:none; max-height:74vh; overflow:auto; border:1px solid var(--line-soft); border-radius:8px; background:#fff; padding:44px 20px; text-align:center; color:var(--muted);">
+      <div style="font-size:40px; margin-bottom:12px;">📦</div>
+      <div style="font-size:15px; font-weight:700; color:var(--ink); margin-bottom:6px;">완제품 수불부</div>
+      <div style="font-size:13px;">준비 중입니다 — 완제품 수불 엑셀 양식이 준비되면 원료 수불부와 동일하게 날짜별 조회·인쇄를 지원합니다.</div>
+      <div style="font-size:12px; margin-top:8px; color:var(--faint);">필요하실 때 "완제품 수불부 추가"라고 말씀해 주세요.</div>
+    </div>
     <div class="modal-foot"><button class="btn" onclick="closeLedger()">닫기</button></div>
   </div>
 </div>

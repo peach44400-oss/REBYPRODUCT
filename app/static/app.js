@@ -4487,14 +4487,18 @@ window.gotoEntry = (date) => {
    자재 담당(stock)·admin에게만 보인다. */
 async function loadLowStock() {
   const canSee = ROLE === "admin" || MYDUTY.has("stock");
-  const panel = $("lowPanel");
-  if (!canSee) { panel.style.display = "none"; return; }
+  const wrap = $("poNeedWrap");
+  if (!canSee) { if (wrap) wrap.style.display = "none"; return; }
   let d;
   try { d = await api("/api/lowstock"); } catch (e) { return; }
   const items = d.items || [];
   const todo = items.filter(x => !x.ordered);          // 아직 발주 안 한 것 = 진짜 할 일
-  panel.style.display = "flex";   // 부족이 없어도 표시 — [📋 발주서] 진입점 (목록엔 '미달 없음' 안내)
-  // 상태별 표기: 부족이 있으면 경고, 없으면 중립 톤의 '발주 관리'
+  // 상단바 배지 — 부족이 없어도 진입점으로 표시(엑셀 메모 팝업). 부족 있으면 경고 톤
+  if (wrap) wrap.style.display = "";
+  const badge = $("poNeedBadge");
+  badge.classList.toggle("warn", todo.length > 0);
+  badge.innerHTML = todo.length ? `⚠ 발주 필요 <b>${todo.length}종</b>` : "📋 발주 관리";
+  const panel = $("lowPanel");    // 메모 팝업 내용 — 열림 여부는 배지 클릭으로 토글
   panel.classList.toggle("ok", !todo.length);
   $("lowpTitle").textContent = todo.length ? "⚠ 발주 필요" : "📋 발주 관리";
   $("lowpCnt").textContent = items.length
@@ -4519,6 +4523,23 @@ $("lowPanel").addEventListener("click", e => {
   if (!it) return;
   gotoLowMaterial(+it.dataset.lowmid);
 });
+// 상단바 발주 배지 → 엑셀 메모 팝업 토글 · 바깥 클릭 시 닫힘
+$("poNeedBadge").addEventListener("click", e => {
+  e.stopPropagation();
+  const m = $("lowPanel");
+  m.style.display = (m.style.display === "flex") ? "none" : "flex";
+});
+document.addEventListener("click", e => {
+  const m = $("lowPanel");
+  if (!m || m.style.display !== "flex") return;
+  if (e.target.closest("#lowPanel") || e.target.closest("#poNeedBadge")) return;
+  m.style.display = "none";
+});
+// 메모 안 버튼(발주서·이력·일괄·계획·부족항목)을 누르면 화면전환/모달이 뜨므로 메모를 닫는다.
+// 각 버튼 핸들러가 stopPropagation을 쓰므로 capture 단계에서 처리(그들보다 먼저 실행).
+$("lowPanel").addEventListener("click", e => {
+  if (e.target.closest("button")) $("lowPanel").style.display = "none";
+}, true);
 /** 그 자재의 발주량 입력칸으로 이동 — 없으면 재고 실사에 행을 추가해 준다 */
 async function gotoLowMaterial(mid) {
   document.querySelector('#nav button[data-scr="entry"]').click();
@@ -5268,9 +5289,21 @@ function openLedger(date) {
   const d = date || todayISO();
   $("ledgerDate").value = d;
   $("ledgerOverlay").classList.add("on");
+  setLedgerTab("raw");
   loadLedger(d);
 }
 window.closeLedger = () => $("ledgerOverlay").classList.remove("on");
+// 수불부 탭 전환 — 원료 수불부(raw) / 완제품 수불부(fin, 준비 중). 이후 탭 추가 시 여기 확장.
+function setLedgerTab(tab) {
+  [...$("ledgerTabs").children].forEach(b => b.classList.toggle("on", b.dataset.ltab === tab));
+  const raw = tab === "raw";
+  $("ledgerRawTools").style.display = raw ? "flex" : "none";
+  $("ledgerBody").style.display = raw ? "" : "none";
+  $("ledgerFin").style.display = raw ? "none" : "";
+}
+$("ledgerTabs").addEventListener("click", e => {
+  const b = e.target.closest("[data-ltab]"); if (b) setLedgerTab(b.dataset.ltab);
+});
 async function loadLedger(date) {
   try {
     LEDGER.data = await api("/api/ledger?date=" + encodeURIComponent(date));
@@ -7660,7 +7693,7 @@ async function startApp(me) {
   loadLowStock();   // 사이드바 '발주 필요' 알림 (자재 담당·admin)
   $("navPoStat").style.display = canStock ? "" : "none";   // 발주 현황 탭 — 자재 담당·admin
   api("/api/mysign").then(s => { MYSIGN.img = s.img || ""; }).catch(() => { });   // 내 사인 (발주서 서명란)
-  $("dbStatus").innerHTML = `DB 연결됨<br>제품 ${M.product.length} · 자재 ${M.raw.length + M.sub.length}`;
+  $("dbStatus").innerHTML = `🟢 제품 ${M.product.length} · 자재 ${M.raw.length + M.sub.length}`;
   // 권한 실시간 반영: admin이 권한을 바꾸면(서버 세션은 즉시 교체됨) 화면도 20초 내 자동 새로고침
   setInterval(async () => {
     try {
