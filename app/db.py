@@ -193,6 +193,14 @@ CREATE TABLE IF NOT EXISTS material_in (
 );
 CREATE INDEX IF NOT EXISTS idx_matin_date ON material_in(date);
 
+-- 입고 없이 보유한 재고(전일/초기재고)의 소비기한 — 자재 이력에서 수동 입력 (수불부 표시용)
+CREATE TABLE IF NOT EXISTS material_expiry (
+  material_id INTEGER NOT NULL,
+  date TEXT NOT NULL,
+  expiry TEXT DEFAULT '',
+  PRIMARY KEY(material_id, date)
+);
+
 -- 발주서 — 자재 부족 시 거래처에 보내는 주문서 (품목은 작성 시점 스냅샷 JSON)
 CREATE TABLE IF NOT EXISTS purchase_order (
   id INTEGER PRIMARY KEY,

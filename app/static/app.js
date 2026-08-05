@@ -6378,22 +6378,26 @@ async function openMatHistory(mid) {
     `${d.kind === "raw" ? "원재료" : "부재료"} · 최근 ${d.rows.length}일` +
     ` · 마지막 입고 ${d.last_in ? d.last_in.date + " (+" + NF(d.last_in.in_qty) + d.unit + ")" : "기록 없음"}` +
     ` · 마지막 사용 ${d.last_use ? d.last_use.date + " (" + NF(d.last_use.used_qty) + d.unit + ")" : "기록 없음"}`;
+  // 그 날짜의 소비기한 값 (입고분 우선, 없으면 입고 없는 재고 수동입력분)
+  const rowExp = r => ((d.in_expiry && d.in_expiry[r.date]) || (d.man_expiry && d.man_expiry[r.date]) || "").split(",")[0].trim();
   $("anaPBody").innerHTML = bomSec + priceSec + `<div class="tbl-wrap"><table>
-    <thead><tr><th>날짜</th><th class="r">전일</th><th class="r">입고</th><th class="r">사용</th><th class="r">실재고</th><th>발주</th></tr></thead>
+    <thead><tr><th>날짜</th><th class="r">전일</th><th class="r">입고</th><th class="r">사용</th><th class="r">실재고</th><th>소비기한</th><th>발주</th></tr></thead>
     <tbody class="num">${d.rows.map(r => `<tr ${r.in_qty > 0 ? 'style="background:var(--ok-soft)"' : ""}>
       <td>${r.date}${r.src === "auto" ? ' <span class="chip cat">자동</span>' : ""}</td>
       <td class="r">${NF(r.prev_qty)}</td>
       <td class="r" ${r.in_qty > 0 ? 'style="color:var(--ok); font-weight:700"' : ""}>${r.in_qty ? "+" + NF(r.in_qty)
-        + (d.in_made && d.in_made[r.date] ? ` <span class="auto" style="font-weight:400">(제조 ${esc(d.in_made[r.date])})</span>` : "")
-        + (ROLE !== "guest"
-            ? ` <span class="auto" style="font-weight:400; white-space:nowrap;">소비기한 <input type="date" data-mexp="${r.date}" value="${esc((d.in_expiry && (d.in_expiry[r.date] || "").split(",")[0].trim()) || "")}" title="이 입고분의 소비기한 — 입력하면 저장됩니다 (수불부에 반영)" style="font-size:11px; padding:1px 3px; border:1px solid var(--line); border-radius:5px;"></span>`
-            : (d.in_expiry && d.in_expiry[r.date] ? ` <span class="auto" style="font-weight:400">(유통 ${esc(d.in_expiry[r.date])})</span>` : ""))
-        + (d.in_po && d.in_po[r.date] ? d.in_po[r.date].map(pid =>
-            ` <button class="uselink" data-poin="${pid}" style="font-size:11px; font-weight:700;" title="이 입고의 발주서 보기">📋 발주 #${pid}</button>`).join("") : "") : "·"}</td>
+        + (d.in_made && d.in_made[r.date] ? ` <span class="auto" style="font-weight:400">(제조 ${esc(d.in_made[r.date])})</span>` : "") : "·"}</td>
       <td class="r">${r.used_qty ? NF(r.used_qty) : "·"}</td>
       <td class="r" style="font-weight:700">${NF(r.real_qty)}</td>
-      <td class="auto">${esc(r.order_date || "")}${r.order_qty ? " (" + NF(r.order_qty) + ")" : ""}</td></tr>`).join("")
-      || '<tr><td colspan="6" class="auto">기록 없음</td></tr>'}</tbody></table></div>`;
+      <td class="auto" style="white-space:nowrap;">${(r.real_qty > 0 || r.in_qty > 0)
+        ? (ROLE !== "guest"
+            ? `<input type="date" data-mexp="${r.date}" value="${esc(rowExp(r))}" title="이 재고의 소비기한 — 입력하면 저장됩니다 (수불부에 반영). 전일·초기재고도 입력 가능" style="font-size:11px; padding:1px 3px; border:1px solid var(--line); border-radius:5px;">`
+            : esc(rowExp(r)))
+        : ""}</td>
+      <td class="auto">${esc(r.order_date || "")}${r.order_qty ? " (" + NF(r.order_qty) + ")" : ""}
+        ${(d.in_po && d.in_po[r.date]) ? d.in_po[r.date].map(pid =>
+          `<button class="uselink" data-poin="${pid}" style="font-size:11px; font-weight:700; margin-left:4px;" title="이 입고의 발주서 보기">📋 #${pid}</button>`).join("") : ""}</td></tr>`).join("")
+      || '<tr><td colspan="7" class="auto">기록 없음</td></tr>'}</tbody></table></div>`;
   // 단가 추이 차트 — 기준 단가(회색 점선)와 함께. 이전 차트는 파기 후 재생성
   if (window.MHCHART) { try { window.MHCHART.destroy(); } catch (e) { } window.MHCHART = null; }
   if (pts.length) {

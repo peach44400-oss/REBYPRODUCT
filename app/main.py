@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.34.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.35.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -1588,27 +1588,30 @@ def matprice(request: Request, mid: int):
 
 @app.put("/api/matin/expiry")
 def matin_expiry_set(request: Request, body: dict):
-    """자재 이력에서 입고 건별 소비기한(유통기한) 직접 입력·수정 — (자재, 날짜)의 입고 행에 적용."""
+    """자재 이력에서 소비기한 직접 입력·수정. 그날 입고가 있으면 그 입고분에,
+    없으면(전일·초기재고 등 입고 없는 재고) material_expiry에 저장한다."""
     require_stock_duty(request)
     mid = body.get("material_id")
     date = (body.get("date") or "").strip()
     expiry = (body.get("expiry") or "").strip()
-    made = body.get("made")
     if not mid or not date:
         raise HTTPException(400, "자재와 날짜가 필요합니다")
     con = connect()
     try:
-        if made is None:
-            cur = con.execute("UPDATE material_in SET expiry=? WHERE material_id=? AND date=?",
-                              (expiry, mid, date))
-        else:
-            cur = con.execute("UPDATE material_in SET expiry=?, made_date=? WHERE material_id=? AND date=?",
-                              (expiry, (made or "").strip(), mid, date))
-        if cur.rowcount == 0:
-            raise HTTPException(404, "그 날짜의 입고 기록이 없습니다")
+        has_in = con.execute("SELECT 1 FROM material_in WHERE material_id=? AND date=?",
+                             (mid, date)).fetchone()
+        if has_in:
+            con.execute("UPDATE material_in SET expiry=? WHERE material_id=? AND date=?",
+                        (expiry, mid, date))
+        elif expiry:
+            con.execute("""INSERT INTO material_expiry(material_id, date, expiry) VALUES(?,?,?)
+                ON CONFLICT(material_id, date) DO UPDATE SET expiry=excluded.expiry""",
+                        (mid, date, expiry))
+        else:   # 빈 값으로 지우기
+            con.execute("DELETE FROM material_expiry WHERE material_id=? AND date=?", (mid, date))
         audit(con, "matin_expiry", f"자재#{mid} {date} 소비기한 → {expiry or '(제거)'}")
         con.commit()
-        return {"ok": True, "rows": cur.rowcount}
+        return {"ok": True}
     finally:
         con.close()
 
@@ -2148,8 +2151,11 @@ def mat_history(mid: int, limit: int = 40):
                 in_po.setdefault(r["date"], [])
                 if int(m2.group(1)) not in in_po[r["date"]]:
                     in_po[r["date"]].append(int(m2.group(1)))
+        # 입고 없는 재고(전일·초기재고)에 수동으로 적은 소비기한
+        man_expiry = {r["date"]: r["expiry"] for r in con.execute(
+            "SELECT date, expiry FROM material_expiry WHERE material_id=? AND expiry!=''", (mid,))}
         return {"name": mat["name"], "unit": mat["unit"], "kind": mat["kind"], "rows": hist,
-                "in_expiry": in_expiry, "in_made": in_made, "in_po": in_po,
+                "in_expiry": in_expiry, "in_made": in_made, "in_po": in_po, "man_expiry": man_expiry,
                 "last_in": dict(last_in) if last_in else None,
                 "last_use": dict(last_use) if last_use else None}
     finally:
@@ -4553,11 +4559,19 @@ def ledger(request: Request, date: str = ""):
         for r in con.execute("""SELECT material_id, product_id, SUM(qty) q FROM material_usage
                 WHERE date=? AND product_id IS NOT NULL GROUP BY material_id, product_id""", (date,)):
             usage.setdefault(r["material_id"], {})[r["product_id"]] = r["q"]
-        expiry = {}   # 그날 입고분의 제조일·소비기한
-        for r in con.execute("""SELECT material_id,
-                GROUP_CONCAT(DISTINCT NULLIF(expiry,'')) e, GROUP_CONCAT(DISTINCT NULLIF(made_date,'')) m
+        made_map = {}   # 그날 입고분의 제조일 (표시용)
+        for r in con.execute("""SELECT material_id, GROUP_CONCAT(DISTINCT NULLIF(made_date,'')) m
                 FROM material_in WHERE date=? GROUP BY material_id""", (date,)):
-            expiry[r["material_id"]] = {"expiry": r["e"] or "", "made": r["m"] or ""}
+            made_map[r["material_id"]] = r["m"] or ""
+        # 유효 소비기한 — 그날까지(≤date) 가장 최근에 적힌 소비기한을 이어서 표시(carry-forward).
+        # 입고분(material_in.expiry) + 입고 없는 재고 수동입력(material_expiry) 중 가장 최근 날짜의 값.
+        eff = {}   # material_id -> (date, expiry)
+        for tbl in ("material_in", "material_expiry"):
+            for r in con.execute(f"SELECT material_id, date, expiry FROM {tbl}"
+                                 " WHERE date<=? AND COALESCE(expiry,'')!=''", (date,)):
+                cur = eff.get(r["material_id"])
+                if cur is None or r["date"] >= cur[0]:
+                    eff[r["material_id"]] = (r["date"], r["expiry"])
         # 소비기한 자동 계산용 — 그날까지 가장 최근 입고의 제조일(없으면 입고일). shelf_days와 합쳐 소비기한 추정
         base_date = {}
         for r in con.execute("""SELECT mi.material_id, mi.made_date, mi.date FROM material_in mi
@@ -4571,10 +4585,10 @@ def ledger(request: Request, date: str = ""):
         for m in mats:
             d = md.get(m["id"])
             u = usage.get(m["id"], {})
-            ex = expiry.get(m["id"], {})
-            exp = ex.get("expiry", "")
+            e = eff.get(m["id"])
+            exp = e[1] if e else ""
             exp_est = False
-            # 입고 시 소비기한을 안 넣었으면 기준정보 소비일(shelf_days)로 자동 계산 (기준=최근 입고 제조일/입고일)
+            # 직접 적은 소비기한이 없으면 기준정보 소비일(shelf_days)로 자동 계산 (기준=최근 입고 제조일/입고일)
             if not exp and (m["shelf_days"] or 0) > 0 and base_date.get(m["id"]):
                 try:
                     exp = (dt.date.fromisoformat(base_date[m["id"]]) + dt.timedelta(days=int(m["shelf_days"]))).isoformat()
@@ -4584,7 +4598,7 @@ def ledger(request: Request, date: str = ""):
             row = {"id": m["id"], "name": m["name"], "unit": m["unit"] or "",
                    "prev": (d["prev_qty"] if d else None), "in": (d["in_qty"] if d else None),
                    "used": (d["used_qty"] if d else None), "real": (d["real_qty"] if d else None),
-                   "usage": u, "expiry": exp, "expiry_est": exp_est, "made": ex.get("made", "")}
+                   "usage": u, "expiry": exp, "expiry_est": exp_est, "made": made_map.get(m["id"], "")}
             out_rows.append(row)
             if row["in"]:
                 in_total += row["in"]
