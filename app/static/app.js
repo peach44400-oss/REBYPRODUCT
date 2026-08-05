@@ -6378,8 +6378,13 @@ async function openMatHistory(mid) {
     `${d.kind === "raw" ? "원재료" : "부재료"} · 최근 ${d.rows.length}일` +
     ` · 마지막 입고 ${d.last_in ? d.last_in.date + " (+" + NF(d.last_in.in_qty) + d.unit + ")" : "기록 없음"}` +
     ` · 마지막 사용 ${d.last_use ? d.last_use.date + " (" + NF(d.last_use.used_qty) + d.unit + ")" : "기록 없음"}`;
-  // 그 날짜의 소비기한 값 (입고분 우선, 없으면 입고 없는 재고 수동입력분)
+  // 그 날짜에 직접 적힌 소비기한 (입고분 우선, 없으면 입고 없는 재고 수동입력분)
   const rowExp = r => ((d.in_expiry && d.in_expiry[r.date]) || (d.man_expiry && d.man_expiry[r.date]) || "").split(",")[0].trim();
+  // 입력칸은 입고 있는 행 + 최초 시작 행에만 — 나머지는 이어진 값(carry-forward)만 회색으로 표시
+  const isExpEditable = r => (r.in_qty > 0 || r.date === d.start_date);
+  const _ascRows = [...d.rows].sort((a, b) => (a.date < b.date ? -1 : 1));
+  const effExp = {}; let _lastExp = "";
+  for (const rr of _ascRows) { const s = rowExp(rr); if (s) _lastExp = s; effExp[rr.date] = _lastExp; }
   $("anaPBody").innerHTML = bomSec + priceSec + `<div class="tbl-wrap"><table>
     <thead><tr><th>날짜</th><th class="r">전일</th><th class="r">입고</th><th class="r">사용</th><th class="r">실재고</th><th>소비기한</th><th>발주</th></tr></thead>
     <tbody class="num">${d.rows.map(r => `<tr ${r.in_qty > 0 ? 'style="background:var(--ok-soft)"' : ""}>
@@ -6389,11 +6394,11 @@ async function openMatHistory(mid) {
         + (d.in_made && d.in_made[r.date] ? ` <span class="auto" style="font-weight:400">(제조 ${esc(d.in_made[r.date])})</span>` : "") : "·"}</td>
       <td class="r">${r.used_qty ? NF(r.used_qty) : "·"}</td>
       <td class="r" style="font-weight:700">${NF(r.real_qty)}</td>
-      <td class="auto" style="white-space:nowrap;">${(r.real_qty > 0 || r.in_qty > 0)
-        ? (ROLE !== "guest"
-            ? `<input type="date" data-mexp="${r.date}" value="${esc(rowExp(r))}" title="이 재고의 소비기한 — 입력하면 저장됩니다 (수불부에 반영). 전일·초기재고도 입력 가능" style="font-size:11px; padding:1px 3px; border:1px solid var(--line); border-radius:5px;">`
-            : esc(rowExp(r)))
-        : ""}</td>
+      <td class="auto" style="white-space:nowrap;">${
+        (isExpEditable(r) && ROLE !== "guest")
+          ? `<input type="date" data-mexp="${r.date}" value="${esc(rowExp(r))}" title="${r.in_qty > 0 ? "이 입고분" : "최초 보유 재고"}의 소비기한 — 입력하면 저장되고 이후 날짜로 이어집니다 (수불부 반영)" style="font-size:11px; padding:1px 3px; border:1px solid var(--line); border-radius:5px;">`
+          : (effExp[r.date] ? `<span style="color:#aaa;" title="위 입고/시작일 소비기한이 이어진 값">${esc(effExp[r.date])}</span>` : "")
+      }</td>
       <td class="auto">${esc(r.order_date || "")}${r.order_qty ? " (" + NF(r.order_qty) + ")" : ""}
         ${(d.in_po && d.in_po[r.date]) ? d.in_po[r.date].map(pid =>
           `<button class="uselink" data-poin="${pid}" style="font-size:11px; font-weight:700; margin-left:4px;" title="이 입고의 발주서 보기">📋 #${pid}</button>`).join("") : ""}</td></tr>`).join("")

@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.35.1"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.36.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -2154,8 +2154,12 @@ def mat_history(mid: int, limit: int = 40):
         # 입고 없는 재고(전일·초기재고)에 수동으로 적은 소비기한
         man_expiry = {r["date"]: r["expiry"] for r in con.execute(
             "SELECT date, expiry FROM material_expiry WHERE material_id=? AND expiry!=''", (mid,))}
+        # 최초 시작일 = 이 자재의 가장 오래된 기록일 (입고 없이 보유하던 재고의 소비기한 입력 시작점)
+        start_row = con.execute("SELECT MIN(date) d FROM material_daily WHERE material_id=?", (mid,)).fetchone()
+        start_date = start_row["d"] if start_row else None
         return {"name": mat["name"], "unit": mat["unit"], "kind": mat["kind"], "rows": hist,
                 "in_expiry": in_expiry, "in_made": in_made, "in_po": in_po, "man_expiry": man_expiry,
+                "start_date": start_date,
                 "last_in": dict(last_in) if last_in else None,
                 "last_use": dict(last_use) if last_use else None}
     finally:

@@ -1,5 +1,5 @@
 {
-  "version": "1.35.1",
+  "version": "1.36.0",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· 사이드바 깨짐 수정 — 화면이 짧을 때 발주 관리 패널과 하단(계정·버튼)이 겹치던 현상 해결 (넘치면 스크롤)"
+  "notes": "· 자재 이력 소비기한 입력 간소화 — 모든 행이 아니라 '입고 있는 날 + 최초 시작일'에만 입력하면 됩니다. 입력한 소비기한은 다음 입고 전까지 이어져 회색으로 표시됩니다"
 }
