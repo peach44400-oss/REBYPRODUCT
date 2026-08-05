@@ -1,5 +1,5 @@
 {
-  "version": "1.36.1",
+  "version": "1.36.2",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· 소비기한 편집 개선 — 앞 날짜(예: 7/6) 재고를 나중에 추가해 최초 시작일이 당겨져도, 이미 적어둔 소비기한 행은 계속 수정·삭제할 수 있습니다"
+  "notes": "· 사이드바 하단 깨짐 수정 — 좁은 화면에서 발주 관리 패널이 길어질 때 하단 계정 영역과 겹치던 문제를 고쳤습니다 (이제 사이드바가 스크롤됩니다)"
 }
