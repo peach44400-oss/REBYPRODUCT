@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.33.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.34.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -1582,6 +1582,33 @@ def matprice(request: Request, mid: int):
         pts.sort(key=lambda x: x["date"])
         return {"name": m["name"], "unit": m["unit"] or "",
                 "base_price": m["unit_price"] or 0, "points": pts}
+    finally:
+        con.close()
+
+
+@app.put("/api/matin/expiry")
+def matin_expiry_set(request: Request, body: dict):
+    """자재 이력에서 입고 건별 소비기한(유통기한) 직접 입력·수정 — (자재, 날짜)의 입고 행에 적용."""
+    require_stock_duty(request)
+    mid = body.get("material_id")
+    date = (body.get("date") or "").strip()
+    expiry = (body.get("expiry") or "").strip()
+    made = body.get("made")
+    if not mid or not date:
+        raise HTTPException(400, "자재와 날짜가 필요합니다")
+    con = connect()
+    try:
+        if made is None:
+            cur = con.execute("UPDATE material_in SET expiry=? WHERE material_id=? AND date=?",
+                              (expiry, mid, date))
+        else:
+            cur = con.execute("UPDATE material_in SET expiry=?, made_date=? WHERE material_id=? AND date=?",
+                              (expiry, (made or "").strip(), mid, date))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "그 날짜의 입고 기록이 없습니다")
+        audit(con, "matin_expiry", f"자재#{mid} {date} 소비기한 → {expiry or '(제거)'}")
+        con.commit()
+        return {"ok": True, "rows": cur.rowcount}
     finally:
         con.close()
 
