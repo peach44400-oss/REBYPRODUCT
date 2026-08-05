@@ -2862,7 +2862,10 @@ function renderNeed() {
   }
   // 부족한 자재만 보여준다 — 필요량 열은 제거(계획/배합 기준 차이로 오해를 부름).
   // 필요량은 부족 판정에만 쓰고, 궁금하면 툴팁으로 확인.
-  const shortList = list.filter(x => x.short > 0.0005).sort((a, b) => b.short - a.short);
+  // 부족 판정에 소량 오차 허용 — '계획수량(개) × 1개당(g)'은 배합(1배합=정수 아님) 환산에서
+  // 몇 g 어긋날 수 있어(예: 2500g→2503g) 실제로는 부족이 아닌데 부족처럼 뜬다. need의 0.5%(최소 0.01)까지는 무시.
+  const shortTol = x => Math.max(0.01, (x.need || 0) * 0.005);
+  const shortList = list.filter(x => x.short > shortTol(x)).sort((a, b) => b.short - a.short);
   const okN = list.length - shortList.length;
   // 재고가 음수인 자재는 '부족'이 아니라 재고 정리가 안 된 것 — 따로 표시해야 발주량을 오판하지 않는다
   const negN = shortList.filter(x => x.stock < 0).length;
@@ -3876,9 +3879,8 @@ function renderBomRows() {
   // 전체무게 합계·분할무게 수율 계산이 전부 batch_qty(1배합당) 기준이라, 여기서 1개당으로 받으면
   // 신규 등록 제품의 전체무게가 0으로 남는다. 1배합 생산수량은 분할 무게로 역산하면 되므로
   // '1배합당 생산수량 미등록'이어도 입력 기준은 바꾸지 않는다.
-  const cols = 8;
-  $("mHead").innerHTML = `<tr><th>자재명</th><th>구분</th><th class="r">1배합당 소요량 (g)</th>
-       <th class="r">1개당 (g)</th><th class="r">1,000개당</th><th>납품처</th><th>비고</th><th></th></tr>`;
+  const cols = 6;
+  $("mHead").innerHTML = `<tr><th>자재명</th><th>구분</th><th class="r">1배합당 소요량 (g)</th><th>납품처</th><th>비고</th><th></th></tr>`;
   const rowHtml = (r, i) => {
     const m = materialById(r.material_id) || {};
     const ry = rowYield(r);
@@ -3888,11 +3890,9 @@ function renderBomRows() {
       : (r.qty_per_unit && ry > 0 ? Math.round(r.qty_per_unit * ry * 10) / 10
       : (r.batch_qty === "" || r.batch_qty == null ? "" : 0));
     const qtyCells = isCountMat(m)
-      ? `<td class="r auto" colspan="3" style="text-align:left">📦 개수 자재 · 개입수 ${NF(m.pack_count)} → 소모 = 생산수량 ÷ 개입수 (자동)</td>`
+      ? `<td class="r auto" style="text-align:left">📦 개수 자재 · 개입수 ${NF(m.pack_count)} → 소모 = 생산수량 ÷ 개입수 (자동)</td>`
       : `<td class="r"><input class="mini-input num w" data-bf="per_batch" value="${pb}"
-           title="1배합에 들어가는 양 (g) — 수량을 안 적으면 0으로 저장됩니다"></td>
-         <td class="r auto" data-bper title="1개당 = 1배합당 소요량 ÷ 1배합 생산수량${ry > 0 ? ` ${NF(Math.round(ry))}개` : " (분할 무게를 입력하면 계산됩니다)"}">${r.qty_per_unit ? NF(Math.round(r.qty_per_unit * 10000) / 10000) : "—"}</td>
-         <td class="r auto" data-bk title="1,000개당 = 1개당 소요량 × 1,000 (kg 환산)">${perThousand(r)}</td>`;
+           title="1배합에 들어가는 양 (g) — 수량을 안 적으면 0으로 저장됩니다"></td>`;
     const pNames = bomPartnerIds(r).map(id => (M.partner.find(p => p.id === id) || {}).name).filter(Boolean);
     const extraCells = `<td><button class="note-cell ${pNames.length ? "" : "auto"}" data-bpartner="${i}" style="max-width:110px"
       title="이 자재를 쓰는 납품처 지정 (여러 곳 선택 가능) — 일일입력 계획 거래처 분배와 연동">${pNames.length ? esc(pNames.join(", ")) : "공통"}</button></td>`;
@@ -5297,7 +5297,7 @@ function buildLedgerDoc(d, forPrint) {
   const TH = "border:1px solid #333; background:#eef0f2; font-weight:700; font-size:9.5px; text-align:center; vertical-align:middle; white-space:normal; word-break:keep-all; line-height:1.2; padding:3px 4px;";
   // 화면·인쇄 동일: 열마다 비율(%) 폭 + table-layout:fixed → 항상 페이지(영역)를 고르게 채운다 (보는 대로 인쇄)
   const N = prods.length || 1;
-  const wSum = 3 + 1.2 * 4 + 1.6 + 1.4 * N;   // 이름3 · 수치4개×1.2 · 소비기한1.6 · 제품×1.4
+  const wSum = 3 + 1.2 * 4 + 1.5 * 3 + 1.4 * N;   // 이름3 · 수치4개×1.2 · 날짜3개(입고·제조·소비)×1.5 · 제품×1.4
   const W = (weight) => `width:${(weight / wSum * 100).toFixed(3)}%;`;
   const head = `<tr>
     <th style="${TH} ${W(3)}">원부재료명</th>
@@ -5306,14 +5306,16 @@ function buildLedgerDoc(d, forPrint) {
     ${prods.map(p => `<th style="${TH} ${W(1.4)}">${esc(p.name)}</th>`).join("")}
     <th style="${TH} ${W(1.2)}">당일<br>사용</th>
     <th style="${TH} ${W(1.2)}">사용후<br>재고</th>
-    <th style="${TH} ${W(1.6)}">소비<br>기한</th></tr>`;
+    <th style="${TH} ${W(1.5)}">입고<br>일자</th>
+    <th style="${TH} ${W(1.5)}">제조<br>일자</th>
+    <th style="${TH} ${W(1.5)}">소비<br>기한</th></tr>`;
   const ED = 'class="lcell" contenteditable="true"';   // 임시 편집 가능 셀 (인쇄 전 수정용, 저장 안 됨)
   const totalRow = `<tr style="background:#f7f7f9; font-weight:700;">
     <td style="${TD} text-align:center;">합 계</td>
     <td style="${TD}"></td>
     <td style="${TD} text-align:right;" ${ED}>${NFv(d.in_total)}</td>
     ${prods.map(p => `<td style="${TD} text-align:right;" ${ED}>${d.col_total[p.id] ? NFv(d.col_total[p.id]) : ""}</td>`).join("")}
-    <td style="${TD}"></td><td style="${TD}"></td><td style="${TD}"></td></tr>`;
+    <td style="${TD}"></td><td style="${TD}"></td><td style="${TD}"></td><td style="${TD}"></td><td style="${TD}"></td></tr>`;
   const body = rows2.map(r => `<tr>
     <td style="${TD} text-align:left; white-space:normal;">${esc(r.name)}</td>
     <td style="${TD} text-align:right; color:#555;" ${ED}>${NFv(r.prev)}</td>
@@ -5321,7 +5323,9 @@ function buildLedgerDoc(d, forPrint) {
     ${prods.map(p => { const q = r.usage[p.id]; return `<td style="${TD} text-align:right;" ${ED}>${q ? NFv(q) : ""}</td>`; }).join("")}
     <td style="${TD} text-align:right;" ${ED}>${NFv(r.used)}</td>
     <td style="${TD} text-align:right; font-weight:700;" ${ED}>${NFv(r.real)}</td>
-    <td style="${TD} text-align:center; font-size:8.5px; white-space:nowrap;${r.expiry_est ? " color:#888; font-style:italic;" : ""}" ${ED} title="${r.expiry_est ? "기준정보 소비일로 자동 계산 (입고 시 미입력)" : ""}">${esc(r.expiry || "")}</td></tr>`).join("");
+    <td style="${TD} text-align:center; font-size:8.5px; white-space:nowrap; color:#444;" ${ED}>${esc(r.in_date || "")}</td>
+    <td style="${TD} text-align:center; font-size:8.5px; white-space:nowrap; color:#444;" ${ED}>${esc(r.made || "")}</td>
+    <td style="${TD} text-align:center; font-size:8.5px; white-space:nowrap;${r.expiry_est ? " color:#888; font-style:italic;" : ""}" ${ED} title="${r.expiry_est ? "기준정보 소비일로 자동 계산 (입고 시 미입력)" : "지금 소진 중인 배치(FEFO)의 소비기한"}">${esc(r.expiry || "")}</td></tr>`).join("");
   const dow = ["일", "월", "화", "수", "목", "금", "토"][new Date(d.date + "T00:00").getDay()];
   const TDm = "border:1px solid #333; padding:2px 6px; font-size:11px;";
   const approve = `<table style="border-collapse:collapse; display:inline-table;">

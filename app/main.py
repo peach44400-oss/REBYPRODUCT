@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.36.2"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.37.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -4563,46 +4563,89 @@ def ledger(request: Request, date: str = ""):
         for r in con.execute("""SELECT material_id, product_id, SUM(qty) q FROM material_usage
                 WHERE date=? AND product_id IS NOT NULL GROUP BY material_id, product_id""", (date,)):
             usage.setdefault(r["material_id"], {})[r["product_id"]] = r["q"]
-        made_map = {}   # 그날 입고분의 제조일 (표시용)
-        for r in con.execute("""SELECT material_id, GROUP_CONCAT(DISTINCT NULLIF(made_date,'')) m
-                FROM material_in WHERE date=? GROUP BY material_id""", (date,)):
-            made_map[r["material_id"]] = r["m"] or ""
-        # 유효 소비기한 — 그날까지(≤date) 가장 최근에 적힌 소비기한을 이어서 표시(carry-forward).
-        # 입고분(material_in.expiry) + 입고 없는 재고 수동입력(material_expiry) 중 가장 최근 날짜의 값.
-        eff = {}   # material_id -> (date, expiry)
-        for tbl in ("material_in", "material_expiry"):
-            for r in con.execute(f"SELECT material_id, date, expiry FROM {tbl}"
-                                 " WHERE date<=? AND COALESCE(expiry,'')!=''", (date,)):
-                cur = eff.get(r["material_id"])
-                if cur is None or r["date"] >= cur[0]:
-                    eff[r["material_id"]] = (r["date"], r["expiry"])
-        # 소비기한 자동 계산용 — 그날까지 가장 최근 입고의 제조일(없으면 입고일). shelf_days와 합쳐 소비기한 추정
+        # ── FEFO(짧은 소비기한 먼저) 활성 배치 계산 ──
+        # 보유량(그날까지 최신 실재고) — 그날 기록이 없으면 이전 최신값 이어서
+        onhand = {}
+        for r in con.execute("""SELECT md.material_id, md.real_qty FROM material_daily md
+                JOIN (SELECT material_id, MAX(date) mx FROM material_daily WHERE date<=? GROUP BY material_id) x
+                  ON x.material_id=md.material_id AND x.mx=md.date""", (date,)):
+            onhand[r["material_id"]] = r["real_qty"]
+        # 입고 배치들(그날까지) — 입고일·수량·소비기한·제조일
+        batches = {}
+        for r in con.execute("""SELECT material_id, date, qty, expiry, made_date FROM material_in
+                WHERE date<=?""", (date,)):
+            batches.setdefault(r["material_id"], []).append(
+                {"in": r["date"], "qty": float(r["qty"] or 0),
+                 "exp": r["expiry"] or "", "made": r["made_date"] or ""})
+        # 입고 없는 재고(전일·초기)에 수동으로 적은 소비기한 — 최신 값 (fallback)
+        man_exp = {}
+        for r in con.execute("SELECT material_id, date, expiry FROM material_expiry"
+                             " WHERE date<=? AND COALESCE(expiry,'')!=''", (date,)):
+            cur = man_exp.get(r["material_id"])
+            if cur is None or r["date"] >= cur[0]:
+                man_exp[r["material_id"]] = (r["date"], r["expiry"])
+        # shelf_days 자동추정 기준일 — 그날까지 가장 최근 입고의 제조일(없으면 입고일)
         base_date = {}
         for r in con.execute("""SELECT mi.material_id, mi.made_date, mi.date FROM material_in mi
                 JOIN (SELECT material_id, MAX(date) mx FROM material_in WHERE date<=? GROUP BY material_id) x
                   ON x.material_id=mi.material_id AND x.mx=mi.date
                 WHERE mi.date<=?""", (date, date)):
             base_date[r["material_id"]] = r["made_date"] or r["date"]
+
+        def fefo_active(mid):
+            """지금 소진 중인 배치 = 보유량을 소비기한 늦은 배치부터 채우고, 남은 것 중
+            소비기한이 가장 이른 배치. 보유량이 기록 배치 합보다 크면 초기재고(None→fallback)."""
+            bs = batches.get(mid)
+            rq = onhand.get(mid)
+            if rq is None or rq <= 0 or not bs:
+                return None
+            # 소비기한 오름차순(빈 값은 입고일로 대체) = 소진 우선순위
+            bs_sorted = sorted(bs, key=lambda b: (b["exp"] or b["in"], b["in"]))
+            if rq > sum(b["qty"] for b in bs_sorted) + 1e-4:
+                return None   # 기록 배치보다 많이 보유 → 초기재고가 소진 중
+            remaining, active = rq, None
+            for b in reversed(bs_sorted):       # 소비기한 늦은 배치부터 채움
+                if remaining <= 1e-4:
+                    break
+                take = min(remaining, b["qty"])
+                if take > 0:
+                    active = b
+                    remaining -= take
+            return active
+
+        def est_expiry(base, sd):
+            try:
+                return (dt.date.fromisoformat(base) + dt.timedelta(days=int(sd))).isoformat()
+            except (ValueError, TypeError):
+                return ""
+
         out_rows = []
         col_total = {p["id"]: 0.0 for p in products}
         in_total = 0.0
         for m in mats:
             d = md.get(m["id"])
             u = usage.get(m["id"], {})
-            e = eff.get(m["id"])
-            exp = e[1] if e else ""
+            sd = m["shelf_days"] or 0
+            act = fefo_active(m["id"])
+            in_date = made = exp = ""
             exp_est = False
-            # 직접 적은 소비기한이 없으면 기준정보 소비일(shelf_days)로 자동 계산 (기준=최근 입고 제조일/입고일)
-            if not exp and (m["shelf_days"] or 0) > 0 and base_date.get(m["id"]):
-                try:
-                    exp = (dt.date.fromisoformat(base_date[m["id"]]) + dt.timedelta(days=int(m["shelf_days"]))).isoformat()
-                    exp_est = True
-                except ValueError:
-                    pass
+            if act:                                   # FEFO 활성 배치
+                in_date, made, exp = act["in"], act["made"], act["exp"]
+                if not exp and sd > 0:                # 배치에 소비기한 미입력 → shelf_days 추정
+                    exp = est_expiry(made or in_date, sd)
+                    exp_est = bool(exp)
+            else:                                     # 초기재고/입고기록 없음 → 수동 소비기한·추정
+                e = man_exp.get(m["id"])
+                if e:
+                    exp = e[1]
+                elif sd > 0 and base_date.get(m["id"]):
+                    exp = est_expiry(base_date[m["id"]], sd)
+                    exp_est = bool(exp)
             row = {"id": m["id"], "name": m["name"], "unit": m["unit"] or "",
                    "prev": (d["prev_qty"] if d else None), "in": (d["in_qty"] if d else None),
                    "used": (d["used_qty"] if d else None), "real": (d["real_qty"] if d else None),
-                   "usage": u, "expiry": exp, "expiry_est": exp_est, "made": made_map.get(m["id"], "")}
+                   "usage": u, "expiry": exp, "expiry_est": exp_est,
+                   "made": made, "in_date": in_date}
             out_rows.append(row)
             if row["in"]:
                 in_total += row["in"]
