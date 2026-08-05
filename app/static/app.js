@@ -1050,12 +1050,18 @@ function renderEntryTabs() {
     el.style.display = el.dataset.esec === entryTab ? "" : "none";
   });
   $("entryTabHint").textContent = ENTRY_TAB_HINT[entryTab];
+  const fab = $("entrySaveFab");
+  if (fab) fab.textContent = entryTab === "stock" ? "💾 재고·입고 저장" : "💾 생산 입력 저장";
 }
 $("entryTabs").addEventListener("click", e => {
   const b = e.target.closest("button[data-et]"); if (!b) return;
   entryTab = b.dataset.et; renderEntryTabs();
 });
 renderEntryTabs();
+// 고정 저장 버튼 — 현재 탭의 저장 버튼을 대신 눌러준다 (스크롤 없이 저장)
+$("entrySaveFab").addEventListener("click", () => {
+  $(entryTab === "stock" ? "btnSaveStock" : "btnSaveDay").click();
+});
 
 /* API staffing 행 → 편집 상태. 용역 = 개인별 [{h(시간), w(시급)}] — staffing_agency 상세가 있으면
    그대로, 없으면(구 데이터) 집계값에서 복원(시간 균등 분배, 시급은 라인 공통값). */
@@ -2771,9 +2777,9 @@ $("btnSaveDay").onclick = async () => {           // 생산 입력 탭
       agency_count: (r.agency || []).length,
       agency_hours: (r.agency || []).reduce((s, a) => s + (Number(a.h) || 0), 0),
       agency_wage: r.agency_wage || 0 })),
-    // 제품별 행은 사용량이 있어야 저장 (배합비로 자동 재생성되므로 0 저장 불필요 — 실측 추정 왜곡 방지)
-    // 기타 사용(제품 없음) 행은 사용량이 비어도 0으로 저장 — 저장 후 다시 열어도 행이 남게
-    usage: E.usage.filter(u => u.material_id && (u.qty || !u.product_id))
+    // 자재를 고른 행은 사용량이 비어도 0으로 저장 — 저장 후 다시 열어도 행이 남게 한다.
+    // (실측 자동계산은 서버 estimate에서 qty>0만 반영하므로 0 저장이 추정을 왜곡하지 않는다)
+    usage: E.usage.filter(u => u.material_id)
       .map(u => ({ ...u, qty: Number(String(u.qty ?? "").replace(/,/g, "")) || 0 })),
   };
   showSaveSum(body, "생산 입력");   // 저장 전 요약 확인 → 확인 시 저장

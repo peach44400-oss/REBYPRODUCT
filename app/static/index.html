@@ -130,6 +130,7 @@
     .kpi{padding:11px 12px;} .kpi .val{font-size:19px;}
     .dash-grid{grid-template-columns:1fr !important;}
     .entry-grid{grid-template-columns:1fr !important;}
+    .entry-side{position:static !important;}   /* 1열에서는 고정 해제 */
     .mini-input, .mini-sel{min-height:34px;}   /* 터치 크기 */
     .btn{min-height:34px;}
     .today-banner{flex-wrap:wrap;}
@@ -515,6 +516,14 @@
   .memo{width:100%; border:1px solid var(--line); border-radius:8px; padding:9px 11px;
     font:inherit; font-size:13px; min-height:58px; resize:vertical; color:var(--ink);}
   .entry-grid{display:grid; grid-template-columns:264px 1fr; gap:14px; align-items:start;}
+  /* 왼쪽 날짜·상태 열 고정 — 오른쪽이 길어 스크롤해도 날짜/상태가 따라오게 */
+  .entry-side{position:sticky; top:62px; align-self:start; z-index:20;}
+  /* 저장 버튼 — 항상 보이는 고정 버튼 (스크롤 없이 저장). scr-entry 안에 있어 이 화면에서만 표시 */
+  .save-fab{position:fixed; right:22px; bottom:84px; z-index:1150; background:var(--accent); color:#fff;
+    border:0; border-radius:999px; padding:12px 22px; font-size:14px; font-weight:800;
+    box-shadow:0 8px 22px rgba(0,0,0,.30); cursor:pointer; white-space:nowrap;}
+  .save-fab:hover{filter:brightness(1.15);}
+  .save-fab:active{transform:translateY(1px);}
   .chartbox{position:relative; margin-bottom:10px;}
   .chartbox canvas{width:100% !important; height:100% !important;}
   .chartbox .barcol{transition:opacity .18s ease;}
@@ -578,6 +587,7 @@
   @media (max-width:980px){
     .kpis{grid-template-columns:1fr 1fr;}
     .dash-grid,.entry-grid{grid-template-columns:1fr;}
+    .entry-side{position:static;}   /* 1열에서는 고정 해제 (위에 붙어 내용을 가리지 않게) */
   }
   @media print{
     .side,.topbar,.noprint,.chart-detail{display:none !important;}
@@ -880,8 +890,9 @@
 
     <!-- 일일 입력 -->
     <section class="screen" id="scr-entry">
+      <button class="save-fab" id="entrySaveFab" title="현재 탭(생산 입력 / 재고·입고)을 저장합니다">💾 저장</button>
       <div class="entry-grid">
-        <div class="dash-col">
+        <div class="dash-col entry-side">
           <div class="card">
             <h2>날짜 이동</h2>
             <div class="calhead">

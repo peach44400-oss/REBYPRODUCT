@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.38.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.39.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -4305,9 +4305,9 @@ def day_save(request: Request, date: str, body: dict):
         if "usage" in body:
             con.execute("DELETE FROM material_usage WHERE date=?", (date,))
             for r in body.get("usage", []):
-                # 제품별 행은 사용량 필수 (배합비로 자동 재생성 — 0 저장 시 실측 추정 왜곡)
-                # 기타 사용(제품 없음) 행은 사용량 미입력도 0으로 저장 (행 유지)
-                if not r.get("material_id") or (r.get("product_id") and not r.get("qty")):
+                # 자재를 고른 행은 사용량 미입력도 0으로 저장(행 유지). 자재 미선택 행만 건너뛴다.
+                # (실측 추정은 estimate에서 qty>0만 집계하므로 0 저장이 추정을 왜곡하지 않는다)
+                if not r.get("material_id"):
                     continue
                 q = float(r.get("qty") or 0)
                 if q < 0:
@@ -4791,7 +4791,7 @@ def bom_estimate(product_id: int):
             FROM material_usage mu
             JOIN production pr ON pr.date=mu.date AND pr.product_id=mu.product_id
             JOIN material m ON m.id=mu.material_id
-            WHERE mu.product_id=? AND pr.prod_qty>0
+            WHERE mu.product_id=? AND pr.prod_qty>0 AND mu.qty>0
             GROUP BY mu.material_id
             HAVING SUM(mu.qty)>0
             ORDER BY SUM(mu.qty) DESC""", (product_id,)))
