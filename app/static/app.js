@@ -6380,8 +6380,9 @@ async function openMatHistory(mid) {
     ` · 마지막 사용 ${d.last_use ? d.last_use.date + " (" + NF(d.last_use.used_qty) + d.unit + ")" : "기록 없음"}`;
   // 그 날짜에 직접 적힌 소비기한 (입고분 우선, 없으면 입고 없는 재고 수동입력분)
   const rowExp = r => ((d.in_expiry && d.in_expiry[r.date]) || (d.man_expiry && d.man_expiry[r.date]) || "").split(",")[0].trim();
-  // 입력칸은 입고 있는 행 + 최초 시작 행에만 — 나머지는 이어진 값(carry-forward)만 회색으로 표시
-  const isExpEditable = r => (r.in_qty > 0 || r.date === d.start_date);
+  // 입력칸은 입고 있는 행 + 최초 시작 행 + 이미 수동 입력된 값이 있는 행 — 나머지는 이어진 값(carry-forward)만 회색으로 표시
+  // (이미 적어둔 소비기한은 시작일이 앞 날짜로 밀려도 계속 수정·삭제할 수 있어야 함)
+  const isExpEditable = r => (r.in_qty > 0 || r.date === d.start_date || !!(d.man_expiry && d.man_expiry[r.date]));
   const _ascRows = [...d.rows].sort((a, b) => (a.date < b.date ? -1 : 1));
   const effExp = {}; let _lastExp = "";
   for (const rr of _ascRows) { const s = rowExp(rr); if (s) _lastExp = s; effExp[rr.date] = _lastExp; }

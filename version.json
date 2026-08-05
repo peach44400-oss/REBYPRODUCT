@@ -1,5 +1,5 @@
 {
-  "version": "1.36.0",
+  "version": "1.36.1",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· 자재 이력 소비기한 입력 간소화 — 모든 행이 아니라 '입고 있는 날 + 최초 시작일'에만 입력하면 됩니다. 입력한 소비기한은 다음 입고 전까지 이어져 회색으로 표시됩니다"
+  "notes": "· 소비기한 편집 개선 — 앞 날짜(예: 7/6) 재고를 나중에 추가해 최초 시작일이 당겨져도, 이미 적어둔 소비기한 행은 계속 수정·삭제할 수 있습니다"
 }
