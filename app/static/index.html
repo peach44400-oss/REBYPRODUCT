@@ -150,8 +150,8 @@
     #mFilterBar{gap:6px;}
     #mFilterBar #mFilter{width:100% !important; flex:1 1 100%;}
     .chartbox{height:200px !important;}
-    #chatWidget{right:10px; bottom:10px;}
-    #chatToggle{font-size:12px; padding:6px 11px;}
+    #chatWidget{right:10px; top:auto; bottom:10px;}   /* 좁은 화면에선 패널을 하단으로 (상단바가 접혀 길어짐) */
+    #chatToggle{font-size:12px; padding:5px 10px;}
     .fgrid{grid-template-columns:1fr !important;}
     .kchip{font-size:10.5px;}
     #eStaff td{white-space:normal;}
@@ -373,9 +373,10 @@
   .ssum-row:last-child{border-bottom:0;}
   .ssum-row .sv{font-weight:700;}
   .ssum-row.warn .sv{color:var(--warn);}
-  #chatWidget{position:fixed; right:18px; bottom:18px; z-index:1200; display:flex; flex-direction:column; align-items:flex-end; gap:8px;}
-  #chatToggle{border:1px solid var(--line); background:var(--surface); color:var(--ink); border-radius:22px;
-    padding:8px 14px; font:inherit; font-size:13px; font-weight:700; cursor:pointer; box-shadow:0 4px 14px rgba(0,0,0,.18); position:relative;}
+  /* 채팅 패널 — 상단바 [채팅] 버튼 아래(우상단)에서 열림. 토글 버튼은 상단바로 이동함 */
+  #chatWidget{position:fixed; right:18px; top:58px; z-index:1200; display:flex; flex-direction:column; align-items:flex-end; gap:8px;}
+  #chatToggle{border:1px solid var(--line); background:var(--surface); color:var(--ink); border-radius:999px;
+    padding:5px 12px; font:inherit; font-size:12px; font-weight:700; cursor:pointer; position:relative; white-space:nowrap;}
   #chatToggle:hover{border-color:var(--ink);}
   #chatBadge{display:none; position:absolute; top:-5px; right:-5px; min-width:18px; height:18px; padding:0 5px;
     background:#E11D48; color:#fff; border-radius:9px; font-size:11px; line-height:18px; text-align:center;}
@@ -701,6 +702,7 @@
       </div>
       <!-- 계정: 로그인 정보 · 내 설정 · 메일 · 관리 · 로그아웃 -->
       <div class="topacct" id="userBox" style="display:none;">
+        <button id="chatToggle" title="사내 채팅 — 클릭하면 대화창이 열립니다">🟢 <span id="chatCount">0</span>명 접속<span id="chatBadge"></span></button>
         <span id="dbStatus" title="데이터베이스 연결 상태">DB 연결됨</span>
         <span id="userLbl" title="클릭하면 내 설정(개인정보·메일)이 열립니다"></span>
         <button class="btn sm" id="btnPw" title="개인정보(비밀번호)·메일 계정 설정">내 설정</button>
@@ -970,12 +972,9 @@
             <datalist id="qaMatRaw"></datalist>
             <datalist id="qaMatSub"></datalist>
           </div>
-          <div class="card" data-esec="stock">
-            <div class="draft-foot" style="margin-top:0;">
-              <span class="sum">입고·실사만 저장됩니다 — 생산 입력 탭의 데이터는 건드리지 않습니다</span>
-              <span class="spacer"></span>
-              <button class="btn primary" id="btnSaveStock">재고 · 입고 저장</button>
-            </div>
+          <!-- 저장은 고정 FAB(💾)로 통일 — 이 버튼은 FAB이 대신 눌러주므로 DOM엔 남기고 화면에서만 숨김 -->
+          <div class="card" style="display:none;">
+            <button class="btn primary" id="btnSaveStock">재고 · 입고 저장</button>
           </div>
           <div class="card" data-esec="prod">
             <h2>인원 · 가동 <span class="sub">가동률 = 실가동 ÷ 라인 정상가동시간 · 정직원은 이름 선택, 용역은 [＋ 용역]으로 추가</span></h2>
@@ -997,9 +996,8 @@
           <div class="card" data-esec="prod">
             <h2>특이사항 / 비고</h2>
             <textarea class="memo" id="eMemo" placeholder="설비 고장, 원료 이슈, 클레임 등"></textarea>
-            <div class="draft-foot">
-              <span class="sum">생산·출고·자재사용·인원·특이사항만 저장됩니다 — 재고·입고 탭 데이터는 건드리지 않습니다</span>
-              <span class="spacer"></span>
+            <!-- 저장은 고정 FAB(💾)로 통일 — 버튼은 FAB이 대신 눌러주므로 DOM엔 남기고 숨김 -->
+            <div class="draft-foot" style="display:none;">
               <button class="btn primary" id="btnSaveDay">생산 입력 저장</button>
             </div>
           </div>
@@ -2039,7 +2037,6 @@
       <button id="chatSend" class="btn primary sm">전송</button>
     </div>
   </div>
-  <button id="chatToggle">🟢 <span id="chatCount">0</span>명 접속<span id="chatBadge"></span></button>
 </div>
 <div class="toast" id="toast"></div>
 <div id="numPad">
