@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.49.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.50.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -4106,6 +4106,53 @@ def staffdays(request: Request, staff_id: int, mode: str = "m", date: str = ""):
                 "days": len({r["date"] for r in rows_}), "rows": rows_,
                 "total_hours": sum(r["hours"] or 0 for r in rows_),
                 "total_labor": sum(r["labor"] or 0 for r in rows_)}
+    finally:
+        con.close()
+
+
+@app.get("/api/staffledger")
+def staff_ledger(request: Request, mode: str = "m", date: str = ""):
+    """전체 인원 출퇴근 원장 — 인원(행) × 근무한 날짜(열) × 근무시간 매트릭스.
+    개인 투입시간(sm.hours) 우선, 없으면 그 라인 실가동(st.work_hours)."""
+    require_admin(request)
+    con = connect()
+    try:
+        if not date:
+            date = con.execute("SELECT MAX(date) d FROM staffing").fetchone()["d"] \
+                or dt.date.today().isoformat()
+        a, b = period_range(mode, date)
+        staff = {r["id"]: r for r in con.execute("SELECT id, name, wage FROM staff")}
+        att = rows(con.execute("""
+            SELECT sm.staff_id sid, st.date d,
+                   SUM(CASE WHEN sm.hours>0 THEN sm.hours ELSE st.work_hours END) hours,
+                   MIN(NULLIF(sm.start_time,'')) start, MAX(NULLIF(sm.end_time,'')) end
+            FROM staffing_member sm JOIN staffing st ON st.id=sm.staffing_id
+            WHERE st.date BETWEEN ? AND ?
+            GROUP BY sm.staff_id, st.date ORDER BY st.date""", (a, b)))
+        cell = {}                    # (sid, date) -> {h, s, e}
+        dates_set = set()
+        for r in att:
+            cell[(r["sid"], r["d"])] = {"h": round(r["hours"] or 0, 2),
+                                        "s": r["start"] or "", "e": r["end"] or ""}
+            dates_set.add(r["d"])
+        dates = sorted(dates_set)
+        srows = []
+        for sid, s in staff.items():
+            days = [d for d in dates if (sid, d) in cell]
+            if not days:
+                continue             # 이 기간 출근 없는 사람은 원장에서 제외
+            th = sum(cell[(sid, d)]["h"] for d in days)
+            srows.append({"id": sid, "name": s["name"], "wage": s["wage"] or 0,
+                          "cells": {d: cell[(sid, d)] for d in days},
+                          "days": len(days), "hours": round(th, 1),
+                          "labor": round(th * (s["wage"] or 0))})
+        srows.sort(key=lambda x: x["name"])
+        date_tot = {d: {"h": round(sum(cell[(s["id"], d)]["h"] for s in srows if (s["id"], d) in cell), 1),
+                        "n": sum(1 for s in srows if (s["id"], d) in cell)} for d in dates}
+        return {"mode": mode, "date": date, "range": [a, b], "dates": dates,
+                "staff": srows, "date_tot": date_tot, "days_cnt": len(dates),
+                "grand_hours": round(sum(r["hours"] for r in srows), 1),
+                "grand_labor": round(sum(r["labor"] for r in srows))}
     finally:
         con.close()
 

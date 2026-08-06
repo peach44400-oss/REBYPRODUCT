@@ -5296,7 +5296,7 @@ $("poPrintBtn").onclick = () => {
 $("lowpPo").addEventListener("click", e => { e.stopPropagation(); openPo(true); });
 
 /* ── 부족 자재 일괄 발주 — 공급 거래처(material.partner_id)별로 묶어 발주서 초안을 한번에 생성 ── */
-const POBULK = { groups: [] };
+const POBULK = { items: [] };
 $("lowpBulk").addEventListener("click", e => { e.stopPropagation(); openPoBulk(); });
 async function openPoBulk() {
   let d;
@@ -5306,10 +5306,11 @@ async function openPoBulk() {
   poBulkFromItems(todo.map(x => ({ material_id: x.id, name: x.name, unit: x.unit,
     qty: Math.ceil((x.shortfall || 0) * 100) / 100 })));
 }
-// 자재 목록(부족 자재·생산계획 소요량 등)을 공급 거래처별로 묶어 일괄 발주 모달을 연다
+// 자재 목록(부족 자재·생산계획 소요량 등)을 평평한 표로 펼쳐, 자재마다 거래처를 개별 지정하게 한다.
+// 저장 시 거래처별로 묶어 발주서를 나눠 생성한다.
 async function poBulkFromItems(items) {
   if (!items || !items.length) return toast("발주할 자재가 없습니다");
-  // 공급처 결정: 기준정보의 공급처 → 없으면 최근 발주 이력에서 그 자재를 마지막으로 주문한 거래처
+  // 공급처 초기값: 기준정보의 공급처 → 없으면 최근 발주 이력에서 그 자재를 마지막으로 주문한 거래처
   const lastPa = {};   // material_id → 거래처 이름
   try {
     const hist = await api("/api/po?limit=200");   // 최신순 — 먼저 만난 것이 최근
@@ -5318,16 +5319,12 @@ async function poBulkFromItems(items) {
         lastPa[it.material_id] = (h.partner === "거래처 미지정") ? "" : h.partner;
     }));
   } catch (e) { }
-  const byPa = new Map();
-  items.forEach(x => {
+  POBULK.items = items.map(x => {
     const m = materialById(x.material_id) || {};
     const pa = M.partner.find(p => p.id === m.partner_id);
-    const key = (pa ? pa.name : "") || lastPa[x.material_id] || "";
-    if (!byPa.has(key)) byPa.set(key, []);
-    byPa.get(key).push({ material_id: x.material_id, name: x.name, unit: x.unit, qty: x.qty });
+    const partner = (pa ? pa.name : "") || lastPa[x.material_id] || "";
+    return { material_id: x.material_id, name: x.name, unit: x.unit, qty: x.qty, partner };
   });
-  POBULK.groups = [...byPa.entries()].map(([partner, items]) => ({ partner, items }))
-    .sort((a, b) => (b.partner ? 1 : 0) - (a.partner ? 1 : 0) || a.partner.localeCompare(b.partner, "ko"));
   renderPoBulk();
   $("poBulkOverlay").classList.add("on");
 }
@@ -5336,43 +5333,61 @@ function renderPoBulk() {
   const paDl = `<datalist id="pbPaDl">${M.partner.filter(p => p.status !== "중지")
     .sort((a, b) => (b.type === "자재 공급처") - (a.type === "자재 공급처") || a.name.localeCompare(b.name, "ko"))
     .map(p => `<option value="${esc(p.name)}">${esc(p.type || "")}</option>`).join("")}</datalist>`;
-  $("poBulkBody").innerHTML = paDl + POBULK.groups.map((g, gi) => `
-    <div style="border:1px solid var(--line-soft); border-radius:10px; padding:10px 12px; margin-bottom:10px;">
-      <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
-        <span style="font-size:12.5px; font-weight:800;">발주서 ${gi + 1}</span>
-        <input class="mini-input" data-pbpa="${gi}" list="pbPaDl" value="${esc(g.partner)}"
-          placeholder="🔍 거래처 검색 (비우면 미지정)" autocomplete="off" style="width:220px; text-align:left;">
-        <span class="auto" style="font-size:12px;">${g.items.length}품목${g.partner ? "" : " · 이 자재들은 기준정보에 공급처가 없습니다"}</span>
-      </div>
-      <table style="width:100%;"><tbody class="num">${g.items.map((it, ii) => `
-        <tr><td style="text-align:left;">${esc(it.name)}</td>
-          <td class="r" style="width:110px;"><input class="mini-input num" data-pbq="${gi}:${ii}"
-            value="${it.qty}" inputmode="decimal" style="width:90px;"></td>
-          <td class="auto" style="width:50px;">${esc(it.unit || "")}</td></tr>`).join("")}
-      </tbody></table>
-    </div>`).join("");
+  const rows = (POBULK.items || []).map((it, i) => `
+    <tr>
+      <td style="text-align:left; padding:4px 6px;">${esc(it.name)}</td>
+      <td style="padding:4px 6px;"><input class="mini-input" data-pbpa="${i}" list="pbPaDl" value="${esc(it.partner || "")}"
+        placeholder="🔍 거래처 (비우면 미지정)" autocomplete="off" style="width:200px; text-align:left;"></td>
+      <td class="r" style="width:110px; padding:4px 6px;"><input class="mini-input num" data-pbq="${i}"
+        value="${it.qty}" inputmode="decimal" style="width:90px;"></td>
+      <td class="auto" style="width:44px; padding:4px 6px;">${esc(it.unit || "")}</td>
+    </tr>`).join("");
+  $("poBulkBody").innerHTML = paDl + `
+    <table style="width:100%; border-collapse:collapse;">
+      <thead><tr style="color:var(--muted); font-size:11.5px; border-bottom:1px solid var(--line-soft);">
+        <th style="text-align:left; padding:4px 6px;">자재</th>
+        <th style="text-align:left; padding:4px 6px;">거래처 (자재별 지정)</th>
+        <th class="r" style="padding:4px 6px;">수량</th><th></th></tr></thead>
+      <tbody class="num">${rows}</tbody></table>
+    <div class="mh-wrap" style="font-size:12px; margin-top:10px;" id="pbSummary"></div>`;
+  updatePoBulkSummary();
+}
+// 거래처별로 몇 개 발주서가 만들어지는지 실시간 요약
+function updatePoBulkSummary() {
+  const el = $("pbSummary"); if (!el) return;
+  const valid = (POBULK.items || []).filter(it => parseFloat(it.qty) > 0);
+  if (!valid.length) { el.textContent = "수량이 0보다 큰 품목이 없습니다."; return; }
+  const byPa = {};
+  valid.forEach(it => { const k = (it.partner || "").trim() || "미지정"; byPa[k] = (byPa[k] || 0) + 1; });
+  const entries = Object.entries(byPa);
+  el.innerHTML = `→ 거래처별로 <b>${entries.length}개 발주서</b> 생성: `
+    + entries.map(([k, c]) => `${esc(k)} <b>${c}품목</b>`).join(" · ");
 }
 $("poBulkBody").addEventListener("input", e => {
   const pa = e.target.dataset.pbpa;
-  if (pa != null) { POBULK.groups[+pa].partner = e.target.value; return; }
+  if (pa != null) { POBULK.items[+pa].partner = e.target.value; updatePoBulkSummary(); return; }
   const q = e.target.dataset.pbq;
-  if (q != null) {
-    const [gi, ii] = q.split(":").map(Number);
-    POBULK.groups[gi].items[ii].qty = e.target.value;
-  }
+  if (q != null) { POBULK.items[+q].qty = e.target.value; updatePoBulkSummary(); }
 });
 $("poBulkSave").onclick = async () => {
-  const jobs = POBULK.groups
-    .map(g => ({ ...g, items: g.items.filter(it => parseFloat(it.qty) > 0) }))
-    .filter(g => g.items.length);
-  if (!jobs.length) return toast("발주할 품목이 없습니다 — 수량을 확인해주세요");
+  const valid = (POBULK.items || []).filter(it => parseFloat(it.qty) > 0);
+  if (!valid.length) return toast("발주할 품목이 없습니다 — 수량을 확인해주세요");
+  // 자재별 거래처를 그룹핑 → 거래처별 발주서 1건씩
+  const groups = new Map();
+  valid.forEach(it => {
+    const key = (it.partner || "").trim();
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(it);
+  });
+  const jobs = [...groups.entries()].map(([partner, items]) => ({ partner, items }))
+    .sort((a, b) => (b.partner ? 1 : 0) - (a.partner ? 1 : 0) || a.partner.localeCompare(b.partner, "ko"));
   if (!confirm(`발주서 ${jobs.length}건을 생성합니다:\n${jobs.map(g =>
-    `· ${g.partner.trim() || "미지정"} — ${g.items.length}품목`).join("\n")}\n\n생성 후 [📑 이력]에서 확인·메일 발송할 수 있습니다. 진행할까요?`)) return;
+    `· ${g.partner || "미지정"} — ${g.items.length}품목`).join("\n")}\n\n생성 후 [📑 이력]에서 확인·메일 발송할 수 있습니다. 진행할까요?`)) return;
   $("poBulkSave").disabled = true;
   let ok = 0;
   try {
     for (const g of jobs) {
-      const name = g.partner.trim();
+      const name = g.partner;
       const pa = M.partner.find(p => p.name === name);
       await api("/api/po", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ date: todayISO(), partner_id: pa ? pa.id : null,
@@ -7212,6 +7227,81 @@ $("staffDayBody").addEventListener("click", e => {
   if (b && !b.disabled) { SDAYS.page = +b.dataset.pg; renderStaffDays(); }
 });
 window.closeStaffDays = () => $("staffDayOverlay").classList.remove("on");
+
+// ── 전체 출퇴근 원장 (인원 × 근무한 날짜 × 근무시간) ──
+const SLED = { mode: "m", date: "", data: null };
+$("staffLedgerBtn").onclick = () => {
+  // 원장은 기본 '월별'로 연다(하루만 보면 열이 1개뿐이라 원장 의미가 약함) — 안에서 일/주/년 전환 가능
+  SLED.mode = (STAFF.mode === "w" || STAFF.mode === "y") ? STAFF.mode : "m";
+  SLED.date = STAFF.date || todayISO();
+  $("staffLedgerOverlay").classList.add("on");
+  loadStaffLedger();
+};
+window.closeStaffLedger = () => $("staffLedgerOverlay").classList.remove("on");
+async function loadStaffLedger() {
+  try {
+    SLED.data = await api(`/api/staffledger?mode=${SLED.mode}&date=${SLED.date}`);
+    SLED.date = SLED.data.date;
+    [...$("sledTabs").children].forEach(b => b.classList.toggle("on", b.dataset.slm === SLED.mode));
+    const [a, b] = SLED.data.range;
+    $("sledLbl").textContent = SLED.mode === "d" ? `${SLED.date} (${dowOf(SLED.date)})`
+      : SLED.mode === "y" ? SLED.date.slice(0, 4) + "년"
+      : SLED.mode === "m" ? SLED.date.slice(0, 7).replace("-", "년 ") + "월"
+      : `${a} ~ ${b}`;
+    renderStaffLedger();
+  } catch (e) { /* api 토스트 */ }
+}
+function renderStaffLedger() {
+  const d = SLED.data; if (!d) return;
+  const money = canM("labor");
+  const h1 = n => NF(Math.round((n || 0) * 10) / 10);
+  const dates = d.dates || [];
+  if (!d.staff.length) {
+    $("staffLedgerBody").innerHTML = `<div class="auto" style="padding:20px; text-align:center;">이 기간 출근 기록이 없습니다 — 일일 입력 &gt; 인원·가동에서 기록하면 여기 모입니다</div>`;
+    return;
+  }
+  const TH = "border:1px solid var(--line-soft); padding:4px 6px; background:var(--bg); white-space:nowrap; font-size:11px; text-align:center;";
+  const TD = "border:1px solid var(--line-soft); padding:3px 5px; text-align:center; font-size:11px;";
+  const nameCol = "position:sticky; left:0; background:#fff; text-align:left; font-weight:600; min-width:90px;";
+  const head = `<tr>
+    <th style="${TH} ${nameCol} z-index:3;">이름</th>
+    ${dates.map(dt => `<th style="${TH}">${dt.slice(5)}<br><span class="auto" style="font-weight:400">${dowOf(dt)}</span></th>`).join("")}
+    <th style="${TH}">근무일</th><th style="${TH}">합계(h)</th>${money ? `<th style="${TH}">노무비</th>` : ""}</tr>`;
+  const body = d.staff.map(s => `<tr>
+    <td style="${TD} ${nameCol} z-index:1;">${esc(s.name)}</td>
+    ${dates.map(dt => { const c = s.cells[dt];
+      return `<td style="${TD}${c ? " font-weight:700;" : " color:#ccc;"}"${c && c.s ? ` title="${esc(c.s)}~${esc(c.e || "?")}"` : ""}>${c ? h1(c.h) : "·"}</td>`; }).join("")}
+    <td style="${TD} font-weight:600;">${s.days}</td>
+    <td style="${TD} font-weight:700;">${h1(s.hours)}</td>${money ? `<td style="${TD}">${NF(s.labor)}</td>` : ""}</tr>`).join("");
+  const totRow = `<tr style="font-weight:800; background:var(--bg);">
+    <td style="${TD} ${nameCol} background:var(--bg);">일별 합계</td>
+    ${dates.map(dt => { const t = d.date_tot[dt];
+      return `<td style="${TD}">${t ? h1(t.h) : ""}<br><span class="auto" style="font-weight:400; font-size:9px;">${t ? t.n + "명" : ""}</span></td>`; }).join("")}
+    <td style="${TD}"></td><td style="${TD}">${h1(d.grand_hours)}</td>${money ? `<td style="${TD}">${NF(d.grand_labor)}</td>` : ""}</tr>`;
+  $("staffLedgerBody").innerHTML = `<table style="border-collapse:collapse; width:100%;">
+    <thead>${head}</thead><tbody class="num">${body}${totRow}</tbody></table>`;
+}
+$("sledTabs").addEventListener("click", e => {
+  const b = e.target.closest("[data-slm]"); if (b) { SLED.mode = b.dataset.slm; loadStaffLedger(); }
+});
+function sledStep(dir) {
+  const dd = new Date((SLED.date || todayISO()) + "T00:00:00");
+  if (SLED.mode === "d") dd.setDate(dd.getDate() + dir);
+  else if (SLED.mode === "w") dd.setDate(dd.getDate() + dir * 7);
+  else if (SLED.mode === "m") dd.setMonth(dd.getMonth() + dir);
+  else dd.setFullYear(dd.getFullYear() + dir);
+  SLED.date = fmtISO(dd); loadStaffLedger();
+}
+$("sledPrev").onclick = () => sledStep(-1);
+$("sledNext").onclick = () => sledStep(1);
+$("sledPrintBtn").onclick = () => {
+  $("poPrintArea").innerHTML = `<div style="font-weight:800; font-size:15px; margin-bottom:6px;">전체 출퇴근 원장 · ${$("sledLbl").textContent}</div>` + $("staffLedgerBody").innerHTML;
+  const st = document.createElement("style"); st.id = "ledgerPageStyle";
+  st.textContent = "@page{size:A4 landscape; margin:7mm;} @media print{#poPrintArea{padding:0 !important;}}";
+  document.head.appendChild(st); document.body.classList.add("po-print");
+  const done = () => { document.body.classList.remove("po-print"); st.remove(); window.removeEventListener("afterprint", done); };
+  window.addEventListener("afterprint", done); window.print(); setTimeout(done, 1500);
+};
 
 /* ══ LOT 관리 ═════════════════════════ */
 const LOT = { data: null, filter: "all", q: "", shipQ: "", openMap: {},   // openMap: 제품별 펼침 상태 (세션 유지)
