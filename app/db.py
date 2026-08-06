@@ -202,6 +202,16 @@ CREATE TABLE IF NOT EXISTS material_expiry (
   PRIMARY KEY(material_id, date)
 );
 
+-- 반제품(semi) 레시피 — 반제품 1단위를 만드는 데 필요한 원재료 구성 (반제품 생산 시 원재료 차감 기준)
+CREATE TABLE IF NOT EXISTS semi_bom (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  semi_id INTEGER NOT NULL,
+  material_id INTEGER NOT NULL,
+  qty_per_unit REAL DEFAULT 0,
+  unit TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_semibom ON semi_bom(semi_id);
+
 -- 원료 수불부 '출력용' 스냅샷 — 사용자가 임시 수정·행선택한 상태를 날짜별로 저장(원본 데이터와 무관, 인쇄 이력용)
 CREATE TABLE IF NOT EXISTS ledger_print (
   date TEXT PRIMARY KEY,

@@ -1020,6 +1020,7 @@
           <button class="on" data-mt="product">완제품</button>
           <button data-mt="raw">원재료</button>
           <button data-mt="sub">부재료</button>
+          <button data-mt="semi">반제품</button>
           <button data-mt="bom">배합비</button>
           <button data-mt="partner">거래처</button>
           <button data-mt="staff">인원</button>
@@ -1480,6 +1481,25 @@
       <div style="font-size:12px; margin-top:8px; color:var(--faint);">필요하실 때 "완제품 수불부 추가"라고 말씀해 주세요.</div>
     </div>
     <div class="modal-foot"><button class="btn" onclick="closeLedger()">닫기</button></div>
+  </div>
+</div>
+
+<!-- 반제품 레시피 (원재료 구성) 편집 -->
+<div class="overlay" id="semiRecipeOverlay">
+  <div class="modal" style="width:min(680px, 96vw);">
+    <h3 id="srTitle">🧾 반제품 레시피</h3>
+    <p class="hint" style="margin:0 0 10px;">이 반제품 <b>1 <span id="srUnit">단위</span></b>를 만드는 데 필요한 <b>원재료</b> 구성입니다. (반제품 생산 시 이 레시피로 원재료가 차감됩니다)</p>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>원재료</th><th class="r">1단위당 소요량</th><th>단위</th><th></th></tr></thead>
+      <tbody id="srBody"></tbody>
+    </table></div>
+    <div class="draft-foot" style="margin-top:8px;">
+      <input class="mini-input" id="srAdd" list="qaMatRaw" placeholder="🔍 원재료 검색 후 Enter = 추가" autocomplete="off" style="text-align:left; width:280px;">
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeSemiRecipe()">닫기</button>
+      <button class="btn primary" id="srSave">저장</button>
+    </div>
   </div>
 </div>
 

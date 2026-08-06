@@ -1,5 +1,5 @@
 {
-  "version": "1.43.1",
+  "version": "1.44.0",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· 원료 수불부에 '단위' 열 추가 (원부재료명 옆)"
+  "notes": "· 반제품(중간재) 1단계 — 기준정보에 '반제품' 탭 추가. 원재료로 만드는 반제품을 등록하고 [🧾 레시피]로 원재료 구성을 입력할 수 있습니다. (다음 단계: 반제품 생산 입력 → 빵 배합비에 반제품 사용)"
 }

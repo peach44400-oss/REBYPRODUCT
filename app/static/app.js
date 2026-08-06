@@ -46,7 +46,7 @@ function toast(msg) {
 function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
 
 /* ── 마스터 캐시 ─────────────────────── */
-const M = { product: [], raw: [], sub: [], partner: [], staff: [], line: [] };
+const M = { product: [], raw: [], sub: [], semi: [], partner: [], staff: [], line: [] };
 // 포장 세트 (다대다) — [{name, members:[{id,name,pack_count}]}]. 한 자재가 여러 세트에 속할 수 있다.
 let PACKSETS = [];
 async function loadPackSets() {
@@ -63,7 +63,7 @@ async function loadMasters() {
   await loadPackSets();
 }
 const productById = (id) => M.product.find(p => p.id === id);
-const materialById = (id) => M.raw.concat(M.sub).find(m => m.id === id);
+const materialById = (id) => M.raw.concat(M.sub, M.semi).find(m => m.id === id);
 async function reloadMaster(t) {
   M[t] = await api("/api/masters/" + t);
   if (t === "line")
@@ -3062,6 +3062,11 @@ const MCOLS = {
         esc(r.stock_date || "—"), chip(r.status)];
     },
     hint: "재고일수 = 현재고 ÷ 최근 30일 일평균 사용량 · 생산가능수량 = 현재고 × 단위당 수량 · 횟수 = 수량 ÷ 1회 소요량 (환산계수는 7/7 실사 엑셀에서 갱신됨)" },
+  semi: { label: "반제품", cols: ["반제품명", "규격", "단위", "레시피", "단가(원)", "안전재고", "소비일", "현재고", "재고일수", "최종 기록일", "상태"],
+    row: r => [`<button class="uselink" data-mhist="${r.id}">${esc(r.name)}</button>`, esc(r.spec || "—"), esc(r.unit),
+      `<button class="btn ghost sm" data-semirecipe="${r.id}" title="이 반제품의 원재료 구성(레시피) 편집">🧾 레시피</button>`,
+      r.unit_price == null ? "—" : NF(r.unit_price), NF(r.safety_stock), r.shelf_days || "—", stockCell(r), stockDaysCell(r), esc(r.stock_date || "—"), chip(r.status)],
+    hint: "반제품 = 원재료로 만드는 중간재 · [🧾 레시피]로 원재료 구성을 입력 · 현재고·수불부는 자재와 동일하게 관리됩니다" },
   partner: { label: "거래처", cols: ["거래처명", "유형", "사업자번호", "대표자", "전화", "모바일", "이메일", "담당자", "상태"],
     row: r => [B(r.name), `<span class="chip cat">${esc(r.type)}</span>`, esc(r.biz_no || "—"), esc(r.ceo || "—"),
       esc(r.phone || "—"), esc(r.mobile || "—"), esc(r.email || "—"), esc(r.contact || "—"), chip(r.status)],
@@ -4089,6 +4094,8 @@ $("mBody").addEventListener("input", e => {
   }
 });
 $("mBody").addEventListener("click", e => {
+  const sr = e.target.closest("[data-semirecipe]");
+  if (sr) { openSemiRecipe(+sr.dataset.semirecipe); return; }
   const mh = e.target.closest("[data-mhist]");
   if (mh) { openMatHistory(+mh.dataset.mhist); return; }
   const ph = e.target.closest("[data-phist]");
@@ -4215,6 +4222,11 @@ const MFORMS = {
     ["stock_set", "현재고 (아래 기준일의 실사 기록으로 저장됩니다)", "num"], ["stock_date", "기준일 (이 날짜에 기록)", "date"],
     ["prod_mult", "단위당 수량 (생산가능 환산)", "num"], ["prod_per", "1회 생산 소요량", "num"],
     ["status", "상태", "sel", ["사용중", "중단"]], ["note", "비고", "full"]],
+  semi: [["name", "반제품명 *"], ["spec", "규격 (예: 발효반죽)"], ["unit", "단위", "sel", ["kg", "g", "L", "개", "ea"]],
+    ["unit_price", "단가 (원)", "num"], ["safety_stock", "안전재고", "num"], ["shelf_days", "소비기한 (보관일수, 일)", "num"],
+    ["initial_stock", "초기재고 (신규만)", "num"],
+    ["stock_set", "현재고 (아래 기준일의 실사 기록으로 저장됩니다)", "num"], ["stock_date", "기준일 (이 날짜에 기록)", "date"],
+    ["status", "상태", "sel", ["사용중", "중단"]], ["note", "비고", "full"]],
   partner: [["name", "거래처명 *"], ["type", "유형 — 선택 또는 직접 입력 (예: 기부)", "combo", ["판매처", "자재 공급처", "용역업체"]],
     ["biz_no", "사업자등록번호"], ["ceo", "대표자명"],
     ["phone", "전화"], ["mobile", "모바일"],
@@ -4228,6 +4240,60 @@ const MFORMS = {
     ["parent_id", "소속 라인 — 이 행이 어떤 물리 라인의 공정이면 그 대표 라인을 선택 (가동률·보고서가 한 라인으로 집계됨)", "sel", []],
     ["status", "상태", "sel", ["가동", "중지"]], ["note", "비고", "full"]],
 };
+// ── 반제품 레시피(원재료 구성) 편집 ──
+const SR = { semiId: null, rows: [] };
+async function openSemiRecipe(semiId) {
+  const s = (M.semi || []).find(x => x.id === semiId);
+  if (!s) return;
+  SR.semiId = semiId; SR.rows = [];
+  $("srTitle").textContent = `🧾 ${s.name} 레시피`;
+  $("srUnit").textContent = s.unit || "단위";
+  $("qaMatRaw").innerHTML = M.raw.map(o => `<option value="${esc(o.name)}">`).join("");
+  try {
+    const d = await api("/api/semibom/" + semiId);
+    SR.rows = (d.rows || []).map(r => ({ material_id: r.material_id, qty: r.qty_per_unit }));
+  } catch (e) { /* api 토스트 */ }
+  renderSemiRecipe();
+  $("semiRecipeOverlay").classList.add("on");
+}
+window.closeSemiRecipe = () => $("semiRecipeOverlay").classList.remove("on");
+function renderSemiRecipe() {
+  $("srBody").innerHTML = SR.rows.map((r, i) => {
+    const m = materialById(r.material_id) || {};
+    return `<tr data-sri="${i}">
+      <td>${esc(m.name || "?")}</td>
+      <td class="r"><input class="mini-input num" data-srq value="${r.qty ?? ""}" style="width:110px" inputmode="decimal"></td>
+      <td class="auto">${esc(m.unit || "")}</td>
+      <td><button class="btn ghost sm" data-srdel>삭제</button></td></tr>`;
+  }).join("") || '<tr><td colspan="4" class="auto">아래에서 원재료를 검색해 추가하세요</td></tr>';
+}
+$("srBody").addEventListener("input", e => {
+  const tr = e.target.closest("[data-sri]"); if (!tr) return;
+  if (e.target.dataset.srq !== undefined) SR.rows[+tr.dataset.sri].qty = e.target.value;
+});
+$("srBody").addEventListener("click", e => {
+  const d = e.target.closest("[data-srdel]"); if (!d) return;
+  SR.rows.splice(+d.closest("[data-sri]").dataset.sri, 1); renderSemiRecipe();
+});
+$("srAdd").addEventListener("change", e => {
+  const q = e.target.value.trim(); if (!q) return;
+  const m = M.raw.find(x => x.name === q);
+  if (!m) { toast(`'${q}' — 등록된 원재료가 아닙니다`); return; }
+  if (SR.rows.some(r => r.material_id === m.id)) toast("이미 추가된 원재료입니다");
+  else SR.rows.push({ material_id: m.id, qty: "" });
+  e.target.value = ""; renderSemiRecipe();
+});
+$("srSave").onclick = async () => {
+  const items = SR.rows.filter(r => r.material_id).map(r => ({
+    material_id: r.material_id, qty_per_unit: Number(String(r.qty ?? "").replace(/,/g, "")) || 0 }));
+  try {
+    await api("/api/semibom/" + SR.semiId, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items }) });
+    toast("반제품 레시피 저장됨");
+    closeSemiRecipe();
+  } catch (e) { /* api 토스트 */ }
+};
+
 let mstEdit = null;
 function openMaster(type, row) {
   mstEdit = { type, id: row ? row.id : null };

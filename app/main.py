@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.43.1"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.44.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -1245,7 +1245,7 @@ def master_bulkset(request: Request, mtype: str, body: dict):
                "staff": {"wage"}}
     if mtype not in allowed:
         raise HTTPException(400, "이 탭은 일괄 가져오기를 지원하지 않습니다")
-    table = "material" if mtype in ("raw", "sub") else mtype
+    table = "material" if mtype in ("raw", "sub", "semi") else mtype
     fields = allowed[mtype]
     con = connect()
     try:
@@ -1678,6 +1678,39 @@ def ledgerprint_save(request: Request, body: dict):
                 html=excluded.html, saved_at=excluded.saved_at, saved_by=excluded.saved_by""",
                     (date, html, CURRENT_USER.get() or ""))
         audit(con, "ledger_print", f"{date} 출력용 저장")
+        con.commit()
+        return {"ok": True}
+    finally:
+        con.close()
+
+
+@app.get("/api/semibom/{semi_id}")
+def semibom_get(semi_id: int):
+    """반제품 레시피(원재료 구성) 조회."""
+    con = connect()
+    try:
+        return {"rows": rows(con.execute(
+            "SELECT material_id, qty_per_unit, unit FROM semi_bom WHERE semi_id=? ORDER BY id",
+            (semi_id,)))}
+    finally:
+        con.close()
+
+
+@app.post("/api/semibom/{semi_id}")
+def semibom_save(semi_id: int, request: Request, body: dict):
+    """반제품 레시피 저장 — 전량 교체 (원재료만)."""
+    require_stock_duty(request)
+    con = connect()
+    try:
+        con.execute("DELETE FROM semi_bom WHERE semi_id=?", (semi_id,))
+        for it in body.get("items", []):
+            mid = it.get("material_id")
+            if not mid:
+                continue
+            con.execute("INSERT INTO semi_bom(semi_id, material_id, qty_per_unit, unit) VALUES(?,?,?,?)",
+                        (semi_id, mid, float(it.get("qty_per_unit") or 0), it.get("unit") or ""))
+        audit(con, "semi_recipe", f"반제품#{semi_id} 레시피 {len(body.get('items', []))}종")
+        bump_masters()
         con.commit()
         return {"ok": True}
     finally:
@@ -3069,7 +3102,7 @@ def partners_import(request: Request, body: dict):
 def masters_reorder(request: Request, mtype: str, body: dict):
     """빠른 편집에서 드래그/이동한 순서를 sort 컬럼에 저장 — 목록·검색이 이 순서를 따른다.
     (미들웨어가 guest의 POST를 이미 차단)"""
-    table = "material" if mtype in ("raw", "sub") else mtype
+    table = "material" if mtype in ("raw", "sub", "semi") else mtype
     if table not in ("product", "material", "partner", "staff", "line"):
         raise HTTPException(400, "순서 변경을 지원하지 않는 항목입니다")
     ids = [int(x) for x in (body.get("ids") or [])]
@@ -3104,7 +3137,7 @@ def masters(mtype: str, request: Request):
                 LEFT JOIN (SELECT product_id, SUM(qty) q FROM disposal GROUP BY product_id) dp
                        ON dp.product_id=p.id
                 ORDER BY p.sort, p.id"""))
-        elif mtype in ("raw", "sub"):
+        elif mtype in ("raw", "sub", "semi"):
             data = rows(con.execute("""
                 SELECT m.*, md.real_qty AS stock, md.date AS stock_date, u.avg_use
                 FROM material m
@@ -3133,7 +3166,7 @@ def masters(mtype: str, request: Request):
         if mtype == "product" and not mcan(request, "prod"):
             for r in data:
                 r["unit_price"] = None
-        if mtype in ("raw", "sub") and not mcan(request, "mat"):
+        if mtype in ("raw", "sub", "semi") and not mcan(request, "mat"):
             for r in data:
                 r["unit_price"] = None
         return data
@@ -3156,11 +3189,11 @@ def _check_line_parent(con, parent_id, self_id=None):
 
 @app.post("/api/masters/{mtype}")
 def master_create(mtype: str, body: dict):
-    key = "material" if mtype in ("raw", "sub") else mtype
+    key = "material" if mtype in ("raw", "sub", "semi") else mtype
     if key not in MASTER_TABLES:
         raise HTTPException(404, "unknown master type")
     table, cols = MASTER_TABLES[key]
-    if mtype in ("raw", "sub"):
+    if mtype in ("raw", "sub", "semi"):
         body["kind"] = mtype
     vals = {c: body.get(c) for c in cols if c in body}
     if not vals.get("name"):
@@ -3189,7 +3222,7 @@ def master_create(mtype: str, body: dict):
 
 @app.put("/api/masters/{mtype}/{mid}")
 def master_update(mtype: str, mid: int, body: dict):
-    key = "material" if mtype in ("raw", "sub") else mtype
+    key = "material" if mtype in ("raw", "sub", "semi") else mtype
     if key not in MASTER_TABLES:
         raise HTTPException(404, "unknown master type")
     table, cols = MASTER_TABLES[key]
@@ -3241,7 +3274,7 @@ def master_update(mtype: str, mid: int, body: dict):
         # 자재 현재고 수정: 기준일의 실재고 기록으로 반영 (사용량 = 전일 + 입고 − 실재고 재계산)
         # ⚠ 반드시 src='manual'(실사)로 저장 — auto 행을 덮어쓰기만 하면 다음 저장의
         #    자동차감 재계산이 이 보정을 지워버림 (하얀설탕 -525 재발 사고의 원인)
-        if mtype in ("raw", "sub") and stock_set is not None:
+        if mtype in ("raw", "sub", "semi") and stock_set is not None:
             sd = body.get("stock_date") or dt.date.today().isoformat()
             ex = con.execute(
                 "SELECT * FROM material_daily WHERE material_id=? AND date=?",
@@ -3287,7 +3320,7 @@ REF_CHECKS = {
 
 @app.delete("/api/masters/{mtype}/{mid}")
 def master_delete(mtype: str, mid: int):
-    key = "material" if mtype in ("raw", "sub") else mtype
+    key = "material" if mtype in ("raw", "sub", "semi") else mtype
     if key not in MASTER_TABLES:
         raise HTTPException(404, "unknown master type")
     table = MASTER_TABLES[key][0]
