@@ -1782,7 +1782,7 @@ function renderProd() {
     renderUsageSoon();
     const py = productById(r.product_id)?.batch_yield || 0;
     return `<tr data-i="${i}">
-      <td>${selHtml(M.product.filter(p => p.status !== "단종"), r.product_id, "product_id", "name", "", "nm")}</td>
+      <td>${selHtml(M.product.concat(M.semi).filter(p => p.status !== "단종"), r.product_id, "product_id", "name", "", "nm")}</td>
       <td>${prodLineSel(r.line_id)}</td>
       <td class="r"><input class="mini-input num" data-f="batches" value="${r.batches}" style="width:56px"
         title="${py ? "1배합 = " + NF(Math.round(py)) + "개 — 입력 시 계획 자동" : "제품에 1배합당 생산수량 등록 시 계획 자동"}"></td>
@@ -2497,7 +2497,7 @@ function wireQuickAdd(inputId, listId, getItems, onPick, addBtnId, addBlank) {
     addBlank();
   };
 }
-wireQuickAdd("qaProd", "qaProducts", () => M.product.filter(p => p.status !== "단종"), hit => {
+wireQuickAdd("qaProd", "qaProducts", () => M.product.concat(M.semi).filter(p => p.status !== "단종"), hit => {
   if (E.prod.some(r => r.product_id === hit.id)) return toast(`'${hit.name}'은 이미 생산실적에 있습니다`);
   E.prod.push({ product_id: hit.id, line_id: hit.line_id || null, batches: "", plan_qty: "", prod_qty: "", defect_qty: "", lotSplits: [], expiry: "" });
   renderProd(); renderUsage();
