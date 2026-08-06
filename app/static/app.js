@@ -3793,6 +3793,9 @@ function bomYield() {
 async function renderBomTab() {
   // 제품 = 제품탭 기준 드롭다운 — 반죽/토핑 배합이 있는 제품은 '제품 — 반죽', '제품 — 토핑' 항목으로 분리
   $("qaMaterials").innerHTML = M.raw.concat(M.sub).map(o => `<option value="${esc(o.name)}">`).join("");   // 검색 추가용
+  // 제품 검색 자동완성 전용 datalist — 완제품 + 반제품 (다른 탭 #mFilter와 동일 방식, 브라우저가 입력에 맞춰 필터)
+  $("bomProdList").innerHTML = M.product.concat(M.semi).filter(p => p.status !== "단종")
+    .map(o => `<option value="${esc(o.name)}">`).join("");
   await ensureBomAll();
   const has = new Set(Object.keys(BOMALL).map(Number));
   const all = M.product.filter(p => p.status !== "단종")
@@ -3843,17 +3846,9 @@ $("bomProdSel").addEventListener("change", e => {
   BOM.q = ""; $("bomProdSearch").value = "";
   renderBomTab();
 });
-/* 제품 검색 — 직접 만든 실시간 필터 드롭다운(#bomSearchDrop).
-   입력하면 목록이 바로 좁혀지고, 클릭·Enter·↑↓로 선택하면 편집기에 그 제품을 연다. */
-function bomSelectProduct(pid) {
-  clearTimeout(bomSearchTimer);
-  BOM.pid = pid;
-  BOM.q = ""; $("bomProdSearch").value = "";
-  $("bomSearchDrop").style.display = "none";
-  BOM.dropItems = [];
-  renderBomTab();
-}
-// 검색 결과의 첫 제품을 편집기에 연다 (Enter / 입력 멈춤 시 자동 호출) — 목록은 열어 둔 채 미리보기
+/* 제품 검색 — 다른 기준정보 탭(#mFilter)과 동일하게 전용 datalist(#bomProdList) 자동완성.
+   입력하면 검은 자동완성 목록이 좁혀지고, 옆 select 목록도 함께 좁힌다.
+   목록에서 이름을 고르거나(정확 일치) 입력이 멈추면(250ms)·Enter로 편집기에 그 제품을 연다. */
 async function bomOpenFirstMatch() {
   await ensureBomAll();
   const first = $("bomProdSel").querySelector("option[value]:not([value='']):not([data-cur])");
@@ -3863,63 +3858,27 @@ async function bomOpenFirstMatch() {
   BOM.pid = pid;
   renderBomTab();
 }
-// 검색어로 실시간 필터한 커스텀 드롭다운을 그린다
-function renderBomSearchDrop(v) {
-  const drop = $("bomSearchDrop");
-  const q = (v || "").trim().toLowerCase();
-  if (!q) { drop.style.display = "none"; drop.innerHTML = ""; BOM.dropItems = []; return; }
-  const items = M.product.concat(M.semi)
-    .filter(p => p.status !== "단종" && p.name.toLowerCase().includes(q))
-    .sort((a, b) => (a.is_semi ? 1 : 0) - (b.is_semi ? 1 : 0) || a.name.localeCompare(b.name, "ko"))
-    .slice(0, 40);
-  BOM.dropItems = items;
-  BOM.dropIdx = items.length ? 0 : -1;
-  drop.innerHTML = items.length
-    ? items.map((p, i) => `<div class="sd-item${i === 0 ? " sd-active" : ""}" data-pid="${p.id}" data-idx="${i}">${p.is_semi ? "🧫 " : ""}${esc(p.name)}</div>`).join("")
-    : `<div class="sd-empty">검색 결과 없음</div>`;
-  drop.style.display = "block";
-}
 let bomSearchTimer = null;
 $("bomProdSearch").addEventListener("input", e => {
   const v = e.target.value.trim();
   const hit = v ? M.product.concat(M.semi).find(p => p.status !== "단종" && p.name === v) : null;
-  if (hit) { bomSelectProduct(hit.id); return; }   // 정확히 일치 → 즉시 선택
+  if (hit) {                       // 자동완성에서 정확한 이름 선택 → 즉시 그 제품 열기
+    clearTimeout(bomSearchTimer);
+    BOM.pid = hit.id;
+    BOM.q = ""; e.target.value = "";
+    renderBomTab();
+    return;
+  }
   BOM.q = v;
-  renderBomTab();                  // 옆 select 목록도 좁힌다
-  renderBomSearchDrop(v);          // 실시간 커스텀 드롭다운
+  renderBomTab();                  // 옆 select 목록을 좁힌다 (datalist는 브라우저가 자동 필터)
   clearTimeout(bomSearchTimer);
   if (v) bomSearchTimer = setTimeout(bomOpenFirstMatch, 250);   // 잠깐 멈추면 편집기 미리보기
 });
-$("bomProdSearch").addEventListener("focus", e => {
-  if (e.target.value.trim()) renderBomSearchDrop(e.target.value);
-});
-$("bomProdSearch").addEventListener("blur", () => {
-  setTimeout(() => { $("bomSearchDrop").style.display = "none"; }, 150);   // 클릭 처리 후 닫힘
-});
 $("bomProdSearch").addEventListener("keydown", e => {
-  const drop = $("bomSearchDrop");
-  const open = drop.style.display !== "none" && (BOM.dropItems || []).length;
-  if ((e.key === "ArrowDown" || e.key === "ArrowUp") && open) {
-    e.preventDefault();
-    BOM.dropIdx = Math.max(0, Math.min(BOM.dropItems.length - 1,
-      (BOM.dropIdx || 0) + (e.key === "ArrowDown" ? 1 : -1)));
-    [...drop.querySelectorAll(".sd-item")].forEach((el, i) => el.classList.toggle("sd-active", i === BOM.dropIdx));
-    const act = drop.querySelector(".sd-item.sd-active");
-    if (act) act.scrollIntoView({ block: "nearest" });
-    return;
-  }
-  if (e.key === "Escape") { drop.style.display = "none"; return; }
   if (e.key !== "Enter") return;
   e.preventDefault();
   clearTimeout(bomSearchTimer);
-  if (open && BOM.dropItems[BOM.dropIdx]) { bomSelectProduct(BOM.dropItems[BOM.dropIdx].id); return; }
   bomOpenFirstMatch();
-});
-$("bomSearchDrop").addEventListener("mousedown", e => {   // mousedown = blur보다 먼저 처리
-  const it = e.target.closest("[data-pid]");
-  if (!it) return;
-  e.preventDefault();
-  bomSelectProduct(+it.dataset.pid);
 });
 // 미등록 제품에 기존 제품의 배합비를 복사 (제품명이 달라 임포트 매칭이 안 된 경우의 수동 매칭)
 $("bomCopyBtn").onclick = async () => {
@@ -7555,6 +7514,7 @@ function padEligible(el) {
   if (el.classList.contains("datepick")) return false;   // 날짜칸은 달력 팝업 사용
   if (el.dataset.f === "order_date" || el.dataset.f === "note") return false;
   if (el.hasAttribute("list")) return false;   // 🔍 검색칸(자동완성 datalist)은 글자 입력 — 키패드 제외
+  if (el.dataset.nopad !== undefined) return false;   // 🔍 글자 검색칸(datalist 없이 직접 드롭다운) 명시 제외
   if (!el.classList.contains("mini-input")) return false;
   // 배합비 표는 #scr-items 안에 있음 (#mt-bom 요소는 존재하지 않아 배합비 키패드가 안 뜨던 버그 수정)
   // 소비기한 분할 모달·폐기 모달의 숫자칸도 키패드 지원

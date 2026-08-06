@@ -1057,11 +1057,9 @@
         <div id="mHealthBar" style="display:none; margin-bottom:10px;"></div>
         <div id="bomBar" style="display:none; align-items:center; gap:10px; margin-bottom:12px; flex-wrap:wrap;">
           <span style="font-size:12px; font-weight:700; color:var(--muted);">제품 선택</span>
-          <span style="position:relative; display:inline-block;">
-            <input class="mini-input" id="bomProdSearch" placeholder="🔍 제품 검색" autocomplete="off"
-                   style="text-align:left; width:180px;" title="이름 일부를 치면 아래 목록이 실시간으로 좁혀집니다 · 클릭 또는 Enter = 선택">
-            <div id="bomSearchDrop" class="search-drop" style="display:none;"></div>
-          </span>
+          <input class="mini-input" id="bomProdSearch" list="bomProdList" placeholder="🔍 제품 검색" autocomplete="off"
+                 style="text-align:left; width:180px;" title="이름 일부를 치면 목록이 좁혀집니다 · Enter = 첫 제품 선택">
+          <datalist id="bomProdList"></datalist>
           <select class="mini-sel" id="bomProdSel" style="width:300px; max-width:300px"></select>
           <span class="chip cat num" id="bomYieldChip" style="display:none"></span>
           <span class="auto num" id="bomCount" style="font-size:11.5px;"></span>
