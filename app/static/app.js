@@ -5324,7 +5324,7 @@ async function loadLedger(date) {
     renderLedger();
   } catch (e) { /* api 토스트 */ }
 }
-function renderLedger() { if (LEDGER.data) $("ledgerBody").innerHTML = buildLedgerDoc(LEDGER.data, false); }
+function renderLedger() { if (LEDGER.data) { $("ledgerBody").innerHTML = buildLedgerDoc(LEDGER.data, false); setLedgerMode(""); } }
 $("ledgerAll").addEventListener("change", e => { LEDGER.showAll = e.target.checked; renderLedger(); });
 $("ledgerDate").addEventListener("change", e => { if (e.target.value) loadLedger(e.target.value); });
 $("ledgerPrevBtn").onclick = () => { const p = LEDGER.data && LEDGER.data.prev; p ? loadLedger(p) : toast("이전 기록이 없습니다"); };
@@ -5364,7 +5364,7 @@ function buildLedgerDoc(d, forPrint) {
     ${prods.map(p => `<td style="${TD} text-align:right;" ${ED}>${d.col_total[p.id] ? NFv(d.col_total[p.id]) : ""}</td>`).join("")}
     <td style="${TD}"></td><td style="${TD}"></td><td style="${TD}"></td><td style="${TD}"></td><td style="${TD}"></td><td style="${TD}"></td></tr>`;
   const body = rows2.map(r => `<tr>
-    <td style="${TD} text-align:left; white-space:normal;">${esc(r.name)}</td>
+    <td style="${TD} text-align:left; white-space:normal;"><label class="lp-row-cb" title="인쇄 포함 (해제하면 이 행은 인쇄 안 됨)"><input type="checkbox" class="lp-row" checked></label>${esc(r.name)}</td>
     <td style="${TD} text-align:right; color:#555;" ${ED}>${NFv(r.prev)}</td>
     <td style="${TD} text-align:right; ${r.in ? 'color:#0a7a2f; font-weight:700;' : ''}" ${ED}>${NFv(r.in)}</td>
     ${prods.map(p => { const q = r.usage[p.id]; return `<td style="${TD} text-align:right;" ${ED}>${q ? NFv(q) : ""}</td>`; }).join("")}
@@ -5411,6 +5411,50 @@ function ledgerPrint() {
 }
 $("ledgerPrintBtn").onclick = ledgerPrint;
 $("ledgerPdf").onclick = () => { toast("인쇄 창에서 대상을 'PDF로 저장'으로 선택하세요"); setTimeout(ledgerPrint, 400); };
+
+// ── 원료 수불부 '출력용' 저장/보기 + 행 선택 인쇄 (원본 데이터는 건드리지 않음) ──
+function setLedgerMode(mode, at, by) {
+  const el = $("ledgerMode"); if (!el) return;
+  if (mode === "saved") {
+    el.textContent = `📌 출력용 저장본${by ? " · " + by : ""}${at ? " · " + at.slice(5, 16) : ""}`;
+    el.style.color = "var(--warn)";
+  } else if (mode === "saved-just") {
+    el.textContent = "📌 출력용으로 저장됨"; el.style.color = "var(--ok)";
+  } else { el.textContent = ""; }
+}
+// 행 체크박스 → 그 행 인쇄 제외 토글 (원본·저장본 HTML 모두 이벤트 위임으로 동작)
+$("ledgerBody").addEventListener("change", e => {
+  const cb = e.target.closest(".lp-row"); if (!cb) return;
+  const tr = cb.closest("tr"); if (tr) tr.classList.toggle("lp-off", !cb.checked);
+});
+$("ledgerSelAll").onclick = () => {
+  const boxes = [...$("ledgerBody").querySelectorAll(".lp-row")];
+  if (!boxes.length) return;
+  const allOn = boxes.every(b => b.checked);
+  boxes.forEach(b => { b.checked = !allOn; b.closest("tr").classList.toggle("lp-off", allOn); });
+};
+$("ledgerSavePrint").onclick = async () => {
+  if (!LEDGER.data) return;
+  // 체크 상태를 checked 속성에 반영해 HTML에 남긴다 (저장본 복원 시 선택 유지)
+  $("ledgerBody").querySelectorAll(".lp-row").forEach(cb =>
+    cb.checked ? cb.setAttribute("checked", "") : cb.removeAttribute("checked"));
+  try {
+    await api("/api/ledgerprint", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ date: LEDGER.data.date, html: $("ledgerBody").innerHTML }) });
+    toast(`${LEDGER.data.date} 출력용으로 저장됨`);
+    setLedgerMode("saved-just");
+  } catch (e) { /* api 토스트 */ }
+};
+$("ledgerViewPrint").onclick = async () => {
+  if (!LEDGER.data) return;
+  try {
+    const d = await api("/api/ledgerprint?date=" + encodeURIComponent(LEDGER.data.date));
+    if (!d.saved) return toast("이 날짜에 저장된 '출력용 보기'가 없습니다");
+    $("ledgerBody").innerHTML = d.html;
+    setLedgerMode("saved", d.saved_at, d.saved_by);
+    toast("출력용 저장본을 불러왔습니다 — [↺ 초기화]로 원래 데이터로 돌아갑니다");
+  } catch (e) { /* api 토스트 */ }
+};
 
 /* ── 월간 마감 리포트 — 생산·출고·자재 사용액·발주 입고액·노무비 한 장 요약 (admin) ── */
 const MR = { data: null };

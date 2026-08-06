@@ -202,6 +202,14 @@ CREATE TABLE IF NOT EXISTS material_expiry (
   PRIMARY KEY(material_id, date)
 );
 
+-- 원료 수불부 '출력용' 스냅샷 — 사용자가 임시 수정·행선택한 상태를 날짜별로 저장(원본 데이터와 무관, 인쇄 이력용)
+CREATE TABLE IF NOT EXISTS ledger_print (
+  date TEXT PRIMARY KEY,
+  html TEXT DEFAULT '',
+  saved_at TEXT DEFAULT '',
+  saved_by TEXT DEFAULT ''
+);
+
 -- 발주서 — 자재 부족 시 거래처에 보내는 주문서 (품목은 작성 시점 스냅샷 JSON)
 CREATE TABLE IF NOT EXISTS purchase_order (
   id INTEGER PRIMARY KEY,

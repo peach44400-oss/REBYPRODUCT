@@ -432,6 +432,14 @@
   .lcell:hover{background:#FFFBE6 !important;}
   .lcell:focus{outline:2px solid #6366F1; background:#fff !important;}
   @media print{ .lcell{outline:none !important; background:transparent !important;} }
+  /* 수불부 행 선택 — 인쇄할 행 고르기 (체크박스는 화면 전용, 해제한 행은 인쇄 제외) */
+  .lp-row-cb{display:inline-flex; align-items:center; margin-right:5px; vertical-align:middle; cursor:pointer;}
+  .lp-row-cb input{width:14px; height:14px; cursor:pointer;}
+  #ledgerBody tr.lp-off{opacity:.32;}
+  @media print{
+    #poPrintArea .lp-row-cb{display:none !important;}
+    #poPrintArea tr.lp-off{display:none !important;}
+  }
   #chatInputRow{display:flex; gap:6px; padding:8px 10px; border-top:1px solid var(--line);}
   #chatInput{flex:1; min-width:0; border:1px solid var(--line); border-radius:10px; padding:7px 10px; font:inherit; font-size:12.5px; background:var(--surface); color:var(--ink);}
   /* 메시지 안 답장 인용 */
@@ -1453,7 +1461,11 @@
       <button class="btn sm" id="ledgerTodayBtn">오늘</button>
       <label style="font-size:12px; display:flex; align-items:center; gap:4px; cursor:pointer;" title="체크하면 사용/입고가 없는 자재·제품도 모두 표시 (빈 양식 인쇄용)">
         <input type="checkbox" id="ledgerAll"> 전체 품목</label>
-      <button class="btn sm" id="ledgerReset" title="임시로 고친 숫자를 원래 데이터로 되돌립니다">↺ 초기화</button>
+      <button class="btn sm" id="ledgerReset" title="원래 저장된(재고관리) 데이터로 되돌립니다">↺ 초기화</button>
+      <button class="btn sm" id="ledgerSelAll" title="인쇄할 행 전체 선택/해제 — 체크 해제한 행은 인쇄되지 않습니다">☑ 행 전체</button>
+      <button class="btn sm" id="ledgerSavePrint" title="지금 화면(임시 수정·행 선택) 그대로 '출력용'으로 저장합니다 — 원본 재고 데이터는 건드리지 않습니다">📌 출력용 저장</button>
+      <button class="btn sm" id="ledgerViewPrint" title="이 날짜에 저장해 둔 '출력용' 보기를 불러옵니다">👁 출력용 보기</button>
+      <span id="ledgerMode" class="auto" style="font-size:11px; font-weight:700;"></span>
       <span class="spacer"></span>
       <span class="auto" style="font-size:11px;">숫자 칸을 클릭해 임시 수정 가능(저장 안 됨) · 인쇄는 <b>가로 방향</b></span>
       <button class="btn sm" id="ledgerPdf" title="인쇄 창에서 'PDF로 저장' 선택">📑 PDF</button>
