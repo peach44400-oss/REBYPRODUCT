@@ -494,6 +494,14 @@
   .namecell .mini-sel.nm{min-width:0;}
   .mtab{display:none;} .mtab.on{display:block;}
   .ptab{display:none;} .ptab.on{display:block;}
+  /* 배합비 제품 검색 — 직접 만든 실시간 필터 드롭다운 (브라우저 기본 datalist 대체) */
+  .search-drop{position:absolute; top:calc(100% + 2px); left:0; z-index:50; min-width:240px; max-width:340px;
+    max-height:300px; overflow-y:auto; background:var(--surface); border:1px solid var(--line);
+    border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,.16); padding:4px;}
+  .search-drop .sd-item{padding:7px 10px; border-radius:6px; font-size:12.5px; cursor:pointer; white-space:nowrap;
+    color:var(--ink); overflow:hidden; text-overflow:ellipsis;}
+  .search-drop .sd-item:hover, .search-drop .sd-item.sd-active{background:var(--accent-soft);}
+  .search-drop .sd-empty{padding:8px 10px; font-size:12px; color:var(--muted);}
   .uselink{background:none; border:0; padding:0; font:inherit; font-weight:700; color:var(--ink);
     text-decoration:underline dotted; text-decoration-color:var(--faint); text-underline-offset:3px; cursor:pointer;}
   .uselink:hover{text-decoration-color:var(--ink);}
@@ -1049,8 +1057,11 @@
         <div id="mHealthBar" style="display:none; margin-bottom:10px;"></div>
         <div id="bomBar" style="display:none; align-items:center; gap:10px; margin-bottom:12px; flex-wrap:wrap;">
           <span style="font-size:12px; font-weight:700; color:var(--muted);">제품 선택</span>
-          <input class="mini-input" id="bomProdSearch" list="qaProducts" placeholder="🔍 제품 검색" autocomplete="off"
-                 style="text-align:left; width:180px;" title="이름 일부를 치면 옆 목록이 좁혀집니다 · Enter = 첫 제품 선택">
+          <span style="position:relative; display:inline-block;">
+            <input class="mini-input" id="bomProdSearch" placeholder="🔍 제품 검색" autocomplete="off"
+                   style="text-align:left; width:180px;" title="이름 일부를 치면 아래 목록이 실시간으로 좁혀집니다 · 클릭 또는 Enter = 선택">
+            <div id="bomSearchDrop" class="search-drop" style="display:none;"></div>
+          </span>
           <select class="mini-sel" id="bomProdSel" style="width:300px; max-width:300px"></select>
           <span class="chip cat num" id="bomYieldChip" style="display:none"></span>
           <span class="auto num" id="bomCount" style="font-size:11.5px;"></span>
