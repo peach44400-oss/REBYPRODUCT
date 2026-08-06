@@ -213,6 +213,27 @@ CREATE TABLE IF NOT EXISTS semi_bom (
 );
 CREATE INDEX IF NOT EXISTS idx_semibom ON semi_bom(semi_id);
 
+-- 완제품 배합비에 들어가는 '반제품 재료' — 완제품 1개당 반제품 소요량 (생산 시 반제품 재고 차감 기준)
+CREATE TABLE IF NOT EXISTS semi_ingredient (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  product_id INTEGER NOT NULL REFERENCES product(id),   -- 이 반제품을 쓰는 완제품(빵)
+  semi_id INTEGER NOT NULL REFERENCES product(id),      -- 재료로 쓰이는 반제품 (product.is_semi=1)
+  qty_per_unit REAL DEFAULT 0,                          -- 완제품 1개당 반제품 소요량 (반제품 재고 단위 기준)
+  unit TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_semiing ON semi_ingredient(product_id);
+
+-- 반제품 소비 기록 — 완제품 생산 저장 시 백엔드가 자동 기록 (반제품 재고 차감의 근거)
+CREATE TABLE IF NOT EXISTS semi_usage (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  date TEXT NOT NULL,
+  semi_id INTEGER NOT NULL REFERENCES product(id),
+  product_id INTEGER,                                   -- 어떤 완제품 생산에서 소비했는지
+  qty REAL NOT NULL DEFAULT 0,
+  UNIQUE(date, semi_id, product_id)
+);
+CREATE INDEX IF NOT EXISTS idx_semiusage ON semi_usage(semi_id, date);
+
 -- 원료 수불부 '출력용' 스냅샷 — 사용자가 임시 수정·행선택한 상태를 날짜별로 저장(원본 데이터와 무관, 인쇄 이력용)
 CREATE TABLE IF NOT EXISTS ledger_print (
   date TEXT PRIMARY KEY,

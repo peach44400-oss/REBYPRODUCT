@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.45.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.46.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -3129,7 +3129,8 @@ def masters(mtype: str, request: Request):
             semi = 1 if mtype == "semi" else 0
             data = rows(con.execute("""
                 SELECT p.*,
-                       COALESCE(os.qty,0) + COALESCE(pr.q,0) - COALESCE(sh.q,0) - COALESCE(dp.q,0) AS stock
+                       COALESCE(os.qty,0) + COALESCE(pr.q,0) - COALESCE(sh.q,0)
+                         - COALESCE(dp.q,0) - COALESCE(su.q,0) AS stock
                 FROM product p
                 LEFT JOIN opening_stock os ON os.kind='product' AND os.ref_id=p.id
                 LEFT JOIN (SELECT product_id, SUM(prod_qty) q FROM production GROUP BY product_id) pr
@@ -3138,6 +3139,9 @@ def masters(mtype: str, request: Request):
                        ON sh.product_id=p.id
                 LEFT JOIN (SELECT product_id, SUM(qty) q FROM disposal GROUP BY product_id) dp
                        ON dp.product_id=p.id
+                -- 반제품이 완제품 생산에 소비된 양 (반제품일 때만 값이 있음)
+                LEFT JOIN (SELECT semi_id, SUM(qty) q FROM semi_usage GROUP BY semi_id) su
+                       ON su.semi_id=p.id
                 WHERE COALESCE(p.is_semi,0)=?
                 ORDER BY p.sort, p.id""", (semi,)))
         elif mtype in ("raw", "sub"):
@@ -4339,6 +4343,20 @@ def day_save(request: Request, date: str, body: dict):
                     else:
                         con.execute("DELETE FROM lot_expiry WHERE product_id=? AND made=?",
                                     (r["product_id"], date))
+            # 반제품 소비 자동 기록 — 완제품 생산량 × (완제품 1개당 반제품 소요량).
+            # 생산이 저장될 때마다 그날 것을 통째로 다시 계산하므로 수량 축소·행 삭제도 그대로 반영된다.
+            con.execute("DELETE FROM semi_usage WHERE date=?", (date,))
+            for r in body.get("production", []):
+                pid = r.get("product_id")
+                prod = float(r.get("prod_qty") or 0)
+                if not pid or prod <= 0:
+                    continue
+                for ing in con.execute(
+                        "SELECT semi_id, SUM(qty_per_unit) q FROM semi_ingredient"
+                        " WHERE product_id=? GROUP BY semi_id", (pid,)):
+                    if ing["q"]:
+                        con.execute("""INSERT OR REPLACE INTO semi_usage(date, semi_id, product_id, qty)
+                            VALUES(?,?,?,?)""", (date, ing["semi_id"], pid, ing["q"] * prod))
         if "shipment" in body:
             # 재고 초과 검증: 제품별 그날 출고 합 ≤ 그날 제외 가용재고 (기초+생산−다른날출고−폐기)
             affected_pids |= {r["product_id"] for r in con.execute(
@@ -4599,21 +4617,16 @@ def costs(request: Request):
         boms = {}
         for b in con.execute("SELECT product_id, material_id, qty_per_unit, unit FROM bom"):
             boms.setdefault(b["product_id"], []).append(b)
-        out, no_bom = [], 0
-        for p in con.execute("""SELECT id, name, image, unit_price FROM product
-                WHERE status!='단종' ORDER BY sort, id"""):
-            rows_b = boms.get(p["id"])
-            if not rows_b:
-                no_bom += 1
-                continue
+
+        def mat_cost_of(rows_b):
+            """제품 배합비(원부재료)만의 1개당 원가 (mat_cost, 단가미입력 수, 상세)."""
             mat_cost, missing, detail = 0.0, 0, []
-            for b in rows_b:
+            for b in rows_b or []:
                 m = mats.get(b["material_id"])
                 if not m:
                     continue
                 mu = (m["unit"] or "").strip()
                 qty = bom_qty_per_unit(m, b)
-                # 실입고 단가 우선(발주·일일 입고) → 없으면 기준 단가 → 그것도 없으면 0(미입력)
                 actual = float(latest.get(b["material_id"]) or 0)
                 price = actual if actual > 0 else float(m["unit_price"] or 0)
                 psrc = "실입고" if actual > 0 else ("기준" if price > 0 else "")
@@ -4623,6 +4636,38 @@ def costs(request: Request):
                 mat_cost += cost
                 detail.append({"name": m["name"], "qty": round(qty, 5), "unit": mu,
                                "price": price, "cost": round(cost, 2), "src": psrc})
+            return mat_cost, missing, detail
+
+        # 반제품 1개당 원가 = 그 반제품의 원재료 배합비 원가 (롤업용)
+        pnames = {r["id"]: r["name"] for r in con.execute("SELECT id, name FROM product")}
+        semi_unit_cost = {}
+        for sid in [r["id"] for r in con.execute("SELECT id FROM product WHERE COALESCE(is_semi,0)=1")]:
+            semi_unit_cost[sid] = mat_cost_of(boms.get(sid))[0]
+        # 완제품별 반제품 재료 구성
+        semi_ings = {}
+        for si in con.execute("SELECT product_id, semi_id, qty_per_unit FROM semi_ingredient"):
+            semi_ings.setdefault(si["product_id"], []).append(si)
+
+        out, no_bom = [], 0
+        for p in con.execute("""SELECT id, name, image, unit_price FROM product
+                WHERE status!='단종' AND COALESCE(is_semi,0)=0 ORDER BY sort, id"""):
+            rows_b = boms.get(p["id"])
+            ings = semi_ings.get(p["id"])
+            if not rows_b and not ings:
+                no_bom += 1
+                continue
+            mat_cost, missing, detail = mat_cost_of(rows_b)
+            # 반제품 재료 원가 롤업 — 반제품 단위원가 × 완제품 1개당 소요량
+            for si in (ings or []):
+                q = float(si["qty_per_unit"] or 0)
+                suc = float(semi_unit_cost.get(si["semi_id"], 0) or 0)
+                cost = q * suc
+                if suc <= 0:
+                    missing += 1
+                mat_cost += cost
+                detail.append({"name": "🧫 " + pnames.get(si["semi_id"], "반제품"),
+                               "qty": round(q, 5), "unit": "", "price": round(suc, 2),
+                               "cost": round(cost, 2), "src": "반제품"})
             detail.sort(key=lambda x: -x["cost"])
             out.append({"id": p["id"], "name": p["name"], "image": p["image"],
                         "sell": float(p["unit_price"] or 0),
@@ -4843,6 +4888,47 @@ def bom_get(product_id: int):
 COUNT_UNITS = {"개", "ea", "EA", "매", "장", "롤", "박스", "묶음", "봉", "set", "세트", "팩"}
 
 
+# ── 반제품 재료 (완제품 배합비에 들어가는 반제품) ─────────────
+@app.get("/api/semiing/{product_id}")
+def semiing_get(product_id: int):
+    """이 완제품의 배합비에 포함된 반제품 재료 목록 (반제품명·규격·단위 함께)."""
+    con = connect()
+    try:
+        return {"items": rows(con.execute("""
+            SELECT si.semi_id, si.qty_per_unit, si.unit,
+                   p.name, p.spec, p.status
+            FROM semi_ingredient si JOIN product p ON p.id=si.semi_id
+            WHERE si.product_id=? ORDER BY si.id""", (product_id,)))}
+    finally:
+        con.close()
+
+
+@app.post("/api/semiing/{product_id}")
+def semiing_save(product_id: int, request: Request, body: dict):
+    """완제품의 반제품 재료 구성을 통째로 교체."""
+    if request.state.user["role"] == "guest":
+        raise HTTPException(403, "보기 전용 계정은 사용할 수 없습니다")
+    con = connect()
+    try:
+        con.execute("DELETE FROM semi_ingredient WHERE product_id=?", (product_id,))
+        n = 0
+        for it in body.get("items", []):
+            sid = it.get("semi_id")
+            if not sid or int(sid) == int(product_id):   # 자기 자신은 재료가 될 수 없음
+                continue
+            con.execute("""INSERT INTO semi_ingredient(product_id, semi_id, qty_per_unit, unit)
+                VALUES(?,?,?,?)""",
+                        (product_id, int(sid), float(it.get("qty_per_unit") or 0),
+                         it.get("unit") or ""))
+            n += 1
+        audit(con, "save_semiing", f"제품#{product_id} 반제품 재료 {n}종")
+        bump_masters()
+        con.commit()
+        return {"ok": True, "count": n}
+    finally:
+        con.close()
+
+
 @app.post("/api/bom/{product_id}")
 def bom_save(product_id: int, body: dict):
     con = connect()
@@ -4985,21 +5071,59 @@ def plan_needs(request: Request, body: dict):
             SELECT md.material_id, md.real_qty FROM material_daily md
             JOIN (SELECT material_id mid, MAX(date) d FROM material_daily GROUP BY material_id) x
               ON x.mid=md.material_id AND x.d=md.date""")}
+        # 반제품 재료 구성 + 반제품 현재고 (반제품 소요 → 부족분은 원재료로 전개)
+        semi_ings = {}
+        for si in con.execute("SELECT product_id, semi_id, qty_per_unit FROM semi_ingredient"):
+            semi_ings.setdefault(si["product_id"], []).append(si)
+        semi_stock = {r["id"]: (r["stock"] or 0) for r in con.execute("""
+            SELECT p.id, COALESCE(os.qty,0)+COALESCE(pr.q,0)-COALESCE(sh.q,0)
+                     -COALESCE(dp.q,0)-COALESCE(su.q,0) AS stock
+            FROM product p
+            LEFT JOIN opening_stock os ON os.kind='product' AND os.ref_id=p.id
+            LEFT JOIN (SELECT product_id, SUM(prod_qty) q FROM production GROUP BY product_id) pr ON pr.product_id=p.id
+            LEFT JOIN (SELECT product_id, SUM(qty) q FROM shipment GROUP BY product_id) sh ON sh.product_id=p.id
+            LEFT JOIN (SELECT product_id, SUM(qty) q FROM disposal GROUP BY product_id) dp ON dp.product_id=p.id
+            LEFT JOIN (SELECT semi_id, SUM(qty) q FROM semi_usage GROUP BY semi_id) su ON su.semi_id=p.id
+            WHERE COALESCE(p.is_semi,0)=1""")}
+        pnames = {r["id"]: r["name"] for r in con.execute("SELECT id, name, spec FROM product")}
+        pspec = {r["id"]: (r["spec"] or "") for r in con.execute("SELECT id, spec FROM product")}
+
         need = {}
+        semi_need = {}   # semi_id -> 필요량 (완제품 계획에서)
         plan_out, no_bom = [], []
         for pid, qty in plans:
             pr = con.execute("SELECT name FROM product WHERE id=?", (pid,)).fetchone()
             nm = pr["name"] if pr else str(pid)
             rows_b = boms.get(pid)
-            plan_out.append({"product_id": pid, "name": nm, "qty": qty, "bom": bool(rows_b)})
-            if not rows_b:
+            ings = semi_ings.get(pid)
+            plan_out.append({"product_id": pid, "name": nm, "qty": qty, "bom": bool(rows_b or ings)})
+            if not rows_b and not ings:
                 no_bom.append(nm)
                 continue
-            for b in rows_b:
+            for b in (rows_b or []):
                 m = mats.get(b["material_id"])
                 if not m:
                     continue
                 need[b["material_id"]] = need.get(b["material_id"], 0) + bom_qty_per_unit(m, b) * qty
+            for si in (ings or []):
+                semi_need[si["semi_id"]] = semi_need.get(si["semi_id"], 0) + float(si["qty_per_unit"] or 0) * qty
+        # 부족한 반제품은 새로 생산해야 하므로, (필요−현재고)만큼 원재료로 전개
+        semi_out = []
+        for sid, req in semi_need.items():
+            have = float(semi_stock.get(sid, 0) or 0)
+            to_produce = req - have
+            semi_out.append({"semi_id": sid, "name": pnames.get(sid, str(sid)),
+                             "unit": pspec.get(sid, ""), "need": round(req, 3),
+                             "stock": round(have, 3),
+                             "shortfall": round(to_produce, 3) if to_produce > 0 else 0,
+                             "short": to_produce > 0})
+            if to_produce > 0:
+                for b in boms.get(sid, []):
+                    m = mats.get(b["material_id"])
+                    if not m:
+                        continue
+                    need[b["material_id"]] = need.get(b["material_id"], 0) + bom_qty_per_unit(m, b) * to_produce
+        semi_out.sort(key=lambda x: (not x["short"], x["name"]))
         latest = latest_material_prices(con)
         pa_names = {r["id"]: r["name"] for r in con.execute("SELECT id, name FROM partner")}
         out = []
@@ -5015,7 +5139,9 @@ def plan_needs(request: Request, body: dict):
                         "price": price, "amount": round(short * price) if short > 0 and price else 0})
         out.sort(key=lambda x: (not x["short"], x["name"]))
         return {"plans": plan_out, "needs": out, "no_bom": no_bom,
+                "semi_needs": semi_out,
                 "short_cnt": sum(1 for x in out if x["short"]),
+                "semi_short_cnt": sum(1 for x in semi_out if x["short"]),
                 "short_amount": sum(x["amount"] for x in out)}
     finally:
         con.close()

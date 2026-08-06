@@ -3712,7 +3712,7 @@ function openUserModal() {
 }
 
 /* ── 배합비 (BOM) ─────────────────────── */
-const BOM = { pid: null, rows: [], view: "", w: {}, q: "" };   // q = 제품 검색어 (드롭다운 좁히기)
+const BOM = { pid: null, rows: [], semis: [], view: "", w: {}, q: "" };   // q = 제품 검색어 (드롭다운 좁히기) · semis = 반제품 재료
 const BOM_UNITS = ["g", "kg", "ea", "매", "롤"];
 async function loadBom(pid) {
   BOM.pid = pid;
@@ -3722,6 +3722,11 @@ async function loadBom(pid) {
     // 납품처 지정도 함께 실어야 재열람 후 저장 시 지정이 지워지지 않는다
     partner_id: r.partner_id || null, partner_ids: r.partner_ids || "",
     note: r.note || "" }));
+  // 반제품 재료 (완제품만 — 반제품 자신은 원재료만 사용하므로 불러오지 않는다)
+  const isSemiProd = !!(productById(pid) || {}).is_semi;
+  BOM.semis = isSemiProd ? [] :
+    (((await api("/api/semiing/" + pid)) || {}).items || []).map(s => ({
+      semi_id: s.semi_id, qty_per_unit: s.qty_per_unit, unit: s.unit || "" }));
   BOM.w = {};   // 블록별 분할 무게(1개당 g) — 전체무게 ÷ 수율로 역산해 초기 표시
   BOM.loadedFor = pid;
   renderBomRows();
@@ -3840,17 +3845,32 @@ $("bomProdSel").addEventListener("change", e => {
 });
 /* 제품 검색 — 옆 드롭다운 목록을 좁힌다 (Enter = 첫 결과 열기).
    자동완성 목록에서 제품명을 그대로 고르면 = 그 제품을 선택한 것으로 보고 바로 연다. */
+// 검색 결과의 첫 제품을 편집기에 연다 (Enter / 입력 멈춤 시 자동 호출)
+async function bomOpenFirstMatch() {
+  await ensureBomAll();
+  const first = $("bomProdSel").querySelector("option[value]:not([value='']):not([data-cur])");
+  if (!first) return;                       // 검색 결과 없음 — 조용히 현재 상태 유지
+  const pid = +first.value;
+  if (pid === BOM.pid) return;              // 이미 열려 있으면 그대로
+  BOM.pid = pid;
+  renderBomTab();
+}
+let bomSearchTimer = null;
 $("bomProdSearch").addEventListener("input", e => {
   const v = e.target.value.trim();
   const hit = v ? M.product.concat(M.semi).find(p => p.status !== "단종" && p.name === v) : null;
-  if (hit) {                       // 이름이 정확히 일치 → 선택으로 처리하고 검색 해제
+  if (hit) {                       // 자동완성에서 정확한 이름 선택 → 즉시 그 제품 열기
+    clearTimeout(bomSearchTimer);
     BOM.pid = hit.id;
     BOM.q = ""; e.target.value = "";
     renderBomTab();
     return;
   }
   BOM.q = v;
-  renderBomTab();
+  renderBomTab();                  // 목록은 즉시 좁힌다
+  // 실시간: 입력이 잠깐 멈추면 첫 검색결과를 편집기에 바로 열어 화면이 따라 바뀌게 한다
+  clearTimeout(bomSearchTimer);
+  if (v) bomSearchTimer = setTimeout(bomOpenFirstMatch, 250);
 });
 $("bomProdSearch").addEventListener("focus", () => {
   $("qaProducts").innerHTML = M.product.concat(M.semi).filter(p => p.status !== "단종")
@@ -3859,11 +3879,8 @@ $("bomProdSearch").addEventListener("focus", () => {
 $("bomProdSearch").addEventListener("keydown", e => {
   if (e.key !== "Enter") return;
   e.preventDefault();
-  // '현재 선택(검색 결과 아님)' 항목은 건너뛴다 — 검색어와 무관하므로
-  const first = $("bomProdSel").querySelector("option[value]:not([value='']):not([data-cur])");
-  if (!first) return toast("검색 결과가 없습니다");
-  BOM.pid = +first.value;
-  renderBomTab();
+  clearTimeout(bomSearchTimer);
+  bomOpenFirstMatch();             // 검색 결과 없으면 조용히 유지 (경고 토스트 없음)
 });
 // 미등록 제품에 기존 제품의 배합비를 복사 (제품명이 달라 임포트 매칭이 안 된 경우의 수동 매칭)
 $("bomCopyBtn").onclick = async () => {
@@ -3930,7 +3947,7 @@ function renderBomRows() {
   const blocks = ["반죽", "토핑"];
   if (BOM.rows.some(r => !(r.block))) blocks.push("");
   const SEC = { "반죽": "🍞 반죽 배합", "토핑": "🍪 토핑 배합", "": "— 구분 없음 (실측 등)" };
-  $("mBody").innerHTML = blocks.map(b => {
+  const matSecHtml = blocks.map(b => {
     const items = BOM.rows.map((r, i) => ({ r, i })).filter(x => (x.r.block || "") === b);
     const by = Number(BOM.rows.find(r => (r.block || "") === b && Number(r.block_yield) > 0)?.block_yield) || 0;
     const body = items.map(({ r, i }) => rowHtml(r, i)).join("")
@@ -3949,6 +3966,62 @@ function renderBomRows() {
         </select>` : ""}</span>` : ""}</td></tr>`;
     return body + bar;
   }).join("");
+  $("mBody").innerHTML = matSecHtml + renderSemiIngredientSection(cols);
+}
+/* 반제품 재료 섹션 — 완제품 배합비에만 표시 (반제품 자신은 원재료만 사용).
+   완제품 1개당 반제품 소요량을 입력 → 생산 시 백엔드가 자동으로 반제품 재고를 차감한다. */
+function renderSemiIngredientSection(cols) {
+  const prod = productById(BOM.pid) || {};
+  if (!BOM.pid || prod.is_semi) return "";       // 반제품 편집 중이면 섹션 없음
+  const semis = BOM.semis || [];
+  const pickable = (M.semi || []).filter(p => (p.status !== "단종" || false) && p.id !== BOM.pid);
+  const semiSel = sid => `<select class="mini-sel" data-sf="semi_id" style="max-width:220px">
+      <option value="">반제품 선택…</option>
+      ${pickable.map(p => `<option value="${p.id}" ${p.id === sid ? "selected" : ""}>${esc(p.name)}</option>`).join("")}
+    </select>`;
+  const rowsHtml = semis.map((s, i) => {
+    const sp = productById(s.semi_id) || {};
+    return `<tr data-si="${i}">
+      <td>${semiSel(s.semi_id)}</td>
+      <td><span class="chip cat" style="background:#e7ecff; color:#3a4db0;">🧫 반제품</span></td>
+      <td class="r"><input class="mini-input num w" data-sf="qty_per_unit" value="${s.qty_per_unit ?? ""}"
+          title="완제품 1개당 반제품 소요량 (반제품 재고 단위 기준)"></td>
+      <td class="auto" style="text-align:left">${esc(s.unit || sp.spec || "")}</td>
+      <td class="auto">생산 시 자동 차감</td>
+      <td><button class="btn ghost sm" data-sdel>삭제</button></td></tr>`;
+  }).join("")
+    || `<tr><td colspan="${cols}" class="auto" style="padding:8px 10px;">반제품 재료가 없습니다 — 아래 🔍로 반제품을 추가하세요 (없어도 됩니다)</td></tr>`;
+  const semiOpts = (M.semi || []).filter(p => p.status !== "단종" && p.id !== BOM.pid)
+    .map(p => `<option value="${esc(p.name)}">`).join("");
+  const bar = `<tr><td colspan="${cols}" style="background:var(--bg); padding:6px 10px;">
+      <b style="font-size:12.5px;">🧫 반제품 재료</b>
+      <span class="auto num" style="margin-left:6px; font-size:11.5px;">${semis.length}종 · 완제품 1개당 소요량 (예: 빵 1개 = 발효종 20)</span>
+      <span style="display:inline-flex; align-items:center; gap:6px; margin-left:10px; flex-wrap:wrap;">
+        <input class="mini-input" id="bomSemiSearch" list="qaSemis" placeholder="🔍 반제품 검색 후 Enter = 추가" style="text-align:left; width:230px;">
+        <button class="btn ghost sm" id="bomSemiAdd">+ 반제품 추가</button>
+        <datalist id="qaSemis">${semiOpts}</datalist>
+      </span></td></tr>`;
+  return bar + rowsHtml;
+}
+// 반제품 재료 추가 — 검색 이름(name) 또는 null(빈 행)
+function bomAddSemiByName(name) {
+  if (!BOM.pid) return toast("제품을 먼저 선택하세요");
+  let hit = null;
+  if (name) {
+    const all = (M.semi || []).filter(p => p.id !== BOM.pid);
+    hit = all.find(o => o.name === name);
+    if (!hit) {
+      const cands = all.filter(o => o.name.toLowerCase().includes(name.toLowerCase()));
+      if (!cands.length) return toast(`'${name}' 반제품 검색 결과 없음`);
+      if (cands.length > 1) return toast(`'${name}' 검색 결과 ${cands.length}건 — 목록에서 정확한 이름을 선택하세요`);
+      hit = cands[0];
+    }
+  }
+  if (hit && (BOM.semis || []).some(s => s.semi_id === hit.id))
+    return toast(`'${hit.name}'은(는) 이미 재료에 있습니다`);
+  (BOM.semis || (BOM.semis = [])).push({ semi_id: hit ? hit.id : null, qty_per_unit: "", unit: hit ? (hit.spec || "") : "" });
+  renderBomRows();
+  if (hit) toast(`'${hit.name}' — 반제품 재료에 추가됨 (1개당 소요량 입력 후 [배합비 저장])`);
 }
 $("bomEstimate").onclick = async () => {
   if (!BOM.pid) return toast("제품을 먼저 선택하세요");
@@ -3970,6 +4043,13 @@ $("bomSave").onclick = async () => {
     body: JSON.stringify({ rows: BOM.rows.filter(r => r.material_id).map(r => ({ ...r,
         qty_per_unit: num(r.qty_per_unit), batch_qty: num(r.batch_qty), block_yield: num(r.block_yield) })),
       batch_yield: dough ? Number(dough.block_yield) : null }) });
+  // 반제품 재료도 함께 저장 (완제품만 — 반제품 자신은 BOM.semis가 비어 있음)
+  if (!(productById(BOM.pid) || {}).is_semi) {
+    await api("/api/semiing/" + BOM.pid, { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items: (BOM.semis || []).filter(s => s.semi_id)
+        .map(s => ({ semi_id: s.semi_id, qty_per_unit: num(s.qty_per_unit), unit: s.unit || "" })) }) });
+  }
   toast("배합비 저장 완료");
   BOMALL = null;          // 일일 입력 '배합비 자동'이 새 배합을 쓰도록 캐시 무효화
   COSTS = null;           // 원가 분석도 새 배합 기준으로
@@ -4062,6 +4142,20 @@ $("mBody").addEventListener("change", e => {
 });
 $("mBody").addEventListener("input", e => {
   if (mTab !== "bom") return;
+  const str = e.target.closest("tr[data-si]");          // 반제품 재료 행
+  if (str) {
+    const sf = e.target.dataset.sf; if (!sf) return;
+    const s = BOM.semis[+str.dataset.si]; if (!s) return;
+    if (sf === "semi_id") {
+      s.semi_id = e.target.value ? +e.target.value : null;
+      const sp = productById(s.semi_id) || {};
+      if (!s.unit && sp.spec) s.unit = sp.spec;
+      renderBomRows();
+    } else if (sf === "qty_per_unit") {
+      s.qty_per_unit = e.target.value;
+    }
+    return;
+  }
   const tr = e.target.closest("tr[data-bi]"); if (!tr) return;
   const f = e.target.dataset.bf; if (!f) return;
   const row = BOM.rows[+tr.dataset.bi];
@@ -4136,6 +4230,19 @@ $("mBody").addEventListener("click", e => {
       bomAddByName((s && s.value.trim()) || null, blk);
       return;
     }
+    if (e.target.closest("#bomSemiAdd")) {              // 반제품 재료 추가
+      const s = document.getElementById("bomSemiSearch");
+      bomAddSemiByName((s && s.value.trim()) || null);
+      if (s) s.value = "";
+      return;
+    }
+    const sdel = e.target.closest("[data-sdel]");       // 반제품 재료 행 삭제
+    if (sdel) {
+      const tr = sdel.closest("tr[data-si]");
+      BOM.semis.splice(+tr.dataset.si, 1);
+      renderBomRows();
+      return;
+    }
     const del = e.target.closest("[data-bdel]");
     if (del) {
       const tr = del.closest("tr[data-bi]");
@@ -4196,8 +4303,15 @@ function bomAddByName(name, blk = "반죽") {
 }
 // 각 배합 섹션 헤더의 검색창 — Enter로 그 배합에 자재 추가
 $("mBody").addEventListener("keydown", e => {
+  if (e.key !== "Enter") return;
+  if (e.target.id === "bomSemiSearch") {          // 반제품 재료 검색 → Enter로 추가
+    e.preventDefault();
+    const v = e.target.value.trim();
+    if (v) { bomAddSemiByName(v); e.target.value = ""; }
+    return;
+  }
   const s = e.target.closest("[data-addsearch]");
-  if (!s || e.key !== "Enter") return;
+  if (!s) return;
   e.preventDefault();
   if (!BOM.pid) return toast("제품을 먼저 선택하세요");
   const v = s.value.trim();
@@ -5350,8 +5464,21 @@ function renderPlanNeeds() {
       <td class="r" style="font-weight:700; color:${n.short ? "var(--warn)" : "var(--ok)"}">${n.short ? "-" + NF(n.shortfall) : "충분"}</td>
       ${money ? `<td class="r auto">${n.short && n.amount ? NF(n.amount) : ""}</td>` : ""}</tr>`).join("")
     || `<tr><td colspan="${money ? 5 : 4}" class="auto">소요 자재가 없습니다</td></tr>`;
-  $("planNeeds").innerHTML = noBom + `
-    <div style="font-size:12px; margin-bottom:6px;">부족 <b style="color:var(--warn)">${d.short_cnt || 0}종</b>${money && d.short_amount ? ` · 예상 매입액 <b>₩${NF(d.short_amount)}</b>` : ""}</div>
+  // 반제품 소요 — 부족한 반제품은 생산해야 하며, 그만큼의 원재료는 아래 자재 표에 이미 전개되어 있다
+  const semiRows = (d.semi_needs || []).map(n => `
+    <tr ${n.short ? 'style="background:var(--warn-soft, #FEF3E2)"' : ""}>
+      <td style="text-align:left;">🧫 ${esc(n.name)}</td>
+      <td class="r">${NF(n.need)} ${esc(n.unit)}</td>
+      <td class="r auto">${NF(n.stock)}</td>
+      <td class="r" style="font-weight:700; color:${n.short ? "var(--warn)" : "var(--ok)"}">${n.short ? "생산필요 " + NF(n.shortfall) : "충분"}</td></tr>`).join("");
+  const semiBlock = (d.semi_needs || []).length ? `
+    <div style="font-size:12px; margin:10px 0 6px;">반제품 소요 <b style="color:var(--warn)">${d.semi_short_cnt || 0}종 생산필요</b>
+      <span class="auto" style="font-size:10.5px;">— 부족한 반제품 생산에 드는 원재료는 아래 자재 표에 포함됨</span></div>
+    <table style="width:100%; font-size:11.5px;">
+      <thead><tr style="color:var(--muted);"><th style="text-align:left;">반제품</th><th class="r">필요량</th><th class="r">현재고</th><th class="r">부족</th></tr></thead>
+      <tbody class="num">${semiRows}</tbody></table>` : "";
+  $("planNeeds").innerHTML = noBom + semiBlock + `
+    <div style="font-size:12px; margin:10px 0 6px;">자재 소요 · 부족 <b style="color:var(--warn)">${d.short_cnt || 0}종</b>${money && d.short_amount ? ` · 예상 매입액 <b>₩${NF(d.short_amount)}</b>` : ""}</div>
     <table style="width:100%; font-size:11.5px;">
       <thead><tr style="color:var(--muted);"><th style="text-align:left;">자재</th><th class="r">필요량</th><th class="r">현재고</th><th class="r">부족</th>${money ? '<th class="r">예상액</th>' : ""}</tr></thead>
       <tbody class="num">${rows}</tbody></table>`;
