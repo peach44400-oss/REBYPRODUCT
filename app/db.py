@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS product (
   image TEXT DEFAULT '',               -- 제품 이미지 파일명 (exe 옆 Image/ 폴더)
   status TEXT DEFAULT '판매중',         -- 판매중/단종
   note TEXT DEFAULT '',
-  sort INTEGER DEFAULT 0
+  sort INTEGER DEFAULT 0,
+  is_semi INTEGER DEFAULT 0             -- 1 = 반제품(중간재) — 완제품 목록/출고엔 안 뜨고 배합비에서 자체 레시피를 가짐
 );
 
 CREATE TABLE IF NOT EXISTS material (
@@ -603,6 +604,9 @@ def init_db() -> None:
     # 입고 없는 재고의 제조일자 수동 입력 — material_expiry에 made 컬럼 보강
     if "made" not in [r[1] for r in con.execute("PRAGMA table_info(material_expiry)")]:
         con.execute("ALTER TABLE material_expiry ADD COLUMN made TEXT DEFAULT ''")
+    # 반제품(중간재) — product에 is_semi 컬럼 보강
+    if "is_semi" not in [r[1] for r in con.execute("PRAGMA table_info(product)")]:
+        con.execute("ALTER TABLE product ADD COLUMN is_semi INTEGER DEFAULT 0")
     # 포장 세트 다대다 전환: 기존 material.pack_set(단일) → pack_set_member (1회, 중복 무시라 재실행 안전)
     con.execute("""INSERT OR IGNORE INTO pack_set_member(set_name, material_id)
                    SELECT pack_set, id FROM material WHERE COALESCE(pack_set,'')!=''""")

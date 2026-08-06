@@ -62,8 +62,8 @@ async function loadMasters() {
   M.line.forEach((l, i) => (l.disp = `${i + 1}. ${l.name}${l.process ? " / " + l.process : ""}`));
   await loadPackSets();
 }
-const productById = (id) => M.product.find(p => p.id === id);
-const materialById = (id) => M.raw.concat(M.sub, M.semi).find(m => m.id === id);
+const productById = (id) => M.product.concat(M.semi).find(p => p.id === id);   // 반제품(semi)도 제품처럼 배합비를 가짐
+const materialById = (id) => M.raw.concat(M.sub).find(m => m.id === id);
 async function reloadMaster(t) {
   M[t] = await api("/api/masters/" + t);
   if (t === "line")
@@ -3062,11 +3062,10 @@ const MCOLS = {
         esc(r.stock_date || "—"), chip(r.status)];
     },
     hint: "재고일수 = 현재고 ÷ 최근 30일 일평균 사용량 · 생산가능수량 = 현재고 × 단위당 수량 · 횟수 = 수량 ÷ 1회 소요량 (환산계수는 7/7 실사 엑셀에서 갱신됨)" },
-  semi: { label: "반제품", cols: ["반제품명", "규격", "단위", "레시피", "단가(원)", "안전재고", "소비일", "현재고", "재고일수", "최종 기록일", "상태"],
-    row: r => [`<button class="uselink" data-mhist="${r.id}">${esc(r.name)}</button>`, esc(r.spec || "—"), esc(r.unit),
-      `<button class="btn ghost sm" data-semirecipe="${r.id}" title="이 반제품의 원재료 구성(레시피) 편집">🧾 레시피</button>`,
-      r.unit_price == null ? "—" : NF(r.unit_price), NF(r.safety_stock), r.shelf_days || "—", stockCell(r), stockDaysCell(r), esc(r.stock_date || "—"), chip(r.status)],
-    hint: "반제품 = 원재료로 만드는 중간재 · [🧾 레시피]로 원재료 구성을 입력 · 현재고·수불부는 자재와 동일하게 관리됩니다" },
+  semi: { label: "반제품", cols: ["반제품명", "규격", "단가(원)", "소비일", "안전재고", "1배합당 생산수량", "현재고", "상태"],
+    row: r => [`<button class="uselink" data-phist="${r.id}"><b>${esc(r.name)}</b></button>`, esc(r.spec || "—"),
+      r.unit_price == null ? "—" : NF(r.unit_price), r.shelf_days || "—", NF(r.safety_stock), r.batch_yield ? NF(r.batch_yield) : "—", NF(r.stock), chip(r.status)],
+    hint: "반제품 = 원재료로 만드는 중간재(제품처럼 등록) · 원재료 구성(레시피)은 [배합비] 탭에서 이 반제품을 선택해 등록합니다 · 완제품 목록·출고에는 뜨지 않습니다" },
   partner: { label: "거래처", cols: ["거래처명", "유형", "사업자번호", "대표자", "전화", "모바일", "이메일", "담당자", "상태"],
     row: r => [B(r.name), `<span class="chip cat">${esc(r.type)}</span>`, esc(r.biz_no || "—"), esc(r.ceo || "—"),
       esc(r.phone || "—"), esc(r.mobile || "—"), esc(r.email || "—"), esc(r.contact || "—"), chip(r.status)],
@@ -3800,12 +3799,17 @@ async function renderBomTab() {
   const prods = q ? all.filter(p => p.name.toLowerCase().includes(q)) : all;
   const withB = prods.filter(p => has.has(p.id));
   const without = prods.filter(p => !has.has(p.id));
+  // 반제품(semi)도 배합비를 가짐 — 별도 그룹으로 목록에 추가
+  const semis = (M.semi || []).filter(p => p.status !== "단종")
+    .filter(p => !q || p.name.toLowerCase().includes(q))
+    .sort((a, b) => a.name.localeCompare(b.name, "ko"));
   if (!BOM.pid && prods.length) BOM.pid = (withB[0] || prods[0]).id;
   const cur = productById(BOM.pid);
-  const keepCur = q && cur && !prods.some(p => p.id === BOM.pid);
-  const opt = p => `<option value="${p.id}" ${p.id === BOM.pid ? "selected" : ""}>${esc(p.name)}</option>`;
+  const keepCur = q && cur && !prods.some(p => p.id === BOM.pid) && !semis.some(p => p.id === BOM.pid);
+  const opt = p => `<option value="${p.id}" ${p.id === BOM.pid ? "selected" : ""}>${esc(p.name)}${has.has(p.id) ? "" : " · 미등록"}</option>`;
   $("bomProdSel").innerHTML =
-    (withB.length ? `<optgroup label="✔ 배합비 등록 (${withB.length})">${withB.map(opt).join("")}</optgroup>` : "")
+    (semis.length ? `<optgroup label="🧫 반제품 (${semis.length})">${semis.map(opt).join("")}</optgroup>` : "")
+    + (withB.length ? `<optgroup label="✔ 배합비 등록 (${withB.length})">${withB.map(opt).join("")}</optgroup>` : "")
     + (without.length ? `<optgroup label="배합비 미등록 (${without.length})">${without.map(opt).join("")}</optgroup>` : "")
     + (keepCur ? `<optgroup label="— 현재 선택 (검색 결과 아님)"><option value="${cur.id}" data-cur selected>${esc(cur.name)}</option></optgroup>` : "")
     || `<option value="">검색 결과 없음</option>`;
@@ -4222,11 +4226,11 @@ const MFORMS = {
     ["stock_set", "현재고 (아래 기준일의 실사 기록으로 저장됩니다)", "num"], ["stock_date", "기준일 (이 날짜에 기록)", "date"],
     ["prod_mult", "단위당 수량 (생산가능 환산)", "num"], ["prod_per", "1회 생산 소요량", "num"],
     ["status", "상태", "sel", ["사용중", "중단"]], ["note", "비고", "full"]],
-  semi: [["name", "반제품명 *"], ["spec", "규격 (예: 발효반죽)"], ["unit", "단위", "sel", ["kg", "g", "L", "개", "ea"]],
-    ["unit_price", "단가 (원)", "num"], ["safety_stock", "안전재고", "num"], ["shelf_days", "소비기한 (보관일수, 일)", "num"],
-    ["initial_stock", "초기재고 (신규만)", "num"],
-    ["stock_set", "현재고 (아래 기준일의 실사 기록으로 저장됩니다)", "num"], ["stock_date", "기준일 (이 날짜에 기록)", "date"],
-    ["status", "상태", "sel", ["사용중", "중단"]], ["note", "비고", "full"]],
+  semi: [["name", "반제품명 *"], ["spec", "규격 (예: 발효반죽)"],
+    ["unit_price", "단가 (원)", "num"], ["shelf_days", "소비일 (일)", "num"], ["safety_stock", "안전재고", "num"],
+    ["batch_yield", "1배합당 생산수량", "num"],
+    ["initial_stock", "초기재고 (신규만)", "num"], ["stock_set", "현재고 (수정 시 기초재고 자동 조정)", "num"],
+    ["status", "상태", "sel", ["사용중", "단종"]], ["note", "비고", "full"]],
   partner: [["name", "거래처명 *"], ["type", "유형 — 선택 또는 직접 입력 (예: 기부)", "combo", ["판매처", "자재 공급처", "용역업체"]],
     ["biz_no", "사업자등록번호"], ["ceo", "대표자명"],
     ["phone", "전화"], ["mobile", "모바일"],
