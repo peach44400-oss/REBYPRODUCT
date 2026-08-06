@@ -5498,18 +5498,23 @@ $("navLedger").onclick = () => openLedger();
 function openLedger(date) {
   const d = date || todayISO();
   $("ledgerDate").value = d;
+  FINLED.data = null;   // 재오픈 시 완제품 수불부도 새 날짜로 다시 로드
   $("ledgerOverlay").classList.add("on");
   setLedgerTab("raw");
   loadLedger(d);
 }
 window.closeLedger = () => $("ledgerOverlay").classList.remove("on");
-// 수불부 탭 전환 — 원료 수불부(raw) / 완제품 수불부(fin, 준비 중). 이후 탭 추가 시 여기 확장.
+// 수불부 탭 전환 — 원료 수불부(raw) / 완제품 수불부(fin).
 function setLedgerTab(tab) {
   [...$("ledgerTabs").children].forEach(b => b.classList.toggle("on", b.dataset.ltab === tab));
   const raw = tab === "raw";
   $("ledgerRawTools").style.display = raw ? "flex" : "none";
+  $("ledgerFinTools").style.display = raw ? "none" : "flex";
   $("ledgerBody").style.display = raw ? "" : "none";
   $("ledgerFin").style.display = raw ? "none" : "";
+  const d = $("ledgerDate").value || todayISO();
+  if (!raw) loadFinLedger(d);                                      // 현재 날짜로 완제품 수불부 로드
+  else if (LEDGER.data && LEDGER.data.date !== d) loadLedger(d);   // 완제품 탭에서 바뀐 날짜 반영
 }
 $("ledgerTabs").addEventListener("click", e => {
   const b = e.target.closest("[data-ltab]"); if (b) setLedgerTab(b.dataset.ltab);
@@ -5523,6 +5528,82 @@ async function loadLedger(date) {
 }
 function renderLedger() { if (LEDGER.data) { $("ledgerBody").innerHTML = buildLedgerDoc(LEDGER.data, false); setLedgerMode(""); } }
 $("ledgerAll").addEventListener("change", e => { LEDGER.showAll = e.target.checked; renderLedger(); });
+
+// ── 완제품 수불부 (제품별 전일재고·생산·출고·재고 + LOT 소비기한) ──
+const FINLED = { data: null, showAll: false };
+async function loadFinLedger(date) {
+  try {
+    FINLED.data = await api("/api/finledger?date=" + encodeURIComponent(date));
+    $("finDate").value = FINLED.data.date;
+    $("ledgerDate").value = FINLED.data.date;   // 두 탭 날짜 동기화
+    renderFinLedger();
+  } catch (e) { /* api 토스트 */ }
+}
+function renderFinLedger() { if (FINLED.data) $("ledgerFin").innerHTML = buildFinLedgerDoc(FINLED.data); }
+function buildFinLedgerDoc(d) {
+  const NFv = v => (v == null || v === "") ? "" : Number(Math.round(v * 1000) / 1000).toLocaleString("ko-KR");
+  const rows = (d.rows || []).filter(r => FINLED.showAll || r.moved || r.stock || r.prev);
+  const TD = "border:1px solid #333; padding:3px 6px;";
+  const body = rows.map(r => {
+    const lots = (r.lots || []).map(l => {
+      const made = l.made ? l.made.slice(5) : "미상";
+      const exp = l.expiry ? l.expiry.slice(5) : "—";
+      return `<div style="white-space:nowrap;">📅 <b>${esc(exp)}</b> <span style="color:#777;">(생산 ${esc(made)} · ${NFv(l.qty)})</span></div>`;
+    }).join("") || '<span style="color:#aaa;">—</span>';
+    return `<tr>
+      <td style="${TD} text-align:center; color:#555;">${esc(r.category)}</td>
+      <td style="${TD} text-align:left; font-weight:600; white-space:normal;">${esc(r.name)}</td>
+      <td style="${TD} text-align:center; color:#555;">${esc(r.spec)}</td>
+      <td style="${TD} text-align:right;">${NFv(r.prev)}</td>
+      <td style="${TD} text-align:right; color:#0a7a2f; ${r.prod ? "font-weight:700;" : ""}">${r.prod ? NFv(r.prod) : ""}</td>
+      <td style="${TD} text-align:right; color:#b3541e; ${r.ship ? "font-weight:700;" : ""}">${r.ship ? NFv(r.ship) : ""}</td>
+      <td style="${TD} text-align:right; font-weight:700;">${NFv(r.stock)}</td>
+      <td style="${TD} text-align:left; font-size:10.5px; white-space:normal;">${lots}</td></tr>`;
+  }).join("") || `<tr><td style="${TD}" colspan="8" class="auto" style="padding:16px;">이 날짜에 생산·출고된 완제품이 없습니다 (전체 제품은 [전체 제품] 체크)</td></tr>`;
+  const dow = ["일", "월", "화", "수", "목", "금", "토"][new Date(d.date + "T00:00").getDay()];
+  const TDm = "border:1px solid #333; padding:2px 6px; font-size:11px;";
+  const approve = `<table style="border-collapse:collapse; display:inline-table;">
+    <tr><td rowspan="2" style="${TDm} text-align:center; writing-mode:vertical-rl; letter-spacing:3px; background:#eef0f2;">결 재</td>
+      <td style="${TDm} text-align:center; background:#eef0f2; width:54px;">작성</td>
+      <td style="${TDm} text-align:center; background:#eef0f2; width:54px;">확인</td>
+      <td style="${TDm} text-align:center; background:#eef0f2; width:54px;">승인</td></tr>
+    <tr><td style="${TDm} height:34px;"></td><td style="${TDm}"></td><td style="${TDm}"></td></tr></table>`;
+  const header = `<table style="width:100%; border-collapse:collapse; margin:0 0 8px; border:0;"><tr>
+    <td style="border:0; vertical-align:top; width:32%; font-size:11px; line-height:1.9;">
+      ● 작성일 : <b>${d.date} (${dow})</b><br>● 완제품 재고관리 (생산일자 기준)
+      ${FINLED.showAll ? "" : `<br><span style="color:#888;">움직인 제품 ${rows.length}종</span>`}</td>
+    <td style="border:0; text-align:center; vertical-align:middle;">
+      <span style="font-size:23px; font-weight:800; letter-spacing:10px;">완 제 품 수 불 부</span></td>
+    <td style="border:0; text-align:right; vertical-align:top; width:210px;">${approve}</td></tr></table>`;
+  const HD = "border:1px solid #333; padding:4px 6px; background:#eef0f2; font-size:11.5px;";
+  const head = `<thead><tr>
+    <th style="${HD}">분류</th><th style="${HD} text-align:left;">제 품 명</th><th style="${HD}">규격</th>
+    <th style="${HD}">전일재고</th><th style="${HD}">금일생산</th><th style="${HD}">금일출고</th><th style="${HD}">금일재고</th>
+    <th style="${HD} text-align:left;">생산일자별 LOT · 소비기한</th></tr></thead>`;
+  const tbl = `<table style="border-collapse:collapse; width:100%; font-size:11.5px;">
+    ${head}<tbody>${body}</tbody></table>`;
+  return `<div style="font-family:'Malgun Gothic',sans-serif; color:#111;">${header}${tbl}</div>`;
+}
+$("finAll").addEventListener("change", e => { FINLED.showAll = e.target.checked; renderFinLedger(); });
+$("finDate").addEventListener("change", e => { if (e.target.value) loadFinLedger(e.target.value); });
+$("finPrevBtn").onclick = () => { const p = FINLED.data && FINLED.data.prev; p ? loadFinLedger(p) : toast("이전 기록이 없습니다"); };
+$("finNextBtn").onclick = () => { const n = FINLED.data && FINLED.data.next; n ? loadFinLedger(n) : toast("다음 기록이 없습니다"); };
+$("finTodayBtn").onclick = () => loadFinLedger(todayISO());
+function finPrint() {
+  if (!FINLED.data) return;
+  $("poPrintArea").innerHTML = $("ledgerFin").innerHTML;
+  const st = document.createElement("style");
+  st.id = "ledgerPageStyle";
+  st.textContent = "@page{size:A4 landscape; margin:7mm;} @media print{#poPrintArea{padding:0 !important;}}";
+  document.head.appendChild(st);
+  document.body.classList.add("po-print");
+  const done = () => { document.body.classList.remove("po-print"); st.remove(); window.removeEventListener("afterprint", done); };
+  window.addEventListener("afterprint", done);
+  window.print();
+  setTimeout(done, 1500);
+}
+$("finPrintBtn").onclick = finPrint;
+$("finPdf").onclick = () => { toast("인쇄 창에서 대상을 'PDF로 저장'으로 선택하세요"); setTimeout(finPrint, 400); };
 $("ledgerDate").addEventListener("change", e => { if (e.target.value) loadLedger(e.target.value); });
 $("ledgerPrevBtn").onclick = () => { const p = LEDGER.data && LEDGER.data.prev; p ? loadLedger(p) : toast("이전 기록이 없습니다"); };
 $("ledgerNextBtn").onclick = () => { const n = LEDGER.data && LEDGER.data.next; n ? loadLedger(n) : toast("다음 기록이 없습니다"); };

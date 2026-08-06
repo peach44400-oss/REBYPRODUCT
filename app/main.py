@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.46.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.47.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -4799,6 +4799,38 @@ def ledger(request: Request, date: str = ""):
                     remaining -= take
             return active
 
+        def fefo_consumed_today(mid, prev, used):
+            """당일 사용량(used)이 FEFO로 소진한 배치들의 소비기한 목록 (짧은 기한부터).
+            전일재고(prev)를 소비기한 늦은 배치부터 채워 배치별 보유량을 복원한 뒤,
+            당일 사용량을 소비기한 이른 배치부터 차감 — 걸친 배치가 여럿이면 기한도 여럿."""
+            bs = batches.get(mid)
+            if not bs or prev is None or not used or used <= 1e-4:
+                return []
+            bs_sorted = sorted(bs, key=lambda b: (b["exp"] or b["in"], b["in"]))
+            total = sum(b["qty"] for b in bs_sorted)
+            rem = [0.0] * len(bs_sorted)
+            fill = min(float(prev), total)            # 초과분은 초기재고(기한 미상) → 제외
+            for i in range(len(bs_sorted) - 1, -1, -1):
+                if fill <= 1e-4:
+                    break
+                take = min(fill, bs_sorted[i]["qty"])
+                rem[i] = take
+                fill -= take
+            need, exps = float(used), []
+            for i, b in enumerate(bs_sorted):
+                if need <= 1e-4:
+                    break
+                take = min(need, rem[i])
+                if take > 1e-4 and b["exp"]:
+                    exps.append(b["exp"])
+                need -= take
+            seen, out = set(), []                     # 중복 제거(순서 유지)
+            for e in exps:
+                if e not in seen:
+                    seen.add(e)
+                    out.append(e)
+            return out
+
         def est_expiry(base, sd):
             try:
                 return (dt.date.fromisoformat(base) + dt.timedelta(days=int(sd))).isoformat()
@@ -4838,6 +4870,12 @@ def ledger(request: Request, date: str = ""):
                 mm = man_made_cf.get(m["id"])
                 if mm:
                     made = mm[1]
+            # 당일 사용량이 여러 소비기한 배치에 걸치면 그 기한을 모두 표시 (예: "2026-07-01, 2026-07-02")
+            exps_today = fefo_consumed_today(m["id"], d["prev_qty"] if d else None,
+                                             d["used_qty"] if d else None)
+            if len(exps_today) > 1:
+                exp = ", ".join(exps_today)
+                exp_est = False
             row = {"id": m["id"], "name": m["name"], "unit": m["unit"] or "",
                    "prev": (d["prev_qty"] if d else None), "in": (d["in_qty"] if d else None),
                    "used": (d["used_qty"] if d else None), "real": (d["real_qty"] if d else None),
@@ -4854,6 +4892,54 @@ def ledger(request: Request, date: str = ""):
         return {"date": date, "today": dt.date.today().isoformat(),
                 "products": products, "rows": out_rows,
                 "col_total": col_total, "in_total": in_total, "prev": prev, "next": nxt}
+    finally:
+        con.close()
+
+
+@app.get("/api/finledger")
+def fin_ledger(request: Request, date: str = ""):
+    """완제품 수불부 — 제품별 전일재고·금일생산·금일출고·금일재고 + 생산일자별 LOT 소비기한.
+    엑셀 '완제품 수불부' 양식(좌: 일일 수불 / 우: LOT별 재고·소비기한)을 그대로 옮긴 것."""
+    date = date or dt.date.today().isoformat()
+    con = connect()
+    try:
+        products = rows(con.execute("""
+            SELECT p.id, p.name, p.category, p.spec, COALESCE(os.qty,0) opening
+            FROM product p
+            LEFT JOIN opening_stock os ON os.kind='product' AND os.ref_id=p.id
+            WHERE COALESCE(p.is_semi,0)=0 AND p.status!='단종'
+            ORDER BY p.sort, p.id"""))
+
+        def sums(table, qcol, cmp):
+            q = f"SELECT product_id pid, SUM({qcol}) q FROM {table} WHERE date{cmp}? GROUP BY product_id"
+            return {r["pid"]: float(r["q"] or 0) for r in con.execute(q, (date,))}
+        prod_b, prod_o = sums("production", "prod_qty", "<"), sums("production", "prod_qty", "=")
+        ship_b, ship_o = sums("shipment", "qty", "<"), sums("shipment", "qty", "=")
+        disp_b, disp_o = sums("disposal", "qty", "<"), sums("disposal", "qty", "=")
+
+        out = []
+        for p in products:
+            pid = p["id"]
+            prev = p["opening"] + prod_b.get(pid, 0) - ship_b.get(pid, 0) - disp_b.get(pid, 0)
+            tp, ts, td = prod_o.get(pid, 0), ship_o.get(pid, 0), disp_o.get(pid, 0)
+            stock = prev + tp - ts - td
+            try:
+                lots = [{"made": l["made"], "qty": l["qty"], "expiry": l["expiry"]}
+                        for l in current_lots(con, pid, date)["lots"] if l.get("qty", 0) > 0.0001]
+            except Exception:
+                lots = []
+            out.append({"id": pid, "name": p["name"], "category": p["category"] or "",
+                        "spec": p["spec"] or "", "prev": round(prev, 3), "prod": round(tp, 3),
+                        "ship": round(ts, 3), "disp": round(td, 3), "stock": round(stock, 3),
+                        "lots": lots, "moved": bool(tp or ts or td)})
+        prev_d = con.execute(
+            "SELECT MAX(date) v FROM (SELECT date FROM production WHERE date<? "
+            "UNION SELECT date FROM shipment WHERE date<?)", (date, date)).fetchone()["v"]
+        next_d = con.execute(
+            "SELECT MIN(date) v FROM (SELECT date FROM production WHERE date>? "
+            "UNION SELECT date FROM shipment WHERE date>?)", (date, date)).fetchone()["v"]
+        return {"date": date, "today": dt.date.today().isoformat(),
+                "rows": out, "prev": prev_d, "next": next_d}
     finally:
         con.close()
 
