@@ -193,11 +193,12 @@ CREATE TABLE IF NOT EXISTS material_in (
 );
 CREATE INDEX IF NOT EXISTS idx_matin_date ON material_in(date);
 
--- 입고 없이 보유한 재고(전일/초기재고)의 소비기한 — 자재 이력에서 수동 입력 (수불부 표시용)
+-- 입고 없이 보유한 재고(전일/초기재고)의 소비기한·제조일자 — 자재 이력에서 수동 입력 (수불부 표시용)
 CREATE TABLE IF NOT EXISTS material_expiry (
   material_id INTEGER NOT NULL,
   date TEXT NOT NULL,
   expiry TEXT DEFAULT '',
+  made TEXT DEFAULT '',
   PRIMARY KEY(material_id, date)
 );
 
@@ -581,6 +582,9 @@ def init_db() -> None:
     # (0이면 스냅샷 없음 = 기존 행 → 계산 시 현재 제품 단가로 폴백)
     if "unit_price" not in [r[1] for r in con.execute("PRAGMA table_info(shipment)")]:
         con.execute("ALTER TABLE shipment ADD COLUMN unit_price REAL DEFAULT 0")
+    # 입고 없는 재고의 제조일자 수동 입력 — material_expiry에 made 컬럼 보강
+    if "made" not in [r[1] for r in con.execute("PRAGMA table_info(material_expiry)")]:
+        con.execute("ALTER TABLE material_expiry ADD COLUMN made TEXT DEFAULT ''")
     # 포장 세트 다대다 전환: 기존 material.pack_set(단일) → pack_set_member (1회, 중복 무시라 재실행 안전)
     con.execute("""INSERT OR IGNORE INTO pack_set_member(set_name, material_id)
                    SELECT pack_set, id FROM material WHERE COALESCE(pack_set,'')!=''""")

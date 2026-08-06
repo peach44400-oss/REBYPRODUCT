@@ -2129,10 +2129,13 @@ function shipWarnText(r, over, avail) {
 function renderShip() {
   const sum = shipSumByProduct();
   // 출고 제품 목록 = 재고가 있거나 이날 생산 입력이 있는 제품만 (전 제품이 다 뜨지 않게)
+  // + 이미 다른 출고 행에 올린 제품은 제외 — 중복 선택 방지(재고 다 올렸는데 또 뜨는 문제)
   const prodToday = new Set(E.prod.filter(x => x.product_id &&
     Number(String(x.prod_qty).replace(/,/g, "")) > 0).map(x => x.product_id));
+  const chosen = new Set(E.ship.map(x => x.product_id).filter(Boolean));
   const shipProducts = r => M.product.filter(p => p.status !== "단종" &&
-    (p.id === r.product_id || prodToday.has(p.id) || shipAvail(p.id) > 0.0005));
+    (p.id === r.product_id ||
+     (!chosen.has(p.id) && (prodToday.has(p.id) || shipAvail(p.id) > 0.0005))));
   $("eShip").innerHTML = E.ship.map((r, i) => {
     const avail = shipAvail(r.product_id);
     const over = r.product_id && sum[r.product_id] - avail > 0.5;
@@ -5340,7 +5343,7 @@ function buildLedgerDoc(d, forPrint) {
   const TH = "border:1px solid #333; background:#eef0f2; font-weight:700; font-size:9.5px; text-align:center; vertical-align:middle; white-space:normal; word-break:keep-all; line-height:1.2; padding:3px 4px;";
   // 화면·인쇄 동일: 열마다 비율(%) 폭 + table-layout:fixed → 항상 페이지(영역)를 고르게 채운다 (보는 대로 인쇄)
   const N = prods.length || 1;
-  const wSum = 3 + 1.2 * 4 + 1.5 * 3 + 1.4 * N;   // 이름3 · 수치4개×1.2 · 날짜3개(입고·제조·소비)×1.5 · 제품×1.4
+  const wSum = 3 + 1.2 * 4 + 1.5 * 3 + 1.8 + 1.4 * N;   // 이름3 · 수치4개×1.2 · 날짜3개(입고·제조·소비)×1.5 · 비고1.8 · 제품×1.4
   const W = (weight) => `width:${(weight / wSum * 100).toFixed(3)}%;`;
   const head = `<tr>
     <th style="${TH} ${W(3)}">원부재료명</th>
@@ -5351,14 +5354,15 @@ function buildLedgerDoc(d, forPrint) {
     <th style="${TH} ${W(1.2)}">사용후<br>재고</th>
     <th style="${TH} ${W(1.5)}">입고<br>일자</th>
     <th style="${TH} ${W(1.5)}">제조<br>일자</th>
-    <th style="${TH} ${W(1.5)}">소비<br>기한</th></tr>`;
+    <th style="${TH} ${W(1.5)}">소비<br>기한</th>
+    <th style="${TH} ${W(1.8)}">비고</th></tr>`;
   const ED = 'class="lcell" contenteditable="true"';   // 임시 편집 가능 셀 (인쇄 전 수정용, 저장 안 됨)
   const totalRow = `<tr style="background:#f7f7f9; font-weight:700;">
     <td style="${TD} text-align:center;">합 계</td>
     <td style="${TD}"></td>
     <td style="${TD} text-align:right;" ${ED}>${NFv(d.in_total)}</td>
     ${prods.map(p => `<td style="${TD} text-align:right;" ${ED}>${d.col_total[p.id] ? NFv(d.col_total[p.id]) : ""}</td>`).join("")}
-    <td style="${TD}"></td><td style="${TD}"></td><td style="${TD}"></td><td style="${TD}"></td><td style="${TD}"></td></tr>`;
+    <td style="${TD}"></td><td style="${TD}"></td><td style="${TD}"></td><td style="${TD}"></td><td style="${TD}"></td><td style="${TD}"></td></tr>`;
   const body = rows2.map(r => `<tr>
     <td style="${TD} text-align:left; white-space:normal;">${esc(r.name)}</td>
     <td style="${TD} text-align:right; color:#555;" ${ED}>${NFv(r.prev)}</td>
@@ -5368,7 +5372,8 @@ function buildLedgerDoc(d, forPrint) {
     <td style="${TD} text-align:right; font-weight:700;" ${ED}>${NFv(r.real)}</td>
     <td style="${TD} text-align:center; font-size:8.5px; white-space:nowrap; color:#444;" ${ED}>${esc(r.in_date || "")}</td>
     <td style="${TD} text-align:center; font-size:8.5px; white-space:nowrap; color:#444;" ${ED}>${esc(r.made || "")}</td>
-    <td style="${TD} text-align:center; font-size:8.5px; white-space:nowrap;${r.expiry_est ? " color:#888; font-style:italic;" : ""}" ${ED} title="${r.expiry_est ? "기준정보 소비일로 자동 계산 (입고 시 미입력)" : "지금 소진 중인 배치(FEFO)의 소비기한"}">${esc(r.expiry || "")}</td></tr>`).join("");
+    <td style="${TD} text-align:center; font-size:8.5px; white-space:nowrap;${r.expiry_est ? " color:#888; font-style:italic;" : ""}" ${ED} title="${r.expiry_est ? "기준정보 소비일로 자동 계산 (입고 시 미입력)" : "지금 소진 중인 배치(FEFO)의 소비기한"}">${esc(r.expiry || "")}</td>
+    <td style="${TD} text-align:left; font-size:9px; white-space:normal;" ${ED}>${esc(r.note || "")}</td></tr>`).join("");
   const dow = ["일", "월", "화", "수", "목", "금", "토"][new Date(d.date + "T00:00").getDay()];
   const TDm = "border:1px solid #333; padding:2px 6px; font-size:11px;";
   const approve = `<table style="border-collapse:collapse; display:inline-table;">
@@ -6425,8 +6430,9 @@ async function openMatHistory(mid) {
     `${d.kind === "raw" ? "원재료" : "부재료"} · 최근 ${d.rows.length}일` +
     ` · 마지막 입고 ${d.last_in ? d.last_in.date + " (+" + NF(d.last_in.in_qty) + d.unit + ")" : "기록 없음"}` +
     ` · 마지막 사용 ${d.last_use ? d.last_use.date + " (" + NF(d.last_use.used_qty) + d.unit + ")" : "기록 없음"}`;
-  // 그 날짜에 직접 적힌 소비기한 (입고분 우선, 없으면 입고 없는 재고 수동입력분)
+  // 그 날짜에 직접 적힌 소비기한·제조일자 (입고분 우선, 없으면 입고 없는 재고 수동입력분)
   const rowExp = r => ((d.in_expiry && d.in_expiry[r.date]) || (d.man_expiry && d.man_expiry[r.date]) || "").split(",")[0].trim();
+  const rowMade = r => ((d.in_made && d.in_made[r.date]) || (d.man_made && d.man_made[r.date]) || "").split(",")[0].trim();
   // 입력칸은 입고 있는 행 + 최초 시작 행 + 이미 수동 입력된 값이 있는 행 — 나머지는 이어진 값(carry-forward)만 회색으로 표시
   // (이미 적어둔 소비기한은 시작일이 앞 날짜로 밀려도 계속 수정·삭제할 수 있어야 함)
   const isExpEditable = r => (r.in_qty > 0 || r.date === d.start_date || !!(d.man_expiry && d.man_expiry[r.date]));
@@ -6442,9 +6448,9 @@ async function openMatHistory(mid) {
       <td class="r">${r.used_qty ? NF(r.used_qty) : "·"}</td>
       <td class="r" style="font-weight:700">${NF(r.real_qty)}</td>
       <td class="auto" style="white-space:nowrap;">${
-        (r.in_qty > 0 && ROLE !== "guest")
-          ? `<input class="mini-input datepick" type="text" readonly data-mmade="${r.date}" value="${esc((d.in_made && d.in_made[r.date]) || "")}" placeholder="📅 제조일자" title="이 입고분의 제조일자 — 입력하면 저장됩니다 (수불부 반영)" style="font-size:11.5px; padding:3px 6px; width:124px; text-align:left;">`
-          : (d.in_made && d.in_made[r.date] ? `<span style="color:#aaa;">${esc(d.in_made[r.date])}</span>` : "")
+        (isExpEditable(r) && ROLE !== "guest")
+          ? `<input class="mini-input datepick" type="text" readonly data-mmade="${r.date}" value="${esc(rowMade(r))}" placeholder="📅 제조일자" title="${r.in_qty > 0 ? "이 입고분" : "이 재고"}의 제조일자 — 입력하면 저장됩니다 (수불부 반영)" style="font-size:11.5px; padding:3px 6px; width:124px; text-align:left;">`
+          : (rowMade(r) ? `<span style="color:#aaa;">${esc(rowMade(r))}</span>` : "")
       }</td>
       <td class="auto" style="white-space:nowrap;">${
         (isExpEditable(r) && ROLE !== "guest")
