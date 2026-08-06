@@ -1196,9 +1196,9 @@
           <input class="mini-input" id="shipHistFilter" list="qaProducts" autocomplete="off"
                  placeholder="🔍 제품·거래처 검색" style="text-align:left; width:240px;">
           <span class="auto" style="font-size:12px;">기간</span>
-          <input type="date" class="mini-input" id="shipHistFrom" title="시작일 (비우면 처음부터)" style="width:150px;">
+          <input type="text" readonly class="mini-input datepick" id="shipHistFrom" placeholder="📅 시작일" title="시작일 (비우면 처음부터)" style="width:150px; text-align:left;">
           <span class="auto">~</span>
-          <input type="date" class="mini-input" id="shipHistTo" title="종료일 (비우면 현재까지)" style="width:150px;">
+          <input type="text" readonly class="mini-input datepick" id="shipHistTo" placeholder="📅 종료일" title="종료일 (비우면 현재까지)" style="width:150px; text-align:left;">
           <button class="btn ghost sm" id="shipHistDateClear" title="기간 해제 = 전체 날짜 보기">전체 날짜</button>
           <select class="mini-sel" id="shipHistLimit" title="표시할 출고 건수" style="font-size:12px;">
             <option value="100">최근 100개</option>
@@ -1221,9 +1221,9 @@
           <input class="mini-input" id="dispHistFilter" list="qaProducts" autocomplete="off"
                  placeholder="🔍 제품 검색" style="text-align:left; width:240px;">
           <span class="auto" style="font-size:12px;">기간</span>
-          <input type="date" class="mini-input" id="dispHistFrom" title="시작일 (비우면 처음부터)" style="width:150px;">
+          <input type="text" readonly class="mini-input datepick" id="dispHistFrom" placeholder="📅 시작일" title="시작일 (비우면 처음부터)" style="width:150px; text-align:left;">
           <span class="auto">~</span>
-          <input type="date" class="mini-input" id="dispHistTo" title="종료일 (비우면 현재까지)" style="width:150px;">
+          <input type="text" readonly class="mini-input datepick" id="dispHistTo" placeholder="📅 종료일" title="종료일 (비우면 현재까지)" style="width:150px; text-align:left;">
           <button class="btn ghost sm" id="dispHistDateClear" title="기간 해제 = 전체 날짜 보기">전체 날짜</button>
           <select class="mini-sel" id="dispHistLimit" title="표시할 폐기 건수" style="font-size:12px;">
             <option value="100">최근 100개</option>
@@ -1448,7 +1448,7 @@
     <!-- 원료 수불부 도구 (raw 탭 전용) -->
     <div id="ledgerRawTools" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
       <button class="btn sm" id="ledgerPrevBtn" title="기록 있는 이전 날짜">◀</button>
-      <input type="date" id="ledgerDate" style="font-size:13px; padding:4px 8px; border:1px solid var(--line); border-radius:8px;">
+      <input type="text" readonly class="datepick" id="ledgerDate" placeholder="📅 날짜" style="font-size:13px; padding:4px 8px; border:1px solid var(--line); border-radius:8px; width:130px; text-align:left; cursor:pointer;">
       <button class="btn sm" id="ledgerNextBtn" title="기록 있는 다음 날짜">▶</button>
       <button class="btn sm" id="ledgerTodayBtn">오늘</button>
       <label style="font-size:12px; display:flex; align-items:center; gap:4px; cursor:pointer;" title="체크하면 사용/입고가 없는 자재·제품도 모두 표시 (빈 양식 인쇄용)">
