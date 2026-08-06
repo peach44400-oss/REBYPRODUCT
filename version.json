@@ -1,5 +1,5 @@
 {
-  "version": "1.40.0",
+  "version": "1.40.1",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· 일일 입력 하단의 옛 저장 버튼 제거 — 저장은 항상 보이는 '💾 저장' 고정 버튼으로 통일\n· 사내 채팅을 상단바로 이동(우상단) — 저장 버튼과 위치가 겹치지 않습니다"
+  "notes": "· 수불부 소비기한 누락 수정 — 입고 시 입력한 유통기한이, 이전부터 있던 재고가 섞여 있어도 표에 정상 표시됩니다 (FEFO 자동 추적은 그대로 유지)"
 }

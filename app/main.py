@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.40.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.40.1"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -4577,13 +4577,20 @@ def ledger(request: Request, date: str = ""):
             batches.setdefault(r["material_id"], []).append(
                 {"in": r["date"], "qty": float(r["qty"] or 0),
                  "exp": r["expiry"] or "", "made": r["made_date"] or ""})
-        # 입고 없는 재고(전일·초기)에 수동으로 적은 소비기한 — 최신 값 (fallback)
-        man_exp = {}
+        # carry-forward 소비기한 — 그날까지(≤date) 가장 최근에 입력된 소비기한.
+        # 입고분(material_in.expiry) + 입고 없는 재고 수동입력(material_expiry) 중 가장 최근 날짜.
+        # FEFO 활성 배치를 못 잡을 때(초기·잉여 재고 등)의 폴백 — 입력한 기한이 표에서 사라지지 않게 한다.
+        eff = {}   # material_id -> (date, expiry, made, is_in)
+        for r in con.execute("SELECT material_id, date, expiry, made_date FROM material_in"
+                             " WHERE date<=? AND COALESCE(expiry,'')!=''", (date,)):
+            cur = eff.get(r["material_id"])
+            if cur is None or r["date"] >= cur[0]:
+                eff[r["material_id"]] = (r["date"], r["expiry"], r["made_date"] or "", True)
         for r in con.execute("SELECT material_id, date, expiry FROM material_expiry"
                              " WHERE date<=? AND COALESCE(expiry,'')!=''", (date,)):
-            cur = man_exp.get(r["material_id"])
-            if cur is None or r["date"] >= cur[0]:
-                man_exp[r["material_id"]] = (r["date"], r["expiry"])
+            cur = eff.get(r["material_id"])
+            if cur is None or r["date"] > cur[0]:   # 더 나중 날짜면 수동 입력이 우선
+                eff[r["material_id"]] = (r["date"], r["expiry"], "", False)
         # shelf_days 자동추정 기준일 — 그날까지 가장 최근 입고의 제조일(없으면 입고일)
         base_date = {}
         for r in con.execute("""SELECT mi.material_id, mi.made_date, mi.date FROM material_in mi
@@ -4631,14 +4638,16 @@ def ledger(request: Request, date: str = ""):
             exp_est = False
             if act:                                   # FEFO 활성 배치
                 in_date, made, exp = act["in"], act["made"], act["exp"]
-                if not exp and sd > 0:                # 배치에 소비기한 미입력 → shelf_days 추정
-                    exp = est_expiry(made or in_date, sd)
-                    exp_est = bool(exp)
-            else:                                     # 초기재고/입고기록 없음 → 수동 소비기한·추정
-                e = man_exp.get(m["id"])
+            # 활성 배치가 없거나(초기·잉여재고) 그 배치에 소비기한이 없으면
+            # → 최근 입력된 소비기한(carry-forward)으로 폴백해 입력값이 사라지지 않게 한다.
+            if not exp:
+                e = eff.get(m["id"])
                 if e:
                     exp = e[1]
-                elif sd > 0 and base_date.get(m["id"]):
+                    if e[3]:                          # 입고분에서 온 기한이면 입고일·제조일도 함께
+                        in_date = in_date or e[0]
+                        made = made or e[2]
+                elif sd > 0 and base_date.get(m["id"]):   # 입력 기한이 전혀 없으면 shelf_days 추정
                     exp = est_expiry(base_date[m["id"]], sd)
                     exp_est = bool(exp)
             row = {"id": m["id"], "name": m["name"], "unit": m["unit"] or "",
