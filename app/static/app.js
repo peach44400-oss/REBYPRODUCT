@@ -259,7 +259,7 @@ function dpOpen(input) {
   dpYM = cur.slice(0, 7);
   dpRender();
   const r = input.getBoundingClientRect();
-  const w = 240, h = 286;
+  const w = 304, h = 360;
   let left = r.left, top = r.bottom + 4;
   if (left + w > window.innerWidth - 8) left = window.innerWidth - w - 8;
   if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 4);   // 아래 공간 부족 시 위로
@@ -273,8 +273,12 @@ function dpRender() {
   const first = new Date(y, m - 1, 1).getDay();
   const nd = new Date(y, m, 0).getDate();
   const today = todayISO();
-  let h = `<div class="dp-head"><button data-dpnav="-1" type="button">◀</button>
-      <span>${y}년 ${m}월</span><button data-dpnav="1" type="button">▶</button></div>
+  let h = `<div class="dp-head">
+      <button data-dpnav="-12" type="button" title="1년 전">«</button>
+      <button data-dpnav="-1" type="button" title="1개월 전">◀</button>
+      <span>${y}년 ${m}월</span>
+      <button data-dpnav="1" type="button" title="1개월 후">▶</button>
+      <button data-dpnav="12" type="button" title="1년 후">»</button></div>
     <div class="dp-dow">${DP_DOW.map(d => `<span>${d}</span>`).join("")}</div><div class="dp-days">`;
   for (let i = 0; i < first; i++) h += "<span></span>";
   for (let d = 1; d <= nd; d++) {
@@ -6430,23 +6434,27 @@ async function openMatHistory(mid) {
   const effExp = {}; let _lastExp = "";
   for (const rr of _ascRows) { const s = rowExp(rr); if (s) _lastExp = s; effExp[rr.date] = _lastExp; }
   $("anaPBody").innerHTML = bomSec + priceSec + `<div class="tbl-wrap"><table>
-    <thead><tr><th>날짜</th><th class="r">전일</th><th class="r">입고</th><th class="r">사용</th><th class="r">실재고</th><th>소비기한</th><th>발주</th></tr></thead>
+    <thead><tr><th>날짜</th><th class="r">전일</th><th class="r">입고</th><th class="r">사용</th><th class="r">실재고</th><th>제조일자</th><th>소비기한</th><th>발주</th></tr></thead>
     <tbody class="num">${d.rows.map(r => `<tr ${r.in_qty > 0 ? 'style="background:var(--ok-soft)"' : ""}>
       <td>${r.date}${r.src === "auto" ? ' <span class="chip cat">자동</span>' : ""}</td>
       <td class="r">${NF(r.prev_qty)}</td>
-      <td class="r" ${r.in_qty > 0 ? 'style="color:var(--ok); font-weight:700"' : ""}>${r.in_qty ? "+" + NF(r.in_qty)
-        + (d.in_made && d.in_made[r.date] ? ` <span class="auto" style="font-weight:400">(제조 ${esc(d.in_made[r.date])})</span>` : "") : "·"}</td>
+      <td class="r" ${r.in_qty > 0 ? 'style="color:var(--ok); font-weight:700"' : ""}>${r.in_qty ? "+" + NF(r.in_qty) : "·"}</td>
       <td class="r">${r.used_qty ? NF(r.used_qty) : "·"}</td>
       <td class="r" style="font-weight:700">${NF(r.real_qty)}</td>
       <td class="auto" style="white-space:nowrap;">${
+        (r.in_qty > 0 && ROLE !== "guest")
+          ? `<input class="mini-input datepick" type="text" readonly data-mmade="${r.date}" value="${esc((d.in_made && d.in_made[r.date]) || "")}" placeholder="📅 제조일자" title="이 입고분의 제조일자 — 입력하면 저장됩니다 (수불부 반영)" style="font-size:11.5px; padding:3px 6px; width:124px; text-align:left;">`
+          : (d.in_made && d.in_made[r.date] ? `<span style="color:#aaa;">${esc(d.in_made[r.date])}</span>` : "")
+      }</td>
+      <td class="auto" style="white-space:nowrap;">${
         (isExpEditable(r) && ROLE !== "guest")
-          ? `<input type="date" data-mexp="${r.date}" value="${esc(rowExp(r))}" title="${r.in_qty > 0 ? "이 입고분" : "최초 보유 재고"}의 소비기한 — 입력하면 저장되고 이후 날짜로 이어집니다 (수불부 반영)" style="font-size:11px; padding:1px 3px; border:1px solid var(--line); border-radius:5px;">`
+          ? `<input class="mini-input datepick" type="text" readonly data-mexp="${r.date}" value="${esc(rowExp(r))}" placeholder="📅 소비기한" title="${r.in_qty > 0 ? "이 입고분" : "최초 보유 재고"}의 소비기한 — 입력하면 저장되고 이후 날짜로 이어집니다 (수불부 반영)" style="font-size:11.5px; padding:3px 6px; width:124px; text-align:left;">`
           : (effExp[r.date] ? `<span style="color:#aaa;" title="위 입고/시작일 소비기한이 이어진 값">${esc(effExp[r.date])}</span>` : "")
       }</td>
       <td class="auto">${esc(r.order_date || "")}${r.order_qty ? " (" + NF(r.order_qty) + ")" : ""}
         ${(d.in_po && d.in_po[r.date]) ? d.in_po[r.date].map(pid =>
           `<button class="uselink" data-poin="${pid}" style="font-size:11px; font-weight:700; margin-left:4px;" title="이 입고의 발주서 보기">📋 #${pid}</button>`).join("") : ""}</td></tr>`).join("")
-      || '<tr><td colspan="7" class="auto">기록 없음</td></tr>'}</tbody></table></div>`;
+      || '<tr><td colspan="8" class="auto">기록 없음</td></tr>'}</tbody></table></div>`;
   // 단가 추이 차트 — 기준 단가(회색 점선)와 함께. 이전 차트는 파기 후 재생성
   if (window.MHCHART) { try { window.MHCHART.destroy(); } catch (e) { } window.MHCHART = null; }
   if (pts.length) {
@@ -6480,13 +6488,24 @@ async function openMatHistory(mid) {
   // 입고 건별 소비기한 입력·수정 → 즉시 저장 (수불부에 반영)
   $("anaPBody").onchange = async e => {
     const inp = e.target.closest("[data-mexp]");
-    if (!inp) return;
-    try {
-      await api("/api/matin/expiry", { method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ material_id: mid, date: inp.dataset.mexp, expiry: inp.value }) });
-      toast(inp.value ? `${inp.dataset.mexp} 입고 소비기한 저장됨` : "소비기한 제거됨");
-      openMatHistory(mid);   // 새로고침
-    } catch (err) { /* api가 토스트 */ }
+    if (inp) {
+      try {
+        await api("/api/matin/expiry", { method: "PUT", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ material_id: mid, date: inp.dataset.mexp, expiry: inp.value }) });
+        toast(inp.value ? `${inp.dataset.mexp} 입고 소비기한 저장됨` : "소비기한 제거됨");
+        openMatHistory(mid);   // 새로고침
+      } catch (err) { /* api가 토스트 */ }
+      return;
+    }
+    const made = e.target.closest("[data-mmade]");
+    if (made) {
+      try {
+        await api("/api/matin/made", { method: "PUT", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ material_id: mid, date: made.dataset.mmade, made: made.value }) });
+        toast(made.value ? `${made.dataset.mmade} 입고 제조일자 저장됨` : "제조일자 제거됨");
+        openMatHistory(mid);   // 새로고침
+      } catch (err) { /* api가 토스트 */ }
+    }
   };
   // 배합비 자재 일괄 교체 (admin) — 확인창에 대상 제품 수·이름 표시 후 실행
   const repBtn = $("mhRepBtn");

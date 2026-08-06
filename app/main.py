@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.40.1"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.41.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -1610,6 +1610,30 @@ def matin_expiry_set(request: Request, body: dict):
         else:   # 빈 값으로 지우기
             con.execute("DELETE FROM material_expiry WHERE material_id=? AND date=?", (mid, date))
         audit(con, "matin_expiry", f"자재#{mid} {date} 소비기한 → {expiry or '(제거)'}")
+        con.commit()
+        return {"ok": True}
+    finally:
+        con.close()
+
+
+@app.put("/api/matin/made")
+def matin_made_set(request: Request, body: dict):
+    """자재 이력에서 입고분의 제조일자 직접 입력·수정 (입고가 있는 날짜에만)."""
+    require_stock_duty(request)
+    mid = body.get("material_id")
+    date = (body.get("date") or "").strip()
+    made = (body.get("made") or "").strip()
+    if not mid or not date:
+        raise HTTPException(400, "자재와 날짜가 필요합니다")
+    con = connect()
+    try:
+        has_in = con.execute("SELECT 1 FROM material_in WHERE material_id=? AND date=?",
+                             (mid, date)).fetchone()
+        if not has_in:
+            raise HTTPException(400, "그 날짜에 입고 기록이 없어 제조일자를 저장할 수 없습니다")
+        con.execute("UPDATE material_in SET made_date=? WHERE material_id=? AND date=?",
+                    (made, mid, date))
+        audit(con, "matin_made", f"자재#{mid} {date} 제조일자 → {made or '(제거)'}")
         con.commit()
         return {"ok": True}
     finally:
@@ -4591,13 +4615,16 @@ def ledger(request: Request, date: str = ""):
             cur = eff.get(r["material_id"])
             if cur is None or r["date"] > cur[0]:   # 더 나중 날짜면 수동 입력이 우선
                 eff[r["material_id"]] = (r["date"], r["expiry"], "", False)
-        # shelf_days 자동추정 기준일 — 그날까지 가장 최근 입고의 제조일(없으면 입고일)
+        # shelf_days 자동추정 기준일 + 최근 입고(입고일·제조일)
+        # — 소비기한이 없어도 입고일·제조일은 최근 입고에서 이어서 표시하기 위한 값
         base_date = {}
+        last_in = {}   # material_id -> (in_date, made)
         for r in con.execute("""SELECT mi.material_id, mi.made_date, mi.date FROM material_in mi
                 JOIN (SELECT material_id, MAX(date) mx FROM material_in WHERE date<=? GROUP BY material_id) x
                   ON x.material_id=mi.material_id AND x.mx=mi.date
                 WHERE mi.date<=?""", (date, date)):
             base_date[r["material_id"]] = r["made_date"] or r["date"]
+            last_in[r["material_id"]] = (r["date"], r["made_date"] or "")
 
         def fefo_active(mid):
             """지금 소진 중인 배치 = 보유량을 소비기한 늦은 배치부터 채우고, 남은 것 중
@@ -4650,6 +4677,11 @@ def ledger(request: Request, date: str = ""):
                 elif sd > 0 and base_date.get(m["id"]):   # 입력 기한이 전혀 없으면 shelf_days 추정
                     exp = est_expiry(base_date[m["id"]], sd)
                     exp_est = bool(exp)
+            # 입고일자·제조일자가 아직 비어 있으면 최근 입고에서 이어서 (소비기한이 없어도 제조일 표시)
+            li = last_in.get(m["id"])
+            if li:
+                in_date = in_date or li[0]
+                made = made or li[1]
             row = {"id": m["id"], "name": m["name"], "unit": m["unit"] or "",
                    "prev": (d["prev_qty"] if d else None), "in": (d["in_qty"] if d else None),
                    "used": (d["used_qty"] if d else None), "real": (d["real_qty"] if d else None),
