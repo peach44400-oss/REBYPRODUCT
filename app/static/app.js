@@ -5343,10 +5343,11 @@ function buildLedgerDoc(d, forPrint) {
   const TH = "border:1px solid #333; background:#eef0f2; font-weight:700; font-size:9.5px; text-align:center; vertical-align:middle; white-space:normal; word-break:keep-all; line-height:1.2; padding:3px 4px;";
   // 화면·인쇄 동일: 열마다 비율(%) 폭 + table-layout:fixed → 항상 페이지(영역)를 고르게 채운다 (보는 대로 인쇄)
   const N = prods.length || 1;
-  const wSum = 3 + 1.2 * 4 + 1.5 * 3 + 1.8 + 1.4 * N;   // 이름3 · 수치4개×1.2 · 날짜3개(입고·제조·소비)×1.5 · 비고1.8 · 제품×1.4
+  const wSum = 3 + 0.9 + 1.2 * 4 + 1.5 * 3 + 1.8 + 1.4 * N;   // 이름3 · 단위0.9 · 수치4개×1.2 · 날짜3개×1.5 · 비고1.8 · 제품×1.4
   const W = (weight) => `width:${(weight / wSum * 100).toFixed(3)}%;`;
   const head = `<tr>
     <th style="${TH} ${W(3)}">원부재료명</th>
+    <th style="${TH} ${W(0.9)}">단위</th>
     <th style="${TH} ${W(1.2)}">전일<br>재고</th>
     <th style="${TH} ${W(1.2)}">금일<br>입고</th>
     ${prods.map(p => `<th style="${TH} ${W(1.4)}">${esc(p.name)}</th>`).join("")}
@@ -5360,11 +5361,13 @@ function buildLedgerDoc(d, forPrint) {
   const totalRow = `<tr style="background:#f7f7f9; font-weight:700;">
     <td style="${TD} text-align:center;">합 계</td>
     <td style="${TD}"></td>
+    <td style="${TD}"></td>
     <td style="${TD} text-align:right;" ${ED}>${NFv(d.in_total)}</td>
     ${prods.map(p => `<td style="${TD} text-align:right;" ${ED}>${d.col_total[p.id] ? NFv(d.col_total[p.id]) : ""}</td>`).join("")}
     <td style="${TD}"></td><td style="${TD}"></td><td style="${TD}"></td><td style="${TD}"></td><td style="${TD}"></td><td style="${TD}"></td></tr>`;
   const body = rows2.map(r => `<tr>
     <td style="${TD} text-align:left; white-space:normal;"><label class="lp-row-cb" title="인쇄 포함 (해제하면 이 행은 인쇄 안 됨)"><input type="checkbox" class="lp-row" checked></label>${esc(r.name)}</td>
+    <td style="${TD} text-align:center; color:#555;">${esc(r.unit || "")}</td>
     <td style="${TD} text-align:right; color:#555;" ${ED}>${NFv(r.prev)}</td>
     <td style="${TD} text-align:right; ${r.in ? 'color:#0a7a2f; font-weight:700;' : ''}" ${ED}>${NFv(r.in)}</td>
     ${prods.map(p => { const q = r.usage[p.id]; return `<td style="${TD} text-align:right;" ${ED}>${q ? NFv(q) : ""}</td>`; }).join("")}

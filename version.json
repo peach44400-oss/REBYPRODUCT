@@ -1,5 +1,5 @@
 {
-  "version": "1.43.0",
+  "version": "1.43.1",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· 원료 수불부 '출력용 저장/보기' 추가 — 임시 수정·행선택한 화면을 날짜별로 저장하고 다시 불러올 수 있습니다 (원본 재고 데이터는 그대로, [↺ 초기화]로 원본 복귀)\n· 인쇄할 행 선택 기능 — 각 행 체크박스로 원하는 행만 인쇄"
+  "notes": "· 원료 수불부에 '단위' 열 추가 (원부재료명 옆)"
 }
