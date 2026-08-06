@@ -3842,7 +3842,7 @@ $("bomProdSel").addEventListener("change", e => {
    자동완성 목록에서 제품명을 그대로 고르면 = 그 제품을 선택한 것으로 보고 바로 연다. */
 $("bomProdSearch").addEventListener("input", e => {
   const v = e.target.value.trim();
-  const hit = v ? M.product.find(p => p.status !== "단종" && p.name === v) : null;
+  const hit = v ? M.product.concat(M.semi).find(p => p.status !== "단종" && p.name === v) : null;
   if (hit) {                       // 이름이 정확히 일치 → 선택으로 처리하고 검색 해제
     BOM.pid = hit.id;
     BOM.q = ""; e.target.value = "";
@@ -3853,7 +3853,7 @@ $("bomProdSearch").addEventListener("input", e => {
   renderBomTab();
 });
 $("bomProdSearch").addEventListener("focus", () => {
-  $("qaProducts").innerHTML = M.product.filter(p => p.status !== "단종")
+  $("qaProducts").innerHTML = M.product.concat(M.semi).filter(p => p.status !== "단종")
     .map(o => `<option value="${esc(o.name)}">`).join("");
 });
 $("bomProdSearch").addEventListener("keydown", e => {
