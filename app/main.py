@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.61.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.61.1"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -5102,6 +5102,15 @@ def fin_ledger(request: Request, date: str = ""):
         def lot_out(l):
             return {"made": l["made"], "qty": l["qty"], "expiry": l["expiry"], "pack": lot_pack(l)}
 
+        # 생산 LOT별 개입수 — 출고분에도 재고 LOT과 동일한 개입수를 붙이기 위해 lot_plan 포장에서 유도
+        pack_by_lot = {}
+        for r in con.execute("""SELECT product_id pid, made, COALESCE(expiry,'') exp, pack_mid, pack_set
+            FROM lot_plan WHERE qty>0"""):
+            pk = lot_pack({"pack_mid": r["pack_mid"], "pack_set": r["pack_set"]})
+            if pk:
+                pack_by_lot[(r["pid"], r["made"], r["exp"])] = pk
+                pack_by_lot.setdefault((r["pid"], r["made"]), pk)   # 소비기한 안 맞을 때 생산일만으로 보정
+
         # 오늘 출고를 제품·거래처·생산일자·소비기한별로 모아 '출고 소비기한(생산일자)' 표시에 사용
         raw_ship = {}
         for r in con.execute("""SELECT product_id pid, partner_id sp,
@@ -5126,7 +5135,8 @@ def fin_ledger(request: Request, date: str = ""):
                         e = ""
                 key = (made, e)
                 agg[key] = agg.get(key, 0.0) + q
-            return [{"made": k[0], "expiry": k[1], "qty": round(v, 3)}
+            return [{"made": k[0], "expiry": k[1], "qty": round(v, 3),
+                     "pack": pack_by_lot.get((pid, k[0], k[1])) or pack_by_lot.get((pid, k[0])) or 0}
                     for k, v in sorted(agg.items())]
 
         tot_prev = tot_prod = tot_ship = tot_stock = 0.0   # 전체 합계

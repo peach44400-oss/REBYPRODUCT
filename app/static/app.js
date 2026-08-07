@@ -5775,7 +5775,7 @@ function buildFinLedgerDoc(d) {
       <td style="${TD} text-align:right;" ${ED}>${NFv(r.prev)}</td>
       <td style="${TD} text-align:right; color:#0a7a2f; ${r.prod ? "font-weight:700;" : ""}" ${ED}>${r.prod ? NFv(r.prod) : ""}</td>
       <td style="${TD} text-align:right; color:#b3541e; ${r.ship ? "font-weight:700;" : ""}" ${ED}>${r.ship ? NFv(r.ship) : ""}</td>
-      <td style="${TD} text-align:left; font-size:10.5px; white-space:normal;" ${ED}>${r.ship ? lotFmt(r.ship_lots, false) : ""}</td>
+      <td style="${TD} text-align:left; font-size:10.5px; white-space:normal;" ${ED}>${r.ship ? lotFmt(r.ship_lots, true) : ""}</td>
       <td style="${TD} text-align:right; font-weight:700;" ${ED}>${NFv(r.stock)}</td>
       <td style="${TD} text-align:left; font-size:10.5px; white-space:normal;" ${ED}>${lotFmt(r.lots, true)}</td></tr>`;
   }).join("") || `<tr><td style="${TD}" colspan="${nCol}" class="auto" style="padding:16px;">이 날짜에 생산·출고된 완제품이 없습니다 (전체 제품은 [전체 제품] 체크)</td></tr>`;
