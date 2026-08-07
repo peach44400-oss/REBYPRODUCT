@@ -1826,7 +1826,14 @@
 <div class="overlay" id="adminOverlay">
   <div class="modal" style="max-width:560px;">
     <h3>🛠 관리 도구</h3>
-    <div style="font-size:12.5px; font-weight:800; color:var(--muted); margin:12px 0 6px;">⬆️ 프로그램 업데이트</div>
+    <div class="tabs" id="adminTabs" style="margin:10px 0 12px; flex-wrap:wrap;">
+      <button class="on" data-atab="upd">⬆️ 프로그램 업데이트</button>
+      <button data-atab="net">🌐 외부접속</button>
+      <button data-atab="backup">💾 백업 / 복원</button>
+      <button data-atab="check">🔍 데이터 점검</button>
+    </div>
+
+    <div class="admin-pane" data-apane="upd">
     <p class="hint" style="margin:0 0 8px;">현재 버전 <b id="updCur">–</b> · 새 버전이 있으면 받아서 자동 교체합니다. 데이터(DB)는 그대로 유지되며, 교체 전 자동 백업됩니다.</p>
     <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
       <button class="btn sm" id="updCheck">🔄 업데이트 확인</button>
@@ -1834,7 +1841,9 @@
       <span class="auto" id="updMsg" style="font-size:12px;"></span>
     </div>
     <div id="updNotes" style="font-size:11.5px; color:var(--muted); white-space:pre-wrap; line-height:1.5; margin-bottom:6px;"></div>
-    <div style="font-size:12.5px; font-weight:800; color:var(--muted); margin:16px 0 6px;">🌐 외부 접속 (인터넷)</div>
+    </div>
+
+    <div class="admin-pane" data-apane="net" style="display:none;">
     <p class="hint" style="margin:0 0 8px;">회사 밖에서도 접속할 수 있는 <b>인터넷 주소(HTTPS)</b>를 만듭니다. PC를 켜두면 유지되고, <b>재시작하면 주소가 바뀌며</b> 새 주소는 채팅에 자동으로 올라옵니다.</p>
     <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:6px;">
       <button class="btn sm" id="tunToggle">외부 접속 켜기</button>
@@ -1845,7 +1854,9 @@
       <button class="btn sm" id="tunCopy">📋 복사</button>
     </div>
     <p class="hint" id="tunSec" style="margin:0 0 4px; color:var(--warn);"></p>
-    <div style="font-size:12.5px; font-weight:800; color:var(--muted); margin:16px 0 6px;">💾 백업 / 복원</div>
+    </div>
+
+    <div class="admin-pane" data-apane="backup" style="display:none;">
     <p class="hint" style="margin:0 0 8px;">설정한 주기마다 자동 백업됩니다. 복원하면 현재 DB가 그 시점으로 되돌아가며, 복원 직전 상태도 자동 백업됩니다.
       백업 폴더를 <b>구글 드라이브·네이버 MYBOX 동기화 폴더</b>로 지정하면 외부(클라우드)에도 자동 보관됩니다.</p>
     <div style="border:1px solid var(--line); border-radius:8px; padding:10px; margin-bottom:8px; display:grid; gap:8px;">
@@ -1871,13 +1882,16 @@
     </div>
     <div style="margin-bottom:8px;"><button class="btn sm" id="bkNow">💾 지금 백업</button></div>
     <div id="bkList" style="max-height:200px; overflow-y:auto; border:1px solid var(--line); border-radius:8px;"></div>
-    <div style="font-size:12.5px; font-weight:800; color:var(--muted); margin:16px 0 6px;">🔍 데이터 점검</div>
+    </div>
+
+    <div class="admin-pane" data-apane="check" style="display:none;">
     <p class="hint" style="margin:0 0 8px;">자재 재고 체인·자동차감 정합·음수 재고·연결 끊긴 기록을 검사합니다. DB를 교체했을 때 한 번 돌려보세요.</p>
     <div style="margin-bottom:8px;">
       <button class="btn sm" id="integRun">🔍 점검 실행</button>
       <button class="btn sm" id="integFix" style="display:none; color:var(--warn); border-color:var(--warn);">🔧 체인 자동 복구</button>
     </div>
     <div id="integOut" style="font-size:12.5px; line-height:1.9;"></div>
+    </div>
     <div class="modal-foot">
       <button class="btn" onclick="closeAdmin()">닫기</button>
     </div>

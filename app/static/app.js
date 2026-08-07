@@ -8075,6 +8075,13 @@ document.addEventListener("keydown", e => {
 });
 
 /* ── 관리 도구 (admin): 백업/복원 + 데이터 점검 ── */
+function setAdminTab(tab) {
+  document.querySelectorAll("#adminTabs [data-atab]").forEach(b => b.classList.toggle("on", b.dataset.atab === tab));
+  document.querySelectorAll("#adminOverlay .admin-pane").forEach(p => p.style.display = p.dataset.apane === tab ? "" : "none");
+}
+document.getElementById("adminTabs")?.addEventListener("click", e => {
+  const b = e.target.closest("[data-atab]"); if (b) setAdminTab(b.dataset.atab);
+});
 async function openAdmin() {
   $("adminOverlay").classList.add("on");
   $("integOut").innerHTML = "";
@@ -8083,6 +8090,7 @@ async function openAdmin() {
   $("updNotes").textContent = "";
   $("updMsg").textContent = "";
   UPD.latest = null;
+  setAdminTab("upd");   // 열 때 항상 첫 탭(업데이트)
   loadBackups();
   loadBackupSettings();
   loadTunnel();
