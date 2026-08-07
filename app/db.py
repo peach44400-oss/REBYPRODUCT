@@ -731,6 +731,9 @@ def init_db() -> None:
     for col in ("biz_no", "ceo", "mobile", "email"):
         if col not in pcols:
             con.execute(f"ALTER TABLE partner ADD COLUMN {col} TEXT DEFAULT ''")
+    # 완제품 수불부 거래처별 분리 표시 — 1이면 그 거래처 몫을 '거래처명 제품명' 행으로 따로 표시 (기본 미표시)
+    if "show_fin" not in pcols:
+        con.execute("ALTER TABLE partner ADD COLUMN show_fin INTEGER DEFAULT 0")
     # 발주서 메일 발송 기록 + 미등록 거래처명 + 입고 처리 기록
     pocols = [r[1] for r in con.execute("PRAGMA table_info(purchase_order)")]
     for col in ("sent_at", "sent_to", "partner_name", "received_at", "received_by"):

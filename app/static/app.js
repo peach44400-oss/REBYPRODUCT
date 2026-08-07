@@ -3191,9 +3191,11 @@ const MCOLS = {
       r.batch_yield ? NF(r.batch_yield) + (r.unit || "") : "미등록", NF(r.safety_stock), NF(r.stock),
       `<button class="btn ghost sm" data-semirecipe="${r.id}">🧪 레시피</button>`, chip(r.status)],
     hint: "반제품 = 원재료로 직접 만드는 자재(발효종 등) · [🧪 레시피]로 원재료 구성(1배합당)과 1배합당 생산량을 등록 · 빵 배합비엔 이 반제품을 자재처럼 넣으면 됩니다 (원재료 부족은 발주, 반제품 부족은 생산)" },
-  partner: { label: "거래처", cols: ["거래처명", "유형", "사업자번호", "대표자", "전화", "모바일", "이메일", "담당자", "상태"],
+  partner: { label: "거래처", cols: ["거래처명", "유형", "사업자번호", "대표자", "전화", "모바일", "이메일", "담당자", "수불부", "상태"],
     row: r => [B(r.name), `<span class="chip cat">${esc(r.type)}</span>`, esc(r.biz_no || "—"), esc(r.ceo || "—"),
-      esc(r.phone || "—"), esc(r.mobile || "—"), esc(r.email || "—"), esc(r.contact || "—"), chip(r.status)],
+      esc(r.phone || "—"), esc(r.mobile || "—"), esc(r.email || "—"), esc(r.contact || "—"),
+      Number(r.show_fin) ? '<span class="chip" style="background:#e3f0ff; color:#1a4f8a;">분리표시</span>' : '<span style="color:#bbb;">—</span>',
+      chip(r.status)],
     hint: "중지 상태 거래처는 일일 입력 드롭다운에서 숨겨집니다 · [ERP 가져오기]로 거래처등록(ESA001M) 엑셀을 그대로 올릴 수 있습니다" },
   staff: { label: "인원", cols: ["이름", "구분", "직책", "담당 공정", "시급(원)", "입사일", "상태"],
     row: r => [B(r.name), esc(r.kind), esc(r.position || "—"), esc(r.process || "—"), r.wage == null ? "—" : NF(r.wage), esc(r.join_date || "—"), chip(r.status)],
@@ -4456,7 +4458,9 @@ const MFORMS = {
     ["biz_no", "사업자등록번호"], ["ceo", "대표자명"],
     ["phone", "전화"], ["mobile", "모바일"],
     ["email", "이메일 (발주서 메일 발송)"],
-    ["contact", "담당자"], ["status", "상태", "sel", ["활성", "중지"]], ["note", "비고", "full"]],
+    ["contact", "담당자"], ["status", "상태", "sel", ["활성", "중지"]],
+    ["show_fin", "완제품 수불부 분리 표시", "sel", [["0", "미표시 (기본)"], ["1", "표시 — '거래처명 제품명' 행으로 분리"]]],
+    ["note", "비고", "full"]],
   staff: [["name", "이름 *"], ["kind", "구분", "sel", ["정직원", "계약직", "용역", "일용직", "아르바이트", "파견"]],
     ["position", "직책", "combo", []], ["process", "담당 공정"],
     ["wage", "시급 (원)", "num"], ["join_date", "입사(계약)일", "date"], ["phone", "연락처"],
@@ -4472,7 +4476,7 @@ async function openSemiRecipe(semiId) {
   if (!s) return;
   SR.semiId = semiId; SR.rows = [];
   $("srTitle").textContent = `🧾 ${s.name} 레시피`;
-  $("srUnit").textContent = s.unit || "단위";
+  $("srUnit").textContent = "g";   // 원재료 소요량은 g로 통일 (kg 재고 자재는 저장 시 자동 환산)
   $("qaMatRaw").innerHTML = M.raw.map(o => `<option value="${esc(o.name)}">`).join("");
   try {
     const d = await api("/api/semibom/" + semiId);
@@ -4485,10 +4489,12 @@ window.closeSemiRecipe = () => $("semiRecipeOverlay").classList.remove("on");
 function renderSemiRecipe() {
   $("srBody").innerHTML = SR.rows.map((r, i) => {
     const m = materialById(r.material_id) || {};
+    const su = (m.unit || "").toLowerCase();
+    const conv = su === "kg" ? ` <span style="color:#aaa;">(재고 kg)</span>` : "";
     return `<tr data-sri="${i}">
       <td>${esc(m.name || "?")}</td>
       <td class="r"><input class="mini-input num" data-srq value="${r.qty ?? ""}" style="width:110px" inputmode="decimal"></td>
-      <td class="auto">${esc(m.unit || "")}</td>
+      <td class="auto">g${conv}</td>
       <td><button class="btn ghost sm" data-srdel>삭제</button></td></tr>`;
   }).join("") || '<tr><td colspan="4" class="auto">아래에서 원재료를 검색해 추가하세요</td></tr>';
 }
@@ -4510,7 +4516,7 @@ $("srAdd").addEventListener("change", e => {
 });
 $("srSave").onclick = async () => {
   const items = SR.rows.filter(r => r.material_id).map(r => ({
-    material_id: r.material_id, qty_per_unit: Number(String(r.qty ?? "").replace(/,/g, "")) || 0 }));
+    material_id: r.material_id, qty_per_unit: Number(String(r.qty ?? "").replace(/,/g, "")) || 0, unit: "g" }));
   try {
     await api("/api/semibom/" + SR.semiId, { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ items }) });
@@ -5696,22 +5702,28 @@ function buildFinLedgerDoc(d) {
   const NFv = v => (v == null || v === "") ? "" : Number(Math.round(v * 1000) / 1000).toLocaleString("ko-KR");
   const rows = (d.rows || []).filter(r => FINLED.showAll || r.moved || r.stock || r.prev);
   const TD = "border:1px solid #333; padding:3px 6px;";
+  const hasSpec = rows.some(r => (r.spec || "").trim());   // 규격이 하나도 없으면 열 자체를 뺀다
+  const nCol = hasSpec ? 8 : 7;
   const body = rows.map(r => {
     const lots = (r.lots || []).map(l => {
       const made = l.made ? l.made.slice(5) : "미상";
-      const exp = l.expiry ? l.expiry.slice(5) : "—";
-      return `<div style="white-space:nowrap;">📅 <b>${esc(exp)}</b> <span style="color:#777;">(생산 ${esc(made)} · ${NFv(l.qty)})</span></div>`;
+      const exp = l.expiry ? esc(l.expiry) : "—";                       // 소비기한 년도까지 표시
+      const pk = l.pack ? ` · ${NFv(l.pack)}개입` : "";                  // 생산일자별 개입수
+      return `<div style="white-space:nowrap;"><b>${exp}</b> <span style="color:#777;">(생산 ${esc(made)} · ${NFv(l.qty)}${pk})</span></div>`;
     }).join("") || '<span style="color:#aaa;">—</span>';
+    const nameCell = r.partner
+      ? `<td style="${TD} text-align:left; white-space:normal; padding-left:14px; color:#1a4f8a;">↳ ${esc(r.name)}</td>`
+      : `<td style="${TD} text-align:left; font-weight:600; white-space:normal;">${esc(r.name)}</td>`;
     return `<tr>
-      <td style="${TD} text-align:center; color:#555;">${esc(r.category)}</td>
-      <td style="${TD} text-align:left; font-weight:600; white-space:normal;">${esc(r.name)}</td>
-      <td style="${TD} text-align:center; color:#555;">${esc(r.spec)}</td>
+      <td style="${TD} text-align:center; color:#555;">${r.partner ? "" : esc(r.category)}</td>
+      ${nameCell}
+      ${hasSpec ? `<td style="${TD} text-align:center; color:#555;">${esc(r.spec)}</td>` : ""}
       <td style="${TD} text-align:right;">${NFv(r.prev)}</td>
       <td style="${TD} text-align:right; color:#0a7a2f; ${r.prod ? "font-weight:700;" : ""}">${r.prod ? NFv(r.prod) : ""}</td>
       <td style="${TD} text-align:right; color:#b3541e; ${r.ship ? "font-weight:700;" : ""}">${r.ship ? NFv(r.ship) : ""}</td>
       <td style="${TD} text-align:right; font-weight:700;">${NFv(r.stock)}</td>
       <td style="${TD} text-align:left; font-size:10.5px; white-space:normal;">${lots}</td></tr>`;
-  }).join("") || `<tr><td style="${TD}" colspan="8" class="auto" style="padding:16px;">이 날짜에 생산·출고된 완제품이 없습니다 (전체 제품은 [전체 제품] 체크)</td></tr>`;
+  }).join("") || `<tr><td style="${TD}" colspan="${nCol}" class="auto" style="padding:16px;">이 날짜에 생산·출고된 완제품이 없습니다 (전체 제품은 [전체 제품] 체크)</td></tr>`;
   const dow = ["일", "월", "화", "수", "목", "금", "토"][new Date(d.date + "T00:00").getDay()];
   const TDm = "border:1px solid #333; padding:2px 6px; font-size:11px;";
   const approve = `<table style="border-collapse:collapse; display:inline-table;">
@@ -5729,7 +5741,7 @@ function buildFinLedgerDoc(d) {
     <td style="border:0; text-align:right; vertical-align:top; width:210px;">${approve}</td></tr></table>`;
   const HD = "border:1px solid #333; padding:4px 6px; background:#eef0f2; font-size:11.5px;";
   const head = `<thead><tr>
-    <th style="${HD}">분류</th><th style="${HD} text-align:left;">제 품 명</th><th style="${HD}">규격</th>
+    <th style="${HD}">분류</th><th style="${HD} text-align:left;">제 품 명</th>${hasSpec ? `<th style="${HD}">규격</th>` : ""}
     <th style="${HD}">전일재고</th><th style="${HD}">금일생산</th><th style="${HD}">금일출고</th><th style="${HD}">금일재고</th>
     <th style="${HD} text-align:left;">생산일자별 LOT · 소비기한</th></tr></thead>`;
   const tbl = `<table style="border-collapse:collapse; width:100%; font-size:11.5px;">

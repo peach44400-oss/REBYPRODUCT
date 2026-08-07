@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.54.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.55.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -137,7 +137,7 @@ MASTER_TABLES = {
     "material": ("material", ["kind", "name", "spec", "unit", "pack_count", "pack_set", "unit_price", "partner_id",
                               "safety_stock", "prod_mult", "prod_per", "shelf_days", "status", "note",
                               "is_semi", "batch_yield"]),
-    "partner": ("partner", ["name", "type", "phone", "contact", "note", "status", "biz_no", "ceo", "mobile", "email"]),
+    "partner": ("partner", ["name", "type", "phone", "contact", "note", "status", "biz_no", "ceo", "mobile", "email", "show_fin"]),
     "staff": ("staff", ["name", "kind", "position", "process", "wage", "join_date", "phone", "status", "note"]),
     "line": ("line", ["name", "process", "std_hours", "parent_id", "note", "status"]),
 }
@@ -5033,6 +5033,37 @@ def fin_ledger(request: Request, date: str = ""):
         ship_b, ship_o = sums("shipment", "qty", "<"), sums("shipment", "qty", "=")
         disp_b, disp_o = sums("disposal", "qty", "<"), sums("disposal", "qty", "=")
 
+        # 거래처: 완제품 수불부 분리표시(show_fin) 대상 + 이름
+        partners = {r["id"]: {"name": r["name"], "show": int(r["show_fin"] or 0)}
+                    for r in con.execute("SELECT id, name, show_fin FROM partner")}
+        # 개입수(pack_count) — LOT 포장(pack_mid=포장자재 / pack_set=세트)에서 유도
+        pack_by_mid = {r["id"]: float(r["pack_count"] or 0)
+                       for r in con.execute("SELECT id, pack_count FROM material WHERE COALESCE(pack_count,0)>0")}
+        pack_by_set = {r["set_name"]: float(r["pc"] or 0) for r in con.execute(
+            """SELECT s.set_name, MAX(m.pack_count) pc FROM pack_set_member s
+               JOIN material m ON m.id=s.material_id GROUP BY s.set_name""")}
+
+        def lot_pack(l):
+            mid, ps = l.get("pack_mid"), l.get("pack_set") or ""
+            if mid and pack_by_mid.get(mid):
+                return pack_by_mid[mid]
+            if ps and pack_by_set.get(ps):
+                return pack_by_set[ps]
+            return 0
+
+        # 오늘 거래처별 생산 분배·출고 (분리표시 행의 금일생산·금일출고 원천)
+        prodsplit_today = {}
+        for r in con.execute("""SELECT product_id pid, partner_id sp, SUM(qty) q FROM prod_split
+            WHERE date=? AND partner_id IS NOT NULL GROUP BY product_id, partner_id""", (date,)):
+            prodsplit_today[(r["pid"], r["sp"])] = float(r["q"] or 0)
+        ship_by_pp = {}
+        for r in con.execute("""SELECT product_id pid, partner_id sp, SUM(qty) q FROM shipment
+            WHERE date=? AND partner_id IS NOT NULL GROUP BY product_id, partner_id""", (date,)):
+            ship_by_pp[(r["pid"], r["sp"])] = float(r["q"] or 0)
+
+        def lot_out(l):
+            return {"made": l["made"], "qty": l["qty"], "expiry": l["expiry"], "pack": lot_pack(l)}
+
         out = []
         for p in products:
             pid = p["id"]
@@ -5040,14 +5071,52 @@ def fin_ledger(request: Request, date: str = ""):
             tp, ts, td = prod_o.get(pid, 0), ship_o.get(pid, 0), disp_o.get(pid, 0)
             stock = prev + tp - ts - td
             try:
-                lots = [{"made": l["made"], "qty": l["qty"], "expiry": l["expiry"]}
-                        for l in current_lots(con, pid, date)["lots"] if l.get("qty", 0) > 0.0001]
+                raw_lots = [l for l in current_lots(con, pid, date)["lots"] if l.get("qty", 0) > 0.0001]
             except Exception:
-                lots = []
-            out.append({"id": pid, "name": p["name"], "category": p["category"] or "",
-                        "spec": p["spec"] or "", "prev": round(prev, 3), "prod": round(tp, 3),
-                        "ship": round(ts, 3), "disp": round(td, 3), "stock": round(stock, 3),
-                        "lots": lots, "moved": bool(tp or ts or td)})
+                raw_lots = []
+            base = {"id": pid, "name": p["name"], "category": p["category"] or "",
+                    "spec": p["spec"] or "", "prev": round(prev, 3), "prod": round(tp, 3),
+                    "ship": round(ts, 3), "disp": round(td, 3), "stock": round(stock, 3),
+                    "lots": [lot_out(l) for l in raw_lots], "moved": bool(tp or ts or td)}
+
+            # 분리표시(show_fin) 거래처가 이 제품에 걸려 있으면 '거래처명 제품명' 행으로 분리
+            grp_lots = {}
+            for l in raw_lots:
+                grp_lots.setdefault(l.get("partner_id"), []).append(l)
+            show_ids = {sp for sp in grp_lots if sp and partners.get(sp, {}).get("show")}
+            show_ids |= {sp for (q_pid, sp) in prodsplit_today if q_pid == pid and partners.get(sp, {}).get("show")}
+            show_ids |= {sp for (q_pid, sp) in ship_by_pp if q_pid == pid and partners.get(sp, {}).get("show")}
+
+            if not show_ids:
+                out.append(base)
+                continue
+
+            sum_prev = sum_prod = sum_ship = sum_stock = 0.0
+            split_rows = []
+            for sp in sorted(show_ids, key=lambda x: partners[x]["name"]):
+                glots = grp_lots.get(sp, [])
+                stock_p = sum(l["qty"] for l in glots)
+                prod_p = prodsplit_today.get((pid, sp), 0)
+                ship_p = ship_by_pp.get((pid, sp), 0)
+                prev_p = round(stock_p - prod_p + ship_p, 3)   # 전일재고 = 금일재고 − 금일생산 + 금일출고
+                sum_prev += prev_p; sum_prod += prod_p; sum_ship += ship_p; sum_stock += stock_p
+                split_rows.append({"id": pid, "name": partners[sp]["name"] + " " + p["name"],
+                    "category": p["category"] or "", "spec": p["spec"] or "",
+                    "prev": prev_p, "prod": round(prod_p, 3), "ship": round(ship_p, 3), "disp": 0,
+                    "stock": round(stock_p, 3), "lots": [lot_out(l) for l in glots],
+                    "moved": bool(prod_p or ship_p or stock_p or prev_p), "partner": True})
+            # 잔여(미지정·미표시 거래처) — 합계가 제품 전체와 맞도록 차감해서 산출
+            res_prev = round(prev - sum_prev, 3); res_prod = round(tp - sum_prod, 3)
+            res_ship = round(ts - sum_ship, 3); res_stock = round(stock - sum_stock, 3)
+            res_lots = [lot_out(l) for l in raw_lots
+                        if not (l.get("partner_id") in show_ids)]
+            out.extend(split_rows)
+            if abs(res_prev) > 1e-6 or abs(res_prod) > 1e-6 or abs(res_ship) > 1e-6 \
+               or abs(res_stock) > 1e-6 or res_lots:
+                out.append({"id": pid, "name": p["name"], "category": p["category"] or "",
+                    "spec": p["spec"] or "", "prev": res_prev, "prod": res_prod,
+                    "ship": res_ship, "disp": round(td, 3), "stock": res_stock,
+                    "lots": res_lots, "moved": bool(res_prod or res_ship or res_stock)})
         prev_d = con.execute(
             "SELECT MAX(date) v FROM (SELECT date FROM production WHERE date<? "
             "UNION SELECT date FROM shipment WHERE date<?)", (date, date)).fetchone()["v"]
