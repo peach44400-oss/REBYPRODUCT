@@ -961,7 +961,7 @@
             <datalist id="qaProducts"></datalist>
           </div>
           <div class="card" data-esec="prod">
-            <h2>🧫 반제품 생산 <span class="sub">원재료처럼 — 배합수로 원재료 차감, 생산량(만든 kg)만큼 반제품 재고 증가 (생산실적엔 안 뜸)</span></h2>
+            <h2>🧫 반제품 생산 <span class="sub">반제품(발효종 등)을 직접 만들 때 — 배합수만 입력하면 레시피대로 원재료가 자동 차감되고 그만큼 반제품 재고가 늘어납니다 · 반제품·레시피는 기준정보 [반제품]에서 등록</span></h2>
             <div class="tbl-wrap"><table>
               <thead><tr><th>반제품명</th><th class="r">배합수</th><th class="r">생산량 <span class="auto" style="font-weight:400">(재고↑)</span></th><th>원재료 소비 (자동)</th><th></th></tr></thead>
               <tbody class="num" id="eSemiProd"></tbody>
@@ -1552,9 +1552,9 @@
 <div class="overlay" id="semiRecipeOverlay">
   <div class="modal" style="width:min(680px, 96vw);">
     <h3 id="srTitle">🧾 반제품 레시피</h3>
-    <p class="hint" style="margin:0 0 10px;">이 반제품 <b>1 <span id="srUnit">단위</span></b>를 만드는 데 필요한 <b>원재료</b> 구성입니다. (반제품 생산 시 이 레시피로 원재료가 차감됩니다)</p>
+    <p class="hint" style="margin:0 0 10px;">이 반제품 <b>1배합</b>을 만드는 데 들어가는 <b>원재료</b> 구성입니다. (반제품 생산에서 배합수를 넣으면 이 레시피 × 배합수만큼 원재료가 차감되고, 반제품 1배합당 생산량만큼 재고가 늘어납니다) · 단위: <span id="srUnit">g</span></p>
     <div class="tbl-wrap"><table>
-      <thead><tr><th>원재료</th><th class="r">1단위당 소요량</th><th>단위</th><th></th></tr></thead>
+      <thead><tr><th>원재료</th><th class="r">1배합당 소요량</th><th>단위</th><th></th></tr></thead>
       <tbody id="srBody"></tbody>
     </table></div>
     <div class="draft-foot" style="margin-top:8px;">

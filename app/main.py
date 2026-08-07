@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.53.1"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.54.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -135,7 +135,8 @@ MASTER_TABLES = {
     "product": ("product", ["name", "category", "spec", "pack_sizes", "line_id", "unit_price",
                             "shelf_days", "safety_stock", "batch_yield", "status", "note", "is_semi"]),
     "material": ("material", ["kind", "name", "spec", "unit", "pack_count", "pack_set", "unit_price", "partner_id",
-                              "safety_stock", "prod_mult", "prod_per", "shelf_days", "status", "note"]),
+                              "safety_stock", "prod_mult", "prod_per", "shelf_days", "status", "note",
+                              "is_semi", "batch_yield"]),
     "partner": ("partner", ["name", "type", "phone", "contact", "note", "status", "biz_no", "ceo", "mobile", "email"]),
     "staff": ("staff", ["name", "kind", "position", "process", "wage", "join_date", "phone", "status", "note"]),
     "line": ("line", ["name", "process", "std_hours", "parent_id", "note", "status"]),
@@ -1245,7 +1246,7 @@ def master_bulkset(request: Request, mtype: str, body: dict):
                "staff": {"wage"}}
     if mtype not in allowed:
         raise HTTPException(400, "이 탭은 일괄 가져오기를 지원하지 않습니다")
-    table = "material" if mtype in ("raw", "sub") else ("product" if mtype=="semi" else mtype)
+    table = "material" if mtype in ("raw", "sub", "semi") else mtype
     fields = allowed[mtype]
     con = connect()
     try:
@@ -3102,7 +3103,7 @@ def partners_import(request: Request, body: dict):
 def masters_reorder(request: Request, mtype: str, body: dict):
     """빠른 편집에서 드래그/이동한 순서를 sort 컬럼에 저장 — 목록·검색이 이 순서를 따른다.
     (미들웨어가 guest의 POST를 이미 차단)"""
-    table = "material" if mtype in ("raw", "sub") else ("product" if mtype=="semi" else mtype)
+    table = "material" if mtype in ("raw", "sub", "semi") else mtype
     if table not in ("product", "material", "partner", "staff", "line"):
         raise HTTPException(400, "순서 변경을 지원하지 않는 항목입니다")
     ids = [int(x) for x in (body.get("ids") or [])]
@@ -3124,32 +3125,26 @@ def masters_reorder(request: Request, mtype: str, body: dict):
 def masters(mtype: str, request: Request):
     con = connect()
     try:
-        if mtype in ("product", "semi"):
-            # product=완제품(is_semi=0) / semi=반제품(is_semi=1) — 같은 product 테이블을 is_semi로 분리
-            semi = 1 if mtype == "semi" else 0
+        if mtype == "product":
+            # 완제품만 (반제품은 이제 자재 계열 — 아래 material 쿼리)
             data = rows(con.execute("""
                 SELECT p.*,
-                       COALESCE(os.qty,0) + COALESCE(pr.q,0) + COALESCE(spr.q,0) - COALESCE(sh.q,0)
-                         - COALESCE(dp.q,0) - COALESCE(su.q,0) AS stock
+                       COALESCE(os.qty,0) + COALESCE(pr.q,0) - COALESCE(sh.q,0) - COALESCE(dp.q,0) AS stock
                 FROM product p
                 LEFT JOIN opening_stock os ON os.kind='product' AND os.ref_id=p.id
-                -- 완제품 생산 (반제품은 production에 없음)
                 LEFT JOIN (SELECT product_id, SUM(prod_qty) q FROM production GROUP BY product_id) pr
                        ON pr.product_id=p.id
-                -- 반제품 생산 (반제품일 때만 값이 있음)
-                LEFT JOIN (SELECT semi_id, SUM(qty) q FROM semi_production GROUP BY semi_id) spr
-                       ON spr.semi_id=p.id
                 LEFT JOIN (SELECT product_id, SUM(qty) q FROM shipment GROUP BY product_id) sh
                        ON sh.product_id=p.id
                 LEFT JOIN (SELECT product_id, SUM(qty) q FROM disposal GROUP BY product_id) dp
                        ON dp.product_id=p.id
-                -- 반제품이 완제품 생산에 소비된 양 (반제품일 때만 값이 있음)
-                LEFT JOIN (SELECT semi_id, SUM(qty) q FROM semi_usage GROUP BY semi_id) su
-                       ON su.semi_id=p.id
-                WHERE COALESCE(p.is_semi,0)=?
-                ORDER BY p.sort, p.id""", (semi,)))
-        elif mtype in ("raw", "sub"):
-            data = rows(con.execute("""
+                WHERE COALESCE(p.is_semi,0)=0
+                ORDER BY p.sort, p.id"""))
+        elif mtype in ("raw", "sub", "semi"):
+            # raw/sub=원·부재료(반제품 제외) · semi=반제품(직접 생산하는 자재, is_semi=1)
+            where = "COALESCE(m.is_semi,0)=1" if mtype == "semi" else "m.kind=? AND COALESCE(m.is_semi,0)=0"
+            params = () if mtype == "semi" else (mtype,)
+            data = rows(con.execute(f"""
                 SELECT m.*, md.real_qty AS stock, md.date AS stock_date, u.avg_use
                 FROM material m
                 LEFT JOIN (
@@ -3157,15 +3152,14 @@ def masters(mtype: str, request: Request):
                          ROW_NUMBER() OVER (PARTITION BY material_id ORDER BY date DESC) rn
                   FROM material_daily) md ON md.material_id=m.id AND md.rn=1
                 LEFT JOIN (
-                  -- 일평균 사용량 = 최근 30일 사용 합 ÷ 사용 기록일 수 (생산 없던 날 제외)
                   SELECT material_id, SUM(used_qty) * 1.0 /
                          (SELECT COUNT(DISTINCT date) FROM material_daily
                            WHERE used_qty>0 AND date>=date('now','localtime','-30 day')) avg_use
                   FROM material_daily
                   WHERE used_qty>0 AND date>=date('now','localtime','-30 day')
                   GROUP BY material_id) u ON u.material_id=m.id
-                WHERE m.kind=?
-                ORDER BY m.sort, m.id""", (mtype,)))
+                WHERE {where}
+                ORDER BY m.sort, m.id""", params))
         elif mtype in MASTER_TABLES:
             data = rows(con.execute(f"SELECT * FROM {MASTER_TABLES[mtype][0]} ORDER BY id"))
         else:
@@ -3200,14 +3194,15 @@ def _check_line_parent(con, parent_id, self_id=None):
 
 @app.post("/api/masters/{mtype}")
 def master_create(mtype: str, body: dict):
-    key = "material" if mtype in ("raw", "sub") else ("product" if mtype == "semi" else mtype)
+    key = "material" if mtype in ("raw", "sub", "semi") else mtype
     if key not in MASTER_TABLES:
         raise HTTPException(404, "unknown master type")
     table, cols = MASTER_TABLES[key]
     if mtype in ("raw", "sub"):
         body["kind"] = mtype
     if mtype == "semi":
-        body["is_semi"] = 1        # 반제품 = 제품 테이블 + is_semi=1
+        body["kind"] = body.get("kind") or "raw"   # 반제품 = 자재(kind raw) + is_semi=1
+        body["is_semi"] = 1
     vals = {c: body.get(c) for c in cols if c in body}
     if not vals.get("name"):
         raise HTTPException(400, "name required")
@@ -3222,7 +3217,7 @@ def master_create(mtype: str, body: dict):
         # 초기재고 → opening_stock
         init_qty = body.get("initial_stock")
         if init_qty not in (None, "", 0):
-            kind = "product" if mtype in ("product", "semi") else "material"
+            kind = "product" if mtype == "product" else "material"
             con.execute("INSERT OR REPLACE INTO opening_stock VALUES(?,?,?,?)",
                         (kind, new_id, dt.date.today().isoformat(), float(init_qty)))
         audit(con, "create_" + mtype, json.dumps(vals, ensure_ascii=False))
@@ -3235,7 +3230,7 @@ def master_create(mtype: str, body: dict):
 
 @app.put("/api/masters/{mtype}/{mid}")
 def master_update(mtype: str, mid: int, body: dict):
-    key = "material" if mtype in ("raw", "sub") else ("product" if mtype=="semi" else mtype)
+    key = "material" if mtype in ("raw", "sub", "semi") else mtype
     if key not in MASTER_TABLES:
         raise HTTPException(404, "unknown master type")
     table, cols = MASTER_TABLES[key]
@@ -3333,7 +3328,7 @@ REF_CHECKS = {
 
 @app.delete("/api/masters/{mtype}/{mid}")
 def master_delete(mtype: str, mid: int):
-    key = "material" if mtype in ("raw", "sub") else ("product" if mtype=="semi" else mtype)
+    key = "material" if mtype in ("raw", "sub", "semi") else mtype
     if key not in MASTER_TABLES:
         raise HTTPException(404, "unknown master type")
     table = MASTER_TABLES[key][0]
@@ -4286,9 +4281,12 @@ def day_get(date: str, request: Request):
         usage = rows(con.execute("""
             SELECT mu.product_id, mu.material_id, mu.qty, mu.block FROM material_usage mu
             WHERE mu.date=? ORDER BY mu.product_id, mu.block, mu.qty DESC""", (date,)))
-        # 반제품 생산 (완제품 생산실적과 분리) — 그날 반제품별 배합수
+        # 반제품 생산 (완제품 생산실적과 분리) — 그날 반제품별 배합수 (구: 제품형)
         semi_prod = rows(con.execute(
             "SELECT semi_id, batches, qty FROM semi_production WHERE date=? ORDER BY id", (date,)))
+        # 반제품(자재) 생산 — 그날 반제품 자재별 배합수·생산량
+        semi_mat_prod = rows(con.execute(
+            "SELECT material_id, batches, qty FROM semi_mat_prod WHERE date=? ORDER BY material_id", (date,)))
         photos = rows(con.execute(
             "SELECT id, file, note, at FROM day_photo WHERE date=? ORDER BY id", (date,)))
         # 직전 '생산' 기록일 (어제처럼 복사용 — 자재 prev_date와 별개)
@@ -4306,7 +4304,8 @@ def day_get(date: str, request: Request):
                 "version": rec["updated_at"] if rec else None, "viewers": viewers,
                 "production": production, "shipment": shipment,
                 "materials": materials, "mat_in": mat_in, "pending_orders": pending_orders,
-                "staffing": staffing, "lots": lots, "usage": usage, "semi_prod": semi_prod, "photos": photos,
+                "staffing": staffing, "lots": lots, "usage": usage,
+                "semi_prod": semi_prod, "semi_mat_prod": semi_mat_prod, "photos": photos,
                 "prev_stock": {r["material_id"]: r["real_qty"] for r in prev},
                 "prev_date": prev_date, "prev_materials": prev_materials,
                 "prev_prod_date": prev_prod_date}
@@ -4475,7 +4474,7 @@ def day_save(request: Request, date: str, body: dict):
                              r.get("prod_date") or "", r.get("expiry") or "", int(r.get("lot_no") or 0),
                              float(price or 0)))
         # ── 자재 (입고/실사/사용 — 셋 중 하나라도 오면 재고 자동 반영 재계산) ──
-        touch_mat = ("materials" in body) or ("mat_in" in body) or ("usage" in body)
+        touch_mat = ("materials" in body) or ("mat_in" in body) or ("usage" in body) or ("semi_mat_prod" in body)
         mid_q = ("SELECT material_id FROM material_daily WHERE date=?"
                  " UNION SELECT material_id FROM material_in WHERE date=?"
                  " UNION SELECT material_id FROM material_usage WHERE date=?")
@@ -4498,8 +4497,9 @@ def day_save(request: Request, date: str, body: dict):
                              r.get("expiry") or "", r.get("note") or "",
                              (r.get("partner") or "").strip(), float(r.get("price") or 0)))
                 in_totals[r["material_id"]] = in_totals.get(r["material_id"], 0.0) + q
-        else:  # 이 저장에 입고가 없으면 기존 저장분 사용
-            for r in con.execute("SELECT material_id, SUM(qty) q FROM material_in WHERE date=? GROUP BY material_id", (date,)):
+        else:  # 이 저장에 입고가 없으면 기존 저장분 사용 (반제품 생산 입고는 아래 semi_in에서 더하므로 제외)
+            for r in con.execute("SELECT material_id, SUM(qty) q FROM material_in"
+                                 " WHERE date=? AND COALESCE(note,'')!='[반제품생산]' GROUP BY material_id", (date,)):
                 in_totals[r["material_id"]] = float(r["q"] or 0)
         if "materials" in body:
             con.execute("DELETE FROM material_daily WHERE date=?", (date,))
@@ -4533,6 +4533,40 @@ def day_save(request: Request, date: str, body: dict):
                     (date, material_id, product_id, qty, block) VALUES(?,?,?,?,?)""",
                             (date, r["material_id"], r.get("product_id"), q,
                              r.get("block") or ""))
+        # ── 반제품 생산 (반제품=직접 만드는 자재) — 배합수 × 1배합당 생산량 = 반제품 입고,
+        #    원재료는 레시피(semi_bom)대로 사용. 반제품 입고는 note='[반제품생산]', 원재료 사용은 block='semi:<id>'로 표시. ──
+        semi_in, semi_used = {}, {}
+        if "semi_mat_prod" in body:
+            con.execute("DELETE FROM material_in WHERE date=? AND note='[반제품생산]'", (date,))
+            con.execute("DELETE FROM material_usage WHERE date=? AND product_id IS NULL AND block LIKE 'semi:%'", (date,))
+            con.execute("DELETE FROM semi_mat_prod WHERE date=?", (date,))
+            for r in body.get("semi_mat_prod", []):
+                mid = r.get("material_id")
+                batches = float(r.get("batches") or 0)
+                if not mid or batches <= 0:
+                    continue
+                mrow = con.execute("SELECT batch_yield FROM material WHERE id=?", (mid,)).fetchone()
+                prod = batches * float((mrow["batch_yield"] if mrow else 0) or 0)
+                con.execute("INSERT OR REPLACE INTO semi_mat_prod(date, material_id, batches, qty)"
+                            " VALUES(?,?,?,?)", (date, mid, batches, prod))
+                if prod > 0:
+                    con.execute("INSERT INTO material_in(date, material_id, qty, note) VALUES(?,?,?,?)",
+                                (date, mid, prod, "[반제품생산]"))
+                    semi_in[mid] = semi_in.get(mid, 0.0) + prod
+                for b in con.execute("""SELECT sb.material_id, sb.qty_per_unit, sb.unit sunit, m.unit munit
+                        FROM semi_bom sb JOIN material m ON m.id=sb.material_id WHERE sb.semi_id=?""", (mid,)):
+                    ru = batches * float(b["qty_per_unit"] or 0)
+                    su = (b["sunit"] or "g").lower(); mu = (b["munit"] or "").lower()   # 레시피 단위 → 자재 재고 단위 환산
+                    if su == "g" and mu == "kg":
+                        ru /= 1000
+                    elif su == "kg" and mu == "g":
+                        ru *= 1000
+                    if ru > 0:
+                        con.execute("INSERT INTO material_usage(date, material_id, product_id, qty, block)"
+                                    " VALUES(?,?,NULL,?,?)", (date, b["material_id"], ru, "semi:" + str(mid)))
+                        semi_used[b["material_id"]] = semi_used.get(b["material_id"], 0.0) + ru
+            for _mid, _q in semi_in.items():   # 반제품 입고를 그날 입고 합계에 반영
+                in_totals[_mid] = in_totals.get(_mid, 0.0) + _q
         if touch_mat:
             # 자동 반영: 실사(수동 자재행)가 없는 자재는 전일재고 + 입고 − 사용 합계로 계산
             if "usage" in body:
@@ -4540,7 +4574,9 @@ def day_save(request: Request, date: str, body: dict):
                 for r in body.get("usage", []):
                     if r.get("material_id") and r.get("qty"):   # 기타 사용(제품 없음)도 재고 차감에 포함
                         sums[r["material_id"]] = sums.get(r["material_id"], 0.0) + float(r["qty"])
-            else:   # 이 저장에 사용 기록이 없으면 기존 저장분 사용
+                for _mid, _q in semi_used.items():   # 반제품 원재료 사용은 body.usage 밖 → 여기서만 합산
+                    sums[_mid] = sums.get(_mid, 0.0) + _q
+            else:   # 이 저장에 사용 기록이 없으면 기존 저장분 사용 (반제품 원재료 사용도 이미 테이블에 있음 → 중복 합산 안 함)
                 sums = {r["material_id"]: float(r["q"] or 0) for r in con.execute(
                     "SELECT material_id, SUM(qty) q FROM material_usage WHERE date=? GROUP BY material_id",
                     (date,))}

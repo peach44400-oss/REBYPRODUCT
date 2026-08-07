@@ -233,6 +233,16 @@ CREATE TABLE IF NOT EXISTS semi_production (
 );
 CREATE INDEX IF NOT EXISTS idx_semiprod ON semi_production(semi_id, date);
 
+-- 반제품(자재) 생산 입력 — 재로드용(배합수 보존). 재고 반영은 material_in(note='[반제품생산]')/material_usage로 처리.
+CREATE TABLE IF NOT EXISTS semi_mat_prod (
+  date TEXT NOT NULL,
+  material_id INTEGER NOT NULL REFERENCES material(id),   -- 반제품 자재
+  batches REAL NOT NULL DEFAULT 0,
+  qty REAL NOT NULL DEFAULT 0,                            -- 생산량 = 배합수 × 1배합당 생산량
+  UNIQUE(date, material_id)
+);
+CREATE INDEX IF NOT EXISTS idx_semimatprod ON semi_mat_prod(material_id, date);
+
 -- 반제품 소비 기록 — 완제품 생산 저장 시 백엔드가 자동 기록 (반제품 재고 차감의 근거)
 CREATE TABLE IF NOT EXISTS semi_usage (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -710,6 +720,12 @@ def init_db() -> None:
     mcols = [r[1] for r in con.execute("PRAGMA table_info(material)")]
     if "shelf_days" not in mcols:
         con.execute("ALTER TABLE material ADD COLUMN shelf_days INTEGER DEFAULT 0")
+    # 반제품(직접 생산하는 자재) — is_semi=1이면 원재료로 직접 만들어 쓰는 자재(발효종 등).
+    # batch_yield = 1배합당 생산량(자재 단위, 예: g). 레시피는 semi_bom(semi_id=이 자재, material_id=원재료, qty_per_unit=1배합당량).
+    if "is_semi" not in mcols:
+        con.execute("ALTER TABLE material ADD COLUMN is_semi INTEGER DEFAULT 0")
+    if "batch_yield" not in mcols:
+        con.execute("ALTER TABLE material ADD COLUMN batch_yield REAL DEFAULT 0")
     # 거래처: 사업자등록번호·대표자·모바일·이메일 (ERP 가져오기 + 발주서 메일)
     pcols = [r[1] for r in con.execute("PRAGMA table_info(partner)")]
     for col in ("biz_no", "ceo", "mobile", "email"):
