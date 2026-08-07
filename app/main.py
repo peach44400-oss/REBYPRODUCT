@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.51.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.51.1"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -4165,21 +4165,30 @@ def staff_ledger(request: Request, mode: str = "m", date: str = ""):
 
 
 @app.get("/api/calendar")
-def calendar_dates(ym: str):
+def calendar_dates(ym: str, src: str = ""):
+    """그 달에 '데이터가 있는 날'만 반환(달력 점 표시용). src로 종류별 필터:
+    staffing=근무 있는 날, po=발주 있는 날, 기본=모든 활동."""
     con = connect()
     try:
-        # 실제 데이터가 있는 날만 점 표시 — 데이터를 지우고 저장하면 빈 day_record가 남는데,
-        # 그 빈 날에는 점을 찍지 않는다(메모가 있으면 표시).
-        ds = [r["date"] for r in con.execute("""
-            SELECT date FROM day_record d WHERE substr(date,1,7)=? AND (
-                COALESCE(memo,'')!='' OR
-                EXISTS(SELECT 1 FROM production     WHERE date=d.date) OR
-                EXISTS(SELECT 1 FROM shipment       WHERE date=d.date) OR
-                EXISTS(SELECT 1 FROM material_usage WHERE date=d.date) OR
-                EXISTS(SELECT 1 FROM material_in    WHERE date=d.date) OR
-                EXISTS(SELECT 1 FROM material_daily WHERE date=d.date AND src='manual') OR
-                EXISTS(SELECT 1 FROM staffing       WHERE date=d.date))
-            ORDER BY date""", (ym,))]
+        if src == "staffing":
+            ds = [r["date"] for r in con.execute(
+                "SELECT DISTINCT date FROM staffing WHERE substr(date,1,7)=? ORDER BY date", (ym,))]
+        elif src == "po":
+            ds = [r["date"] for r in con.execute(
+                "SELECT DISTINCT date FROM purchase_order WHERE substr(date,1,7)=? ORDER BY date", (ym,))]
+        else:
+            # 실제 데이터가 있는 날만 점 표시 — 데이터를 지우고 저장하면 빈 day_record가 남는데,
+            # 그 빈 날에는 점을 찍지 않는다(메모가 있으면 표시).
+            ds = [r["date"] for r in con.execute("""
+                SELECT date FROM day_record d WHERE substr(date,1,7)=? AND (
+                    COALESCE(memo,'')!='' OR
+                    EXISTS(SELECT 1 FROM production     WHERE date=d.date) OR
+                    EXISTS(SELECT 1 FROM shipment       WHERE date=d.date) OR
+                    EXISTS(SELECT 1 FROM material_usage WHERE date=d.date) OR
+                    EXISTS(SELECT 1 FROM material_in    WHERE date=d.date) OR
+                    EXISTS(SELECT 1 FROM material_daily WHERE date=d.date AND src='manual') OR
+                    EXISTS(SELECT 1 FROM staffing       WHERE date=d.date))
+                ORDER BY date""", (ym,))]
         return {"dates": ds}
     finally:
         con.close()

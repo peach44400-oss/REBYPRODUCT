@@ -198,11 +198,11 @@ function lineChart(el, cfg) {
 }
 
 /* ── 달력 컴포넌트 ───────────────────── */
-function Calendar(prefix, onPick) {
+function Calendar(prefix, onPick, src) {
   const self = {
     ym: todayISO().slice(0, 7), sel: null, dates: new Set(),
     async render() {
-      const data = await api("/api/calendar?ym=" + self.ym);
+      const data = await api("/api/calendar?ym=" + self.ym + (src ? "&src=" + src : ""));
       self.dates = new Set(data.dates);
       const [y, m] = self.ym.split("-").map(Number);
       $(prefix + "Lbl").textContent = `${y}년 ${m}월`;
@@ -252,12 +252,22 @@ function dpEnsure() {
   document.body.appendChild(dpPop);
 }
 function dpValidISO(v) { return /^\d{4}-\d{2}-\d{2}$/.test(v || "") ? v : ""; }
+let dpDots = false, dpDotSet = new Set(), dpDotYM = null;   // data-dots 입력만 달력에 데이터 점 표시
+async function dpRefresh() {
+  if (dpDots && dpDotYM !== dpYM) {
+    try { const d = await api("/api/calendar?ym=" + dpYM); dpDotSet = new Set(d.dates); dpDotYM = dpYM; }
+    catch (e) { dpDotSet = new Set(); }
+  }
+  dpRender();
+}
 function dpOpen(input) {
   dpEnsure();
   dpTarget = input;
+  dpDots = input.dataset.dots !== undefined;   // 이 입력이 데이터 점 표시를 원하는지
+  dpDotYM = null; dpDotSet = new Set();
   const cur = dpValidISO(input.value) || todayISO();
   dpYM = cur.slice(0, 7);
-  dpRender();
+  dpRefresh();
   const r = input.getBoundingClientRect();
   const w = 304, h = 360;
   let left = r.left, top = r.bottom + 4;
@@ -283,7 +293,8 @@ function dpRender() {
   for (let i = 0; i < first; i++) h += "<span></span>";
   for (let d = 1; d <= nd; d++) {
     const iso = `${dpYM}-${String(d).padStart(2, "0")}`;
-    const cls = [iso === sel ? "sel" : "", iso === today ? "today" : ""].filter(Boolean).join(" ");
+    const cls = [iso === sel ? "sel" : "", iso === today ? "today" : "",
+      dpDots && dpDotSet.has(iso) ? "has" : ""].filter(Boolean).join(" ");
     h += `<button type="button" class="${cls}" data-dpd="${iso}">${d}</button>`;
   }
   h += `</div><div class="dp-foot"><button type="button" data-dpd="${today}">오늘</button>
@@ -308,7 +319,7 @@ document.addEventListener("click", e => {
       const [y, m] = dpYM.split("-").map(Number);
       const d = new Date(y, m - 1 + Number(nav.dataset.dpnav), 1);
       dpYM = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-      dpRender(); return;
+      dpRefresh(); return;
     }
     const day = e.target.closest("[data-dpd]");
     if (day) { dpSet(day.dataset.dpd); return; }
@@ -5100,6 +5111,27 @@ function postStep(dir) {
 }
 $("postPrev").onclick = () => postStep(-1);
 $("postNext").onclick = () => postStep(1);
+// 발주 현황 날짜 라벨 클릭 → 달력 팝업 (발주 있는 날 점 표시)
+const poCal = Calendar("poCal", d => {
+  POSTAT.date = d;
+  if (POSTAT.mode === "all") {   // 전체 기간이면 그 날짜의 '월별'로 전환
+    POSTAT.mode = "m";
+    document.querySelectorAll("#postTabs button").forEach(x => x.classList.toggle("on", x.dataset.pot === "m"));
+  }
+  hidePoCal(); loadPoStat();
+}, "po");
+function hidePoCal() { $("postCalPop").style.display = "none"; }
+$("postLbl").addEventListener("click", () => {
+  const pop = $("postCalPop");
+  if (pop.style.display === "none") {
+    poCal.ym = (POSTAT.date || todayISO()).slice(0, 7);
+    poCal.sel = POSTAT.date; poCal.render();
+    pop.style.display = "";
+  } else hidePoCal();
+});
+document.addEventListener("click", e => {
+  if (!e.target.closest("#postCalPop") && !e.target.closest("#postLbl")) hidePoCal();
+});
 let _postT = null;
 $("postFilter").addEventListener("input", e => {
   POSTAT.q = e.target.value.trim();
@@ -7235,6 +7267,22 @@ function staffStep(dir) {
 }
 $("staffPrev").onclick = () => staffStep(-1);
 $("staffNext").onclick = () => staffStep(1);
+// 인원 관리 날짜 라벨 클릭 → 달력 팝업 (근무 있는 날 점 표시)
+const staffCal = Calendar("staffCal", d => {
+  STAFF.date = d; hideStaffCal(); loadStaff();
+}, "staffing");
+function hideStaffCal() { $("staffCalPop").style.display = "none"; }
+$("staffLbl").addEventListener("click", () => {
+  const pop = $("staffCalPop");
+  if (pop.style.display === "none") {
+    staffCal.ym = (STAFF.date || todayISO()).slice(0, 7);
+    staffCal.sel = STAFF.date; staffCal.render();
+    pop.style.display = "";
+  } else hideStaffCal();
+});
+document.addEventListener("click", e => {
+  if (!e.target.closest("#staffCalPop") && !e.target.closest("#staffLbl")) hideStaffCal();
+});
 $("staffFilter").addEventListener("input", e => { STAFF.q = e.target.value.trim(); STAFF.page = 1; renderStaffMgmt(); });
 $("staffCsv").onclick = () => {   // 페이지와 무관하게 전체(검색 반영) 데이터를 내보냄
   const d = STAFF.data; if (!d) return;
@@ -7298,9 +7346,10 @@ $("staffDayBody").addEventListener("click", e => {
 window.closeStaffDays = () => $("staffDayOverlay").classList.remove("on");
 
 // ── 전체 출퇴근 원장 (인원 × 근무한 날짜 × 근무시간) ──
-const SLED = { mode: "m", date: "", data: null };
+const SLED = { mode: "m", date: "", data: null, body: "staffLedgerBody" };
 $("staffLedgerBtn").onclick = () => {
   // 원장은 기본 '월별'로 연다(하루만 보면 열이 1개뿐이라 원장 의미가 약함) — 안에서 일/주/년 전환 가능
+  SLED.body = "staffLedgerBody";
   SLED.mode = (STAFF.mode === "w" || STAFF.mode === "y") ? STAFF.mode : "m";
   SLED.date = STAFF.date || todayISO();
   $("staffLedgerOverlay").classList.add("on");

@@ -614,13 +614,17 @@ def init_db() -> None:
         con.execute("""UPDATE bom SET partner_ids = CAST(partner_id AS TEXT)
             WHERE partner_id IS NOT NULL AND COALESCE(partner_ids,'')=''""")
     # 반제품 생산을 production → semi_production 으로 이관 (반제품은 완제품 생산실적/집계에서 분리).
-    # 매 기동 실행해도 안전(이관 후 production엔 is_semi 행이 없어 재실행 시 no-op).
-    con.execute("""INSERT INTO semi_production(date, semi_id, batches, qty)
-        SELECT pr.date, pr.product_id, COALESCE(pr.batches,0), pr.prod_qty
-        FROM production pr JOIN product p ON p.id=pr.product_id
-        WHERE COALESCE(p.is_semi,0)=1""")
-    con.execute("""DELETE FROM production WHERE product_id IN
-        (SELECT id FROM product WHERE COALESCE(is_semi,0)=1)""")
+    # ⚠️ is_semi 컬럼 보강(아래)보다 먼저 실행되므로, 구 DB(컬럼 없음)에서 크래시하지 않게 컬럼 존재를 먼저 확인.
+    # 구 DB엔 is_semi 컬럼 자체가 없어 반제품도 없다 → 건너뛰어도 안전(다음 기동에 이관).
+    _pcols = [r[1] for r in con.execute("PRAGMA table_info(product)")]
+    _prcols = [r[1] for r in con.execute("PRAGMA table_info(production)")]
+    if "is_semi" in _pcols and "batches" in _prcols:
+        con.execute("""INSERT INTO semi_production(date, semi_id, batches, qty)
+            SELECT pr.date, pr.product_id, COALESCE(pr.batches,0), pr.prod_qty
+            FROM production pr JOIN product p ON p.id=pr.product_id
+            WHERE COALESCE(p.is_semi,0)=1""")
+        con.execute("""DELETE FROM production WHERE product_id IN
+            (SELECT id FROM product WHERE COALESCE(is_semi,0)=1)""")
     # (구) plan_split → prod_split 이관 후 제거 (분배 기준을 계획→생산으로 변경, 2026-07-14)
     if con.execute("SELECT name FROM sqlite_master WHERE name='plan_split'").fetchone():
         con.execute("""INSERT INTO prod_split(date, product_id, partner_id, qty)

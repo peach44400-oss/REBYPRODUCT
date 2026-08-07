@@ -330,10 +330,12 @@
   .dp-dow{display:grid; grid-template-columns:repeat(7,1fr); gap:3px; font-size:12px; color:var(--muted); text-align:center; margin-bottom:4px;}
   .dp-dow span:first-child{color:var(--crit);}
   .dp-days{display:grid; grid-template-columns:repeat(7,1fr); gap:3px;}
-  .dp-days button{border:1px solid transparent; background:none; cursor:pointer; padding:10px 0; font-size:14px; border-radius:7px; color:var(--ink);}
+  .dp-days button{position:relative; border:1px solid transparent; background:none; cursor:pointer; padding:10px 0; font-size:14px; border-radius:7px; color:var(--ink);}
   .dp-days button:hover{background:var(--bg);}
   .dp-days button.today{border-color:var(--line); font-weight:700;}
   .dp-days button.sel{background:var(--ink); color:#fff; font-weight:700;}
+  .dp-days button.has::after{content:''; position:absolute; left:50%; transform:translateX(-50%); bottom:3px; width:4px; height:4px; border-radius:99px; background:var(--ok);}
+  .dp-days button.sel.has::after{background:#fff;}
   .dp-days span{display:block;}
   .dp-foot{display:flex; justify-content:space-between; margin-top:10px; padding-top:10px; border-top:1px solid var(--line-soft);}
   .dp-foot button{border:1px solid var(--line); background:var(--surface); border-radius:7px; font-size:13px; padding:7px 16px; cursor:pointer; color:var(--muted);}
@@ -893,13 +895,23 @@
           <button class="btn sm" id="postCsv" title="거래처를 골라 정산서를 화면으로 보고 인쇄·PDF 저장·CSV로 내보냅니다">📄 정산서</button>
           <button class="btn sm" onclick="window.print()">인쇄</button>
         </div>
-        <div style="display:flex; align-items:center; gap:8px; margin:12px 0;">
+        <div style="display:flex; align-items:center; gap:8px; margin:12px 0; position:relative;">
           <button class="btn ghost sm" id="postPrev">◀</button>
-          <b class="num" style="font-size:14.5px;" id="postLbl">-</b>
+          <b class="num" style="font-size:14.5px; cursor:pointer; border-bottom:1px dotted var(--muted);" id="postLbl"
+             title="클릭하면 달력이 열립니다">-</b>
           <button class="btn ghost sm" id="postNext">▶</button>
           <span class="spacer"></span>
           <input class="mini-input" id="postFilter" autocomplete="off"
                  placeholder="🔍 품목명·거래처명으로 검색" style="text-align:left; width:230px;">
+          <div id="postCalPop" style="display:none; position:absolute; top:34px; left:0; z-index:55;
+               background:var(--surface); border:1px solid var(--line); border-radius:10px;
+               padding:12px 14px; width:272px; box-shadow:0 14px 36px rgba(12,12,12,.2);">
+            <div class="calhead"><button class="btn ghost sm" id="poCalPrev">◀</button>
+              <span class="num" id="poCalLbl"></span><button class="btn ghost sm" id="poCalNext">▶</button></div>
+            <div class="dow"><span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span></div>
+            <div class="days num" id="poCalDays"></div>
+            <div class="callegend"><span><i class="dotg"></i>발주 있음</span></div>
+          </div>
         </div>
         <div id="postKpis" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;"></div>
         <div id="postBody"></div>
@@ -1100,9 +1112,9 @@
     <section class="screen" id="scr-ana">
       <div class="card" style="margin-bottom:14px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:12px 16px;">
         <span style="font-size:12px; font-weight:700; color:var(--muted);">기간</span>
-        <input type="text" readonly placeholder="📅 시작일" class="mini-input w num datepick" style="text-align:left" id="anaFrom">
+        <input type="text" readonly data-dots placeholder="📅 시작일" class="mini-input w num datepick" style="text-align:left" id="anaFrom">
         <span style="color:var(--faint)">~</span>
-        <input type="text" readonly placeholder="📅 종료일" class="mini-input w num datepick" style="text-align:left" id="anaTo">
+        <input type="text" readonly data-dots placeholder="📅 종료일" class="mini-input w num datepick" style="text-align:left" id="anaTo">
         <button class="btn sm" id="anaAll">전체 기간</button>
         <div class="tabs" id="anaAgg" style="border-bottom:0; margin-bottom:0;">
           <button class="on" data-agg="d">일별</button>
@@ -1321,12 +1333,22 @@
           <button class="btn sm" id="staffCsv" title="표를 CSV(엑셀) 파일로 저장">📄 엑셀(CSV)</button>
           <button class="btn sm" onclick="window.print()">인쇄</button>
         </div>
-        <div style="display:flex; align-items:center; gap:8px; margin:12px 0;">
+        <div style="display:flex; align-items:center; gap:8px; margin:12px 0; position:relative;">
           <button class="btn ghost sm" id="staffPrev">◀</button>
-          <b class="num" style="font-size:14.5px;" id="staffLbl">-</b>
+          <b class="num" style="font-size:14.5px; cursor:pointer; border-bottom:1px dotted var(--muted);" id="staffLbl"
+             title="클릭하면 달력이 열립니다 (근무한 날 점 표시)">-</b>
           <button class="btn ghost sm" id="staffNext">▶</button>
           <span class="spacer"></span>
           <input class="mini-input" id="staffFilter" autocomplete="off" placeholder="🔍 이름으로 검색" style="text-align:left; width:180px;">
+          <div id="staffCalPop" style="display:none; position:absolute; top:34px; left:0; z-index:55;
+               background:var(--surface); border:1px solid var(--line); border-radius:10px;
+               padding:12px 14px; width:272px; box-shadow:0 14px 36px rgba(12,12,12,.2);">
+            <div class="calhead"><button class="btn ghost sm" id="staffCalPrev">◀</button>
+              <span class="num" id="staffCalLbl"></span><button class="btn ghost sm" id="staffCalNext">▶</button></div>
+            <div class="dow"><span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span></div>
+            <div class="days num" id="staffCalDays"></div>
+            <div class="callegend"><span><i class="dotg"></i>근무 있음</span></div>
+          </div>
         </div>
         <div id="staffKpis" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;"></div>
         <p class="hint" style="margin:0 0 6px;">개인별 투입시간이 입력되지 않은 날은 라인 실가동시간으로 계산됩니다 · 노무비 = 근무시간 × 시급</p>
@@ -1477,7 +1499,7 @@
     <!-- 원료 수불부 도구 (raw 탭 전용) -->
     <div id="ledgerRawTools" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
       <button class="btn sm" id="ledgerPrevBtn" title="기록 있는 이전 날짜">◀</button>
-      <input type="text" readonly class="datepick" id="ledgerDate" placeholder="📅 날짜" style="font-size:13px; padding:4px 8px; border:1px solid var(--line); border-radius:8px; width:130px; text-align:left; cursor:pointer;">
+      <input type="text" readonly data-dots class="datepick" id="ledgerDate" placeholder="📅 날짜" style="font-size:13px; padding:4px 8px; border:1px solid var(--line); border-radius:8px; width:130px; text-align:left; cursor:pointer;">
       <button class="btn sm" id="ledgerNextBtn" title="기록 있는 다음 날짜">▶</button>
       <button class="btn sm" id="ledgerTodayBtn">오늘</button>
       <label style="font-size:12px; display:flex; align-items:center; gap:4px; cursor:pointer;" title="체크하면 사용/입고가 없는 자재·제품도 모두 표시 (빈 양식 인쇄용)">
@@ -1496,7 +1518,7 @@
     <!-- 완제품 수불부 도구 (fin 탭 전용) -->
     <div id="ledgerFinTools" style="display:none; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
       <button class="btn sm" id="finPrevBtn" title="기록 있는 이전 날짜">◀</button>
-      <input type="text" readonly class="datepick" id="finDate" placeholder="📅 날짜" style="font-size:13px; padding:4px 8px; border:1px solid var(--line); border-radius:8px; width:130px; text-align:left; cursor:pointer;">
+      <input type="text" readonly data-dots class="datepick" id="finDate" placeholder="📅 날짜" style="font-size:13px; padding:4px 8px; border:1px solid var(--line); border-radius:8px; width:130px; text-align:left; cursor:pointer;">
       <button class="btn sm" id="finNextBtn" title="기록 있는 다음 날짜">▶</button>
       <button class="btn sm" id="finTodayBtn">오늘</button>
       <label style="font-size:12px; display:flex; align-items:center; gap:4px; cursor:pointer;" title="체크하면 생산·출고가 없는 제품도 모두 표시 (빈 양식 인쇄용)">
