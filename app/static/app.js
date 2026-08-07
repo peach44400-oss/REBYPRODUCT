@@ -8084,6 +8084,7 @@ async function openAdmin() {
   $("updMsg").textContent = "";
   UPD.latest = null;
   loadBackups();
+  loadBackupSettings();
   loadTunnel();
   updCheck(true);   // 열 때 조용히 현재 버전 표시(있으면 새 버전도)
 }
@@ -8338,6 +8339,28 @@ $("updApply").onclick = async () => {
     $("updApply").disabled = false;
     $("updMsg").textContent = "⚠ 업데이트 실패 — 기존 버전이 그대로 유지됩니다";
   }
+};
+async function loadBackupSettings() {
+  try {
+    const s = await api("/api/backupsettings");
+    $("bkDir").value = s.custom ? s.dir : "";
+    $("bkDir").placeholder = "기본 백업 폴더 (" + s.default_dir + ")";
+    $("bkInterval").value = s.interval_hours;
+    $("bkKeep").value = s.keep_days;
+    $("bkDirNow").textContent = "현재 저장 위치: " + s.dir + (s.custom ? "" : " (기본)");
+  } catch (e) { /* api 토스트 */ }
+}
+$("bkSaveCfg").onclick = async () => {
+  const body = { dir: $("bkDir").value.trim(),
+    interval_hours: Number($("bkInterval").value.replace(/,/g, "")) || 0,
+    keep_days: Number($("bkKeep").value.replace(/,/g, "")) || 0 };
+  try {
+    const r = await api("/api/backupsettings", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    toast("백업 설정을 저장했습니다");
+    $("bkDirNow").textContent = "현재 저장 위치: " + r.dir;
+    loadBackups();
+  } catch (e) { /* api 토스트 */ }
 };
 async function loadBackups() {
   const list = await api("/api/backups");

@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.61.1"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.62.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -978,39 +978,78 @@ def day_photo_del(pid: int):
 
 
 # ── 백업 / 복원 / 데이터 점검 / 변경 이력 (관리 도구) ──────────
-def do_backup(tag="자동백업"):
-    """sqlite3 온라인 백업 API — 사용 중(WAL)에도 안전하게 스냅샷."""
+def backup_dir():
+    """백업 저장 폴더 — 관리에서 지정한 경로(구글/네이버 드라이브 동기화 폴더 등)가 있으면 그걸, 없으면 기본 백업 폴더.
+    지정 경로를 만들 수 없으면 안전하게 기본 폴더로 되돌린다."""
+    d = get_app_setting("backup_dir", "")
+    if d:
+        try:
+            p = Path(d)
+            p.mkdir(parents=True, exist_ok=True)
+            return p
+        except Exception:
+            pass
     BACKUP_DIR.mkdir(exist_ok=True)
+    return BACKUP_DIR
+
+
+def _cleanup_backups(bdir):
+    """보관 기간(일)이 지난 '자동백업'만 삭제 — 수동백업·복원전·업데이트전 스냅샷은 유지.
+    보관 기간 0이면 삭제하지 않음(무제한 보관)."""
+    try:
+        keep_days = int(float(get_app_setting("backup_keep_days", "30") or 30))
+    except ValueError:
+        keep_days = 30
+    if keep_days <= 0:
+        return
+    cutoff = dt.datetime.now() - dt.timedelta(days=keep_days)
+    for p in bdir.glob("자동백업_*.db"):
+        try:
+            if dt.datetime.fromtimestamp(p.stat().st_mtime) < cutoff:
+                p.unlink()
+        except OSError:
+            pass
+
+
+def do_backup(tag="자동백업"):
+    """sqlite3 온라인 백업 API — 사용 중(WAL)에도 안전하게 스냅샷. 지정 폴더에 저장."""
+    bdir = backup_dir()
     name = f"{tag}_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
     src = connect()
     try:
-        dest = sqlite3.connect(str(BACKUP_DIR / name))
+        dest = sqlite3.connect(str(bdir / name))
         try:
             src.backup(dest)
         finally:
             dest.close()
     finally:
         src.close()
-    # 자동백업만 최근 30개 보관 (수동백업·복원전 스냅샷·기존 백업 파일은 안 지움)
-    autos = sorted(BACKUP_DIR.glob("자동백업_*.db"))
-    for p in autos[:-30]:
-        try:
-            p.unlink()
-        except OSError:
-            pass
+    _cleanup_backups(bdir)
     return name
 
 
 def _backup_scheduler():
-    """1시간마다 확인 — 오늘자 자동백업이 없으면 생성 (기동 직후 1회 포함)."""
+    """설정한 주기(시간)마다 자동백업 — 가장 최근 자동백업이 주기보다 오래됐으면 새로 생성.
+    주기 0이면 자동백업 끔. 보관 기간은 do_backup 안에서 적용."""
     while True:
         try:
-            today = dt.date.today().strftime("%Y%m%d")
-            if not list(BACKUP_DIR.glob(f"자동백업_{today}_*.db")):
-                do_backup()
+            try:
+                interval = float(get_app_setting("backup_interval_hours", "24") or 24)
+            except ValueError:
+                interval = 24.0
+            if interval > 0:
+                bdir = backup_dir()
+                autos = sorted(bdir.glob("자동백업_*.db"), key=lambda x: x.stat().st_mtime)
+                due = True
+                if autos:
+                    last = dt.datetime.fromtimestamp(autos[-1].stat().st_mtime)
+                    due = (dt.datetime.now() - last).total_seconds() >= interval * 3600
+                if due:
+                    do_backup()
+                _cleanup_backups(backup_dir())   # 주기 도래 전에도 오래된 건 정리
         except Exception:
             pass
-        time.sleep(3600)
+        time.sleep(600)   # 10분마다 확인
 
 
 def _backfill_matin_po():
@@ -1121,13 +1160,55 @@ def _alert_scheduler():
 @app.get("/api/backups")
 def backups_list(request: Request):
     require_admin(request)
-    BACKUP_DIR.mkdir(exist_ok=True)
+    bdir = backup_dir()
     out = []
-    for p in sorted(BACKUP_DIR.glob("*.db"), key=lambda x: x.stat().st_mtime, reverse=True):
+    for p in sorted(bdir.glob("*.db"), key=lambda x: x.stat().st_mtime, reverse=True):
         st = p.stat()
         out.append({"name": p.name, "size": st.st_size,
                     "at": dt.datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M")})
     return out
+
+
+@app.get("/api/backupsettings")
+def backup_settings_get(request: Request):
+    require_admin(request)
+    try:
+        interval = float(get_app_setting("backup_interval_hours", "24") or 24)
+    except ValueError:
+        interval = 24.0
+    try:
+        keep = int(float(get_app_setting("backup_keep_days", "30") or 30))
+    except ValueError:
+        keep = 30
+    return {"dir": get_app_setting("backup_dir", "") or str(BACKUP_DIR),
+            "default_dir": str(BACKUP_DIR), "custom": bool(get_app_setting("backup_dir", "")),
+            "interval_hours": interval, "keep_days": keep}
+
+
+@app.post("/api/backupsettings")
+def backup_settings_save(request: Request, body: dict):
+    require_admin(request)
+    d = (body.get("dir") or "").strip()
+    # 기본 폴더와 같으면 '지정 안 함'으로 저장 (기본 폴더 사용)
+    if d and d != str(BACKUP_DIR):
+        try:
+            Path(d).mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            raise HTTPException(400, f"백업 폴더를 만들 수 없습니다: {e}")
+        set_app_setting("backup_dir", d)
+    else:
+        set_app_setting("backup_dir", "")
+    try:
+        interval = max(0.0, float(body.get("interval_hours") or 0))
+    except (TypeError, ValueError):
+        interval = 24.0
+    try:
+        keep = max(0, int(float(body.get("keep_days") or 0)))
+    except (TypeError, ValueError):
+        keep = 30
+    set_app_setting("backup_interval_hours", str(interval))
+    set_app_setting("backup_keep_days", str(keep))
+    return {"ok": True, "dir": str(backup_dir())}
 
 
 @app.post("/api/backup")
@@ -1149,7 +1230,7 @@ def backup_restore(request: Request, body: dict):
     name = body.get("name") or ""
     if "/" in name or "\\" in name or ".." in name or not name.endswith(".db"):
         raise HTTPException(400, "잘못된 백업 파일명입니다")
-    path = BACKUP_DIR / name
+    path = backup_dir() / name
     if not path.exists():
         raise HTTPException(404, "백업 파일이 없습니다")
     safety = do_backup("복원전")   # 복원 직전 상태도 남김 — 복원 자체를 되돌릴 수 있게
@@ -1465,21 +1546,35 @@ def update_apply(request: Request):
         do_backup("업데이트전백업")
     except Exception:
         pass
-    # 교체 배치: 이 exe가 종료되길 기다렸다 새 파일로 바꾸고 재실행 후 자기 삭제
+    # 교체 배치: 이 exe가 종료되길 기다렸다 새 파일로 바꾸고 재실행 후 자기 삭제.
+    #  교체 후 백신 스캔이 끝나도록 잠깐 대기 → 재실행. 실패해도 새 파일을 직접 실행하고 로그를 남긴다.
     bat = exe.with_name("_자동업데이트.bat")
     bat.write_text(
         "@echo off\r\n"
         "chcp 65001 >nul\r\n"
         "title 재고관리 업데이트\r\n"
+        'cd /d "%~dp0"\r\n'
+        'echo [%date% %time%] 업데이트 적용 시작 > "_업데이트로그.txt"\r\n'
         "echo 업데이트 적용 중 - 잠시만 기다려 주세요...\r\n"
-        ':wait\r\n'
-        f'move /y "{newexe.name}" "{exe.name}" >nul 2>&1\r\n'
-        "if errorlevel 1 (\r\n"
-        "  timeout /t 1 /nobreak >nul\r\n"
-        "  goto wait\r\n"
-        ")\r\n"
+        "timeout /t 2 /nobreak >nul\r\n"       # 실행 중이던 exe가 완전히 종료되도록 대기
+        "set N=0\r\n"
+        ":wait\r\n"
+        f'move /y "{newexe.name}" "{exe.name}" >> "_업데이트로그.txt" 2>&1\r\n'
+        "if not errorlevel 1 goto done\r\n"
+        "set /a N+=1\r\n"
+        "if %N% GEQ 40 goto fallback\r\n"      # 40초까지 재시도 (파일 잠김 대비)
+        "timeout /t 1 /nobreak >nul\r\n"
+        "goto wait\r\n"
+        ":done\r\n"
+        "timeout /t 2 /nobreak >nul\r\n"       # 교체 직후 백신 스캔 대기
+        f'echo [%date% %time%] 재실행 >> "_업데이트로그.txt"\r\n'
         f'start "" "{exe.name}"\r\n'
-        'del "%~f0"\r\n', encoding="utf-8")
+        'del "%~f0"\r\n'
+        "exit\r\n"
+        ":fallback\r\n"                          # 교체 실패 시: 새 버전 파일을 그대로 실행
+        f'echo [%date% %time%] 교체 실패 - 새 파일 직접 실행 >> "_업데이트로그.txt"\r\n'
+        f'start "" "{newexe.name}"\r\n'
+        "exit\r\n", encoding="utf-8")
 
     def _relaunch():
         import subprocess
