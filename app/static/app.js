@@ -4397,7 +4397,7 @@ $("mAdd").onclick = () => {
 function bomAddByName(name, blk = "반죽") {
   let hit = null;
   if (name) {
-    const all = M.raw.concat(M.sub);
+    const all = M.raw.concat(M.sub, M.semi || []);   // 반제품(🧫)도 배합비에 자재처럼 넣을 수 있어야 함
     hit = all.find(o => o.name === name);
     if (!hit) {
       const cands = all.filter(o => o.name.toLowerCase().includes(name.toLowerCase()));
