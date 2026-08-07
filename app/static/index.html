@@ -2019,6 +2019,19 @@
   </div>
 </div>
 
+<!-- 일일 입력 이탈 가드 — 저장 안 한 변경이 있을 때 -->
+<div class="overlay" id="leaveGuardOverlay">
+  <div class="modal" style="width:min(420px, 94vw);">
+    <h3>⚠️ 저장하지 않은 변경이 있습니다</h3>
+    <p class="hint">일일 입력에 저장하지 않은 내용이 있습니다. 저장하고 이동할까요?</p>
+    <div class="modal-foot" style="flex-wrap:wrap; gap:8px;">
+      <button class="btn" id="leaveCancel">취소</button>
+      <button class="btn" id="leaveDiscard" style="color:var(--crit);">저장 안 하고 이동</button>
+      <button class="btn primary" id="leaveSaveGo">저장하고 이동</button>
+    </div>
+  </div>
+</div>
+
 <!-- 로그인 -->
 <div id="loginOverlay" style="position:fixed; inset:0; z-index:100; background:var(--bg); display:none; align-items:center; justify-content:center;">
   <div style="width:330px; background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:28px 26px; box-shadow:0 20px 60px rgba(12,12,12,.12);">

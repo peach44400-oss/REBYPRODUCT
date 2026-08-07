@@ -96,8 +96,16 @@ function resetSearches() {
     if (clear) clear();
   });
 }
+let _navBypass = false;
 $("nav").addEventListener("click", e => {
   const b = e.target.closest("button[data-scr]"); if (!b) return;
+  // 일일 입력에서 저장 안 한 변경이 있으면, 다른 화면으로 넘어가기 전에 확인
+  const onEntry = document.querySelector(".screen.on")?.id === "scr-entry";
+  if (!_navBypass && onEntry && b.dataset.scr !== "entry" && E.dirty) {
+    openLeaveGuard(b.dataset.scr);
+    return;
+  }
+  _navBypass = false;
   document.querySelectorAll("#nav button").forEach(x => x.classList.toggle("on", x === b));
   document.querySelectorAll(".screen").forEach(s => s.classList.toggle("on", s.id === "scr-" + b.dataset.scr));
   $("scrTitle").textContent = TITLES[b.dataset.scr];
@@ -115,6 +123,25 @@ document.addEventListener("click", e => {
   const nb = document.querySelector(`#nav button[data-scr="${g.dataset.goscr}"]`);
   if (nb) nb.click();
 });
+// 일일 입력 이탈 가드 — 저장 안 한 변경이 있을 때 [저장하고 이동]/[저장 안 함]/[취소]
+function navGoScr(scr) { _navBypass = true; document.querySelector(`#nav button[data-scr="${scr}"]`).click(); }
+async function saveEntryDirect() {   // 현재 탭 저장(요약 모달 없이) → 성공 시 true
+  const build = (typeof entryTab !== "undefined" && entryTab === "stock") ? buildStockBody : buildProdBody;
+  const label = (typeof entryTab !== "undefined" && entryTab === "stock") ? "재고·입고" : "생산 입력";
+  const body = build();
+  if (!body) return false;   // 검증 실패 — 그대로 머무름
+  await saveDayBody(body, label);
+  return !E.dirty;           // 저장 성공 시 loadDay가 E.dirty=false로 만듦
+}
+function openLeaveGuard(scr) {
+  $("leaveGuardOverlay").classList.add("on");
+  $("leaveSaveGo").onclick = async () => {
+    $("leaveGuardOverlay").classList.remove("on");
+    if (await saveEntryDirect()) navGoScr(scr);
+  };
+  $("leaveDiscard").onclick = () => { $("leaveGuardOverlay").classList.remove("on"); E.dirty = false; navGoScr(scr); };
+  $("leaveCancel").onclick = () => $("leaveGuardOverlay").classList.remove("on");
+}
 
 /* ── Chart.js 설정 (martin_data 대시보드 방식, 로컬 번들) ── */
 Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
@@ -1143,6 +1170,12 @@ async function loadDay(date) {
   renderEntryViewers();
   await ensureBomAll();   // 자재 사용의 블록 판정·배합수 역산에 배합비 필요
   renderAll();
+  E.dirty = false;   // 막 불러온 상태 = 저장된 상태 (사용자가 입력하면 아래 리스너가 true로)
+}
+// 일일 입력 화면에서 사용자가 값을 바꾸면 '미저장' 표시 — 다른 화면 이동 시 저장 여부 확인에 사용
+if ($("scr-entry")) {
+  $("scr-entry").addEventListener("input", () => { if (!SAVING) E.dirty = true; });
+  $("scr-entry").addEventListener("change", () => { if (!SAVING) E.dirty = true; });
 }
 /* ── 저장된 값 스냅샷 — 숫자칸 수정 시 '이전 저장값'을 보여주기 위함 ──
    서버에서 막 불러온 값이 곧 '마지막 저장값'이므로 DB에 따로 기록할 필요가 없다.
@@ -2822,8 +2855,9 @@ async function saveDayBody(body, label, force) {
     SAVING = false;
   }
 }
-$("btnSaveDay").onclick = async () => {           // 생산 입력 탭
-  if (!mustDate()) return;
+// 생산 입력 탭 — 검증 통과 시 저장 body 반환, 실패 시 null(+토스트)
+function buildProdBody() {
+  if (!mustDate()) return null;
   const bad = badNumIn(E.prod, ["batches", "plan_qty", "prod_qty", "defect_qty"], "생산실적")
     || badNumIn(E.ship, ["qty"], "완제품 출고")
     || badNumIn(E.usage, ["qty"], "자재 사용")
@@ -2834,7 +2868,7 @@ $("btnSaveDay").onclick = async () => {           // 생산 입력 탭
     || negNumIn(E.prod, ["batches", "plan_qty", "prod_qty", "defect_qty"], "생산실적")
     || negNumIn(E.ship, ["qty"], "완제품 출고")
     || negNumIn(E.usage, ["qty"], "자재 사용");
-  if (bad) return toast("⚠ " + bad + " — 고친 뒤 저장하세요");
+  if (bad) { toast("⚠ " + bad + " — 고친 뒤 저장하세요"); return null; }
   // 불량 > 생산 차단 (양품이 음수가 됨)
   for (const r of E.prod) {
     if (!r.product_id) continue;
@@ -2842,7 +2876,7 @@ $("btnSaveDay").onclick = async () => {           // 생산 입력 탭
     const defect = Number(String(r.defect_qty).replace(/,/g, "")) || 0;
     if (defect - prod > 0.5) {
       const p = productById(r.product_id);
-      return toast(`⚠ '${p ? p.name : "?"}' 불량 ${NF(defect)}개가 생산 ${NF(prod)}개보다 많습니다`);
+      toast(`⚠ '${p ? p.name : "?"}' 불량 ${NF(defect)}개가 생산 ${NF(prod)}개보다 많습니다`); return null;
     }
   }
   // 출고 재고 초과 차단
@@ -2851,7 +2885,7 @@ $("btnSaveDay").onclick = async () => {           // 생산 입력 탭
     const avail = shipAvail(+pid);
     if (ssum[pid] - avail > 0.5) {
       const p = productById(+pid);
-      return toast(`⚠ '${p ? p.name : pid}' 출고량 ${NF(ssum[pid])}개가 가용 재고 ${NF(avail)}개를 초과합니다`);
+      toast(`⚠ '${p ? p.name : pid}' 출고량 ${NF(ssum[pid])}개가 가용 재고 ${NF(avail)}개를 초과합니다`); return null;
     }
   }
   const body = {
@@ -2881,16 +2915,18 @@ $("btnSaveDay").onclick = async () => {           // 생산 입력 탭
       batches: Number(String(r.batches ?? "").replace(/,/g, "")) || 0,
       qty: Number(String(r.qty ?? "").replace(/,/g, "")) || 0 })),
   };
-  showSaveSum(body, "생산 입력");   // 저장 전 요약 확인 → 확인 시 저장
-};
-$("btnSaveStock").onclick = async () => {         // 재고 · 입고 탭
-  if (!mustDate()) return;
+  return body;
+}
+$("btnSaveDay").onclick = () => { const body = buildProdBody(); if (body) showSaveSum(body, "생산 입력"); };
+// 재고·입고 탭 — 검증 통과 시 body 반환 (실재고 빈 실사 행 제외 안내 포함)
+function buildStockBody() {
+  if (!mustDate()) return null;
   const bad = badNumIn(E.mat, ["prev_qty", "in_qty", "real_qty", "order_qty"], "재고 실사")
     || badNumIn(E.matIn, ["qty"], "원부자재 입고")
     || negNumIn(E.matIn, ["qty"], "원부자재 입고")   // 실사(E.mat)는 정정 신호일 수 있어 음수 허용
     || badNumIn(E.matIn, ["price"], "입고 단가")
     || negNumIn(E.matIn, ["price"], "입고 단가");
-  if (bad) return toast("⚠ " + bad + " — 고친 뒤 저장하세요");
+  if (bad) { toast("⚠ " + bad + " — 고친 뒤 저장하세요"); return null; }
   const body = {
     // 실재고가 빈 실사 행은 제외 — 0으로 저장돼 재고가 통째로 사용 처리되는 사고 방지
     materials: E.mat.filter(r => r.material_id
@@ -2901,8 +2937,9 @@ $("btnSaveStock").onclick = async () => {         // 재고 · 입고 탭
   };
   const skipped = E.mat.filter(r => r.material_id).length - body.materials.length;
   if (skipped > 0) toast(`실재고가 빈 실사 행 ${skipped}건은 저장에서 제외됩니다`);
-  await saveDayBody(body, "재고·입고");
-};
+  return body;
+}
+$("btnSaveStock").onclick = async () => { const body = buildStockBody(); if (body) await saveDayBody(body, "재고·입고"); };
 
 /* 정지사유 모달 */
 let stopIdx = -1;
@@ -7413,7 +7450,9 @@ function renderStaffLedger() {
   const body = d.staff.map(s => `<tr>
     <td style="${TD} ${nameCol} z-index:1;">${esc(s.name)}</td>
     ${dates.map(dt => { const c = s.cells[dt];
-      return `<td style="${TD}${c ? " font-weight:700;" : " color:#ccc;"}"${c && c.s ? ` title="${esc(c.s)}~${esc(c.e || "?")}"` : ""}>${c ? h1(c.h) : "·"}</td>`; }).join("")}
+      if (!c) return `<td style="${TD} color:#ccc;">·</td>`;
+      const time = c.s ? `<div style="font-size:8.5px; color:#888; font-weight:400; white-space:nowrap;">${esc(c.s)}~${esc(c.e || "?")}</div>` : "";
+      return `<td style="${TD} font-weight:700;">${h1(c.h)}${time}</td>`; }).join("")}
     <td style="${TD} font-weight:600;">${s.days}</td>
     <td style="${TD} font-weight:700;">${h1(s.hours)}</td>${money ? `<td style="${TD}">${NF(s.labor)}</td>` : ""}</tr>`).join("");
   const totRow = `<tr style="font-weight:800; background:var(--bg);">
