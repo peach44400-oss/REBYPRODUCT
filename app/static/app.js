@@ -5747,7 +5747,7 @@ function buildFinLedgerDoc(d) {
       return `<div style="white-space:nowrap;"><b>${exp}</b> <span style="color:#777;">(생산 ${esc(made)} · ${NFv(l.qty)}${pk})</span></div>`;
     }).join("") || '<span style="color:#aaa;">—</span>';
     const nameCell = r.partner
-      ? `<td style="${TD} text-align:left; white-space:normal; padding-left:16px;">${CB}${esc(r.name)}</td>`
+      ? `<td style="${TD} text-align:left; white-space:normal;">${CB}${esc(r.name)}</td>`
       : `<td style="${TD} text-align:left; font-weight:600; white-space:normal;">${CB}${esc(r.name)}</td>`;
     return `<tr>
       ${nameCell}
