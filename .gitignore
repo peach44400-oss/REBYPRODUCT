@@ -38,3 +38,6 @@ __pycache__/
 
 # 배포 대상 지정(각 PC별) — 커밋 안 함
 update_url.txt
+
+_업데이트로그.txt
+_자동업데이트.bat
