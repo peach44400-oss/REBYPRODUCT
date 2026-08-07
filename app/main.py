@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.51.2"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.52.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -4420,18 +4420,21 @@ def day_save(request: Request, date: str, body: dict):
                     if ing["q"]:
                         con.execute("""INSERT OR REPLACE INTO semi_usage(date, semi_id, product_id, qty)
                             VALUES(?,?,?,?)""", (date, ing["semi_id"], pid, ing["q"] * batches))
-        # ── 반제품 생산 (완제품 생산실적과 분리) — 배합수 × 1배합당 생산수량 = 재고 증가 ──
+        # ── 반제품 생산 (완제품 생산실적과 분리) — 생산량(qty)만큼 반제품 재고 증가(원재료처럼) ──
+        # qty = 실제 만든 양(kg 등, 반제품 단위). 프론트에서 직접 입력하거나 배합수×1배합당생산량으로 자동.
         if "semi_prod" in body:
             con.execute("DELETE FROM semi_production WHERE date=?", (date,))
             for r in body.get("semi_prod", []):
                 sid = r.get("semi_id")
                 batches = float(r.get("batches") or 0)
-                if not sid or batches <= 0:
+                qty = float(r.get("qty") or 0)
+                if not sid or (batches <= 0 and qty <= 0):
                     continue
-                by = con.execute("SELECT batch_yield FROM product WHERE id=?", (sid,)).fetchone()
-                yield_ = float((by["batch_yield"] if by else 0) or 0)
+                if qty <= 0:   # 생산량 미입력 → 배합수 × 1배합당 생산량으로 폴백
+                    by = con.execute("SELECT batch_yield FROM product WHERE id=?", (sid,)).fetchone()
+                    qty = batches * float((by["batch_yield"] if by else 0) or 0)
                 con.execute("INSERT INTO semi_production(date, semi_id, batches, qty) VALUES(?,?,?,?)",
-                            (date, sid, batches, batches * yield_))
+                            (date, sid, batches, qty))
         if "shipment" in body:
             # 재고 초과 검증: 제품별 그날 출고 합 ≤ 그날 제외 가용재고 (기초+생산−다른날출고−폐기)
             affected_pids |= {r["product_id"] for r in con.execute(
