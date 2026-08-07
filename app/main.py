@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.59.1"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.60.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -3217,6 +3217,36 @@ def master_create(mtype: str, body: dict):
     try:
         if mtype == "line":
             _check_line_parent(con, vals.get("parent_id"))
+        # 반제품 등록 시 같은 이름의 자재가 이미 있으면 → 그 자재를 반제품으로 전환(재고·배합비 참조 유지).
+        #  같은 이름 원/부재료가 있는데 새로 넣으면 UNIQUE(kind,name) 위반으로 500 → 전환으로 우회.
+        if mtype == "semi":
+            exist = con.execute(
+                "SELECT id, unit, COALESCE(is_semi,0) is_semi FROM material WHERE name=? "
+                "ORDER BY (kind='raw') DESC, id LIMIT 1", (vals["name"],)).fetchone()
+            if exist:
+                if int(exist["is_semi"]) == 1:
+                    raise HTTPException(400, f"이미 같은 이름의 반제품 '{vals['name']}'이(가) 있습니다")
+                if not body.get("convert_existing"):
+                    # 프론트에 전환 확인 요청 (409) — 기존 자재 정보를 함께 전달
+                    raise HTTPException(409, {"code": "semi_exists", "id": exist["id"],
+                                             "unit": exist["unit"] or "", "name": vals["name"]})
+                # 전환: 단위·재고는 그대로 두고 is_semi=1 + 1배합당 생산량(기존 단위로 환산)만 반영
+                eu = (exist["unit"] or "").lower(); fu = (body.get("unit") or "").lower()
+                by = float(body.get("batch_yield") or 0)
+                if fu == "g" and eu == "kg":
+                    by /= 1000
+                elif fu == "kg" and eu == "g":
+                    by *= 1000
+                upd = {"is_semi": 1, "batch_yield": by}
+                for c in ("spec", "unit_price", "safety_stock", "shelf_days", "status", "note"):
+                    if body.get(c) not in (None, ""):
+                        upd[c] = body.get(c)
+                setc = ",".join(f"{k}=?" for k in upd)
+                con.execute(f"UPDATE material SET {setc} WHERE id=?", (*upd.values(), exist["id"]))
+                audit(con, "convert_semi", f"자재#{exist['id']} '{vals['name']}' 반제품 전환 (재고·단위 유지)")
+                bump_masters()
+                con.commit()
+                return {"id": exist["id"], "converted": True}
         ks = ",".join(vals)
         qs = ",".join("?" * len(vals))
         cur = con.execute(f"INSERT INTO {table}({ks}) VALUES({qs})", list(vals.values()))

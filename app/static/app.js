@@ -4681,7 +4681,25 @@ $("mstSave").onclick = async () => {
   delete body.pack_set;   // 읽기 전용 표시 필드 — 세트는 pack_set_member(전용 팝업)가 정본
   const priceInputs = [...document.querySelectorAll("#mstForm [data-pprice]")];
   let res = null;
-  if (mstEdit.id) res = await api(`/api/masters/${t}/${mstEdit.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (t === "semi" && !mstEdit.id) {
+    // 반제품 신규 등록 — 같은 이름의 자재가 있으면 서버가 409로 '전환할까요?'를 물어온다
+    const post = b => fetch("/api/masters/semi", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) });
+    const errToast = async r => { let m = await r.text(); try { m = JSON.parse(m).detail || m; } catch (e) { } toast(String(m).slice(0, 180)); };
+    let r = await post(body);
+    if (r.status === 409) {
+      let d = {}; try { d = JSON.parse(await r.text()).detail || {}; } catch (e) { }
+      if (d.code === "semi_exists") {
+        if (!confirm(`이미 '${d.name}'(자재, 단위 ${d.unit || "?"})가 등록돼 있습니다.\n\n이 자재를 '반제품'으로 전환할까요?\n· 재고와 배합비 연결은 그대로 유지됩니다\n· 1배합당 생산량은 ${d.unit || ""} 기준으로 저장됩니다`)) return;
+        r = await post({ ...body, convert_existing: true });
+        if (!r.ok) return errToast(r);
+        closeMaster(); await reloadMaster("semi"); renderMasters();
+        return toast("기존 자재를 반제품으로 전환했습니다");
+      }
+    }
+    if (!r.ok) return errToast(r);
+    res = await r.json();
+  } else if (mstEdit.id) res = await api(`/api/masters/${t}/${mstEdit.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   else res = await api(`/api/masters/${t}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   // 거래처별 판매 단가 (제품 수정 시에만 폼에 있음)
   if (t === "product" && mstEdit.id && priceInputs.length) {
