@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.60.1"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.61.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -5058,7 +5058,7 @@ def fin_ledger(request: Request, date: str = ""):
     try:
         products = rows(con.execute("""
             SELECT p.id, p.name, p.category, p.spec, COALESCE(p.fin_split,0) fin_split,
-                   COALESCE(os.qty,0) opening
+                   COALESCE(p.shelf_days,0) shelf_days, COALESCE(os.qty,0) opening
             FROM product p
             LEFT JOIN opening_stock os ON os.kind='product' AND os.ref_id=p.id
             WHERE COALESCE(p.is_semi,0)=0 AND p.status!='단종'
@@ -5102,6 +5102,34 @@ def fin_ledger(request: Request, date: str = ""):
         def lot_out(l):
             return {"made": l["made"], "qty": l["qty"], "expiry": l["expiry"], "pack": lot_pack(l)}
 
+        # 오늘 출고를 제품·거래처·생산일자·소비기한별로 모아 '출고 소비기한(생산일자)' 표시에 사용
+        raw_ship = {}
+        for r in con.execute("""SELECT product_id pid, partner_id sp,
+                COALESCE(prod_date,'') made, COALESCE(expiry,'') exp, qty
+            FROM shipment WHERE date=? AND qty>0""", (date,)):
+            raw_ship.setdefault(r["pid"], []).append(
+                (r["sp"], r["made"], r["exp"], float(r["qty"])))
+
+        def ship_lots_for(pid, shelf, want=None, exclude=None):
+            """그날 출고분을 (생산일자, 소비기한)별로 합산 — 소비기한 미지정분은 생산일+제품 소비일로 추정."""
+            agg = {}
+            for sp, made, exp, q in raw_ship.get(pid, []):
+                if want is not None and sp != want:
+                    continue
+                if exclude is not None and sp in exclude:
+                    continue
+                e = exp
+                if not e and made and shelf:
+                    try:
+                        e = (dt.date.fromisoformat(made) + dt.timedelta(days=int(shelf))).isoformat()
+                    except ValueError:
+                        e = ""
+                key = (made, e)
+                agg[key] = agg.get(key, 0.0) + q
+            return [{"made": k[0], "expiry": k[1], "qty": round(v, 3)}
+                    for k, v in sorted(agg.items())]
+
+        tot_prev = tot_prod = tot_ship = tot_stock = 0.0   # 전체 합계
         out = []
         for p in products:
             pid = p["id"]
@@ -5112,10 +5140,13 @@ def fin_ledger(request: Request, date: str = ""):
                 raw_lots = [l for l in current_lots(con, pid, date)["lots"] if l.get("qty", 0) > 0.0001]
             except Exception:
                 raw_lots = []
+            shelf = p["shelf_days"]
+            tot_prev += prev; tot_prod += tp; tot_ship += ts; tot_stock += stock   # 전체 합계 누적
             base = {"id": pid, "name": p["name"], "category": p["category"] or "",
                     "spec": p["spec"] or "", "prev": round(prev, 3), "prod": round(tp, 3),
                     "ship": round(ts, 3), "disp": round(td, 3), "stock": round(stock, 3),
-                    "lots": [lot_out(l) for l in raw_lots], "moved": bool(tp or ts or td)}
+                    "lots": [lot_out(l) for l in raw_lots],
+                    "ship_lots": ship_lots_for(pid, shelf), "moved": bool(tp or ts or td)}
 
             # 이 제품의 '거래처 분리 표시'가 켜져 있으면(fin_split=1) 배분된 모든 거래처를 '거래처명 제품명' 행으로 분리
             grp_lots = {}
@@ -5145,19 +5176,22 @@ def fin_ledger(request: Request, date: str = ""):
                     "category": p["category"] or "", "spec": p["spec"] or "",
                     "prev": prev_p, "prod": round(prod_p, 3), "ship": round(ship_p, 3), "disp": 0,
                     "stock": round(stock_p, 3), "lots": [lot_out(l) for l in glots],
+                    "ship_lots": ship_lots_for(pid, shelf, want=sp),
                     "moved": bool(prod_p or ship_p or stock_p or prev_p), "partner": True})
             # 잔여(거래처 미지정분) — 합계가 제품 전체와 맞도록 차감해서 산출
             res_prev = round(prev - sum_prev, 3); res_prod = round(tp - sum_prod, 3)
             res_ship = round(ts - sum_ship, 3); res_stock = round(stock - sum_stock, 3)
             res_lots = [lot_out(l) for l in raw_lots
                         if not (l.get("partner_id") in show_ids)]
+            res_ship_lots = ship_lots_for(pid, shelf, exclude=show_ids)
             out.extend(split_rows)
             if abs(res_prev) > 1e-6 or abs(res_prod) > 1e-6 or abs(res_ship) > 1e-6 \
-               or abs(res_stock) > 1e-6 or res_lots:
+               or abs(res_stock) > 1e-6 or res_lots or res_ship_lots:
                 out.append({"id": pid, "name": p["name"], "category": p["category"] or "",
                     "spec": p["spec"] or "", "prev": res_prev, "prod": res_prod,
                     "ship": res_ship, "disp": round(td, 3), "stock": res_stock,
-                    "lots": res_lots, "moved": bool(res_prod or res_ship or res_stock)})
+                    "lots": res_lots, "ship_lots": res_ship_lots,
+                    "moved": bool(res_prod or res_ship or res_stock)})
         prev_d = con.execute(
             "SELECT MAX(date) v FROM (SELECT date FROM production WHERE date<? "
             "UNION SELECT date FROM shipment WHERE date<?)", (date, date)).fetchone()["v"]
@@ -5165,7 +5199,9 @@ def fin_ledger(request: Request, date: str = ""):
             "SELECT MIN(date) v FROM (SELECT date FROM production WHERE date>? "
             "UNION SELECT date FROM shipment WHERE date>?)", (date, date)).fetchone()["v"]
         return {"date": date, "today": dt.date.today().isoformat(),
-                "rows": out, "prev": prev_d, "next": next_d}
+                "rows": out, "prev": prev_d, "next": next_d,
+                "totals": {"prev": round(tot_prev, 3), "prod": round(tot_prod, 3),
+                           "ship": round(tot_ship, 3), "stock": round(tot_stock, 3)}}
     finally:
         con.close()
 

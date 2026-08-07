@@ -4055,7 +4055,8 @@ function renderBomRows() {
       title="이 자재를 쓰는 납품처 지정 (여러 곳 선택 가능) — 일일입력 계획 거래처 분배와 연동">${pNames.length ? esc(pNames.join(", ")) : "공통"}</button></td>`;
     return `<tr data-bi="${i}">
       <td>${matSel(r.material_id, 'data-bf="material_id"')}</td>
-      <td>${m.kind ? `<span class="chip cat">${m.kind === "raw" ? "원재료" : "부재료"}</span>` : "—"}</td>
+      <td>${Number(m.is_semi) ? '<span class="chip cat" style="background:#efe7fb; color:#6b3fa0;">🧫 반제품</span>'
+        : (m.kind ? `<span class="chip cat">${m.kind === "raw" ? "원재료" : "부재료"}</span>` : "—")}</td>
       ${qtyCells}${extraCells}
       <td>${r.note ? `<button class="note-cell" data-bnote="${i}" title="클릭하면 전체 보기/편집">${esc(r.note)}</button>`
         : `<button class="note-cell auto" data-bnote="${i}">＋ 비고</button>`}</td>
@@ -5754,16 +5755,17 @@ function buildFinLedgerDoc(d) {
   const rows = (d.rows || []).filter(r => FINLED.showAll || r.moved || r.stock || r.prev);
   const TD = "border:1px solid #333; padding:3px 6px;";
   const hasSpec = rows.some(r => (r.spec || "").trim());   // 규격이 하나도 없으면 열 자체를 뺀다
-  const nCol = hasSpec ? 7 : 6;
+  const nCol = hasSpec ? 8 : 7;
   const CB = '<label class="lp-row-cb" title="인쇄 포함 (해제하면 이 행은 인쇄 안 됨)"><input type="checkbox" class="lp-row" checked></label>';
   const ED = 'class="lcell" contenteditable="true"';   // 임시 편집 가능 셀 (인쇄 전 수정용, 저장 안 됨)
+  // 소비기한(생산일자) 형식 — 소비기한을 앞에, 생산일자를 괄호로. 재고 LOT은 개입수도 함께 표시.
+  const lotFmt = (arr, withPack) => (arr || []).map(l => {
+    const made = l.made ? esc(l.made) : "미상";
+    const exp = l.expiry ? esc(l.expiry) : "—";
+    const pk = (withPack && l.pack) ? ` · ${NFv(l.pack)}개입` : "";
+    return `<div style="white-space:nowrap;"><b>${exp}</b>(<span style="color:#777;">${made}</span>) · ${NFv(l.qty)}${pk}</div>`;
+  }).join("") || '<span style="color:#aaa;">—</span>';
   const body = rows.map(r => {
-    const lots = (r.lots || []).map(l => {
-      const made = l.made ? esc(l.made) : "미상";                        // 생산일자 년도까지 표시
-      const exp = l.expiry ? esc(l.expiry) : "—";                       // 소비기한 년도까지 표시
-      const pk = l.pack ? ` · ${NFv(l.pack)}개입` : "";                  // 생산일자별 개입수
-      return `<div style="white-space:nowrap;"><b>${exp}</b> <span style="color:#777;">(생산 ${esc(made)} · ${NFv(l.qty)}${pk})</span></div>`;
-    }).join("") || '<span style="color:#aaa;">—</span>';
     const nameCell = r.partner
       ? `<td style="${TD} text-align:left; white-space:normal;">${CB}${esc(r.name)}</td>`
       : `<td style="${TD} text-align:left; font-weight:600; white-space:normal;">${CB}${esc(r.name)}</td>`;
@@ -5773,9 +5775,20 @@ function buildFinLedgerDoc(d) {
       <td style="${TD} text-align:right;" ${ED}>${NFv(r.prev)}</td>
       <td style="${TD} text-align:right; color:#0a7a2f; ${r.prod ? "font-weight:700;" : ""}" ${ED}>${r.prod ? NFv(r.prod) : ""}</td>
       <td style="${TD} text-align:right; color:#b3541e; ${r.ship ? "font-weight:700;" : ""}" ${ED}>${r.ship ? NFv(r.ship) : ""}</td>
+      <td style="${TD} text-align:left; font-size:10.5px; white-space:normal;" ${ED}>${r.ship ? lotFmt(r.ship_lots, false) : ""}</td>
       <td style="${TD} text-align:right; font-weight:700;" ${ED}>${NFv(r.stock)}</td>
-      <td style="${TD} text-align:left; font-size:10.5px; white-space:normal;" ${ED}>${lots}</td></tr>`;
+      <td style="${TD} text-align:left; font-size:10.5px; white-space:normal;" ${ED}>${lotFmt(r.lots, true)}</td></tr>`;
   }).join("") || `<tr><td style="${TD}" colspan="${nCol}" class="auto" style="padding:16px;">이 날짜에 생산·출고된 완제품이 없습니다 (전체 제품은 [전체 제품] 체크)</td></tr>`;
+  // 전체 합계 행
+  const t = d.totals || {};
+  const sumRow = rows.length ? `<tr style="background:#f2f3f5; font-weight:800;">
+      <td style="${TD} text-align:center;" colspan="${hasSpec ? 2 : 1}">전체 합계</td>
+      <td style="${TD} text-align:right;">${NFv(t.prev)}</td>
+      <td style="${TD} text-align:right; color:#0a7a2f;">${NFv(t.prod)}</td>
+      <td style="${TD} text-align:right; color:#b3541e;">${NFv(t.ship)}</td>
+      <td style="${TD}"></td>
+      <td style="${TD} text-align:right;">${NFv(t.stock)}</td>
+      <td style="${TD}"></td></tr>` : "";
   const dow = ["일", "월", "화", "수", "목", "금", "토"][new Date(d.date + "T00:00").getDay()];
   const TDm = "border:1px solid #333; padding:2px 6px; font-size:11px;";
   const approve = `<table style="border-collapse:collapse; display:inline-table;">
@@ -5794,10 +5807,12 @@ function buildFinLedgerDoc(d) {
   const HD = "border:1px solid #333; padding:4px 6px; background:#eef0f2; font-size:11.5px;";
   const head = `<thead><tr>
     <th style="${HD} text-align:left;">제 품 명</th>${hasSpec ? `<th style="${HD}">규격</th>` : ""}
-    <th style="${HD}">전일재고</th><th style="${HD}">금일생산</th><th style="${HD}">금일출고</th><th style="${HD}">금일재고</th>
-    <th style="${HD} text-align:left;">생산일자별 LOT · 소비기한</th></tr></thead>`;
+    <th style="${HD}">전일재고</th><th style="${HD}">금일생산</th><th style="${HD}">금일출고</th>
+    <th style="${HD} text-align:left;">출고 소비기한<br>(생산일자)</th>
+    <th style="${HD}">금일재고</th>
+    <th style="${HD} text-align:left;">소비기한<br>(생산일자)</th></tr></thead>`;
   const tbl = `<table style="border-collapse:collapse; width:100%; font-size:11.5px;">
-    ${head}<tbody>${body}</tbody></table>`;
+    ${head}<tbody>${body}${sumRow}</tbody></table>`;
   return `<div style="font-family:'Malgun Gothic',sans-serif; color:#111;">${header}${tbl}</div>`;
 }
 $("finAll").addEventListener("change", e => { FINLED.showAll = e.target.checked; renderFinLedger(); });
