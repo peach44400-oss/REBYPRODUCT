@@ -5742,7 +5742,7 @@ function buildFinLedgerDoc(d) {
   const nCol = hasSpec ? 8 : 7;
   const body = rows.map(r => {
     const lots = (r.lots || []).map(l => {
-      const made = l.made ? l.made.slice(5) : "미상";
+      const made = l.made ? esc(l.made) : "미상";                        // 생산일자 년도까지 표시
       const exp = l.expiry ? esc(l.expiry) : "—";                       // 소비기한 년도까지 표시
       const pk = l.pack ? ` · ${NFv(l.pack)}개입` : "";                  // 생산일자별 개입수
       return `<div style="white-space:nowrap;"><b>${exp}</b> <span style="color:#777;">(생산 ${esc(made)} · ${NFv(l.qty)}${pk})</span></div>`;
