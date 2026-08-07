@@ -5613,22 +5613,31 @@ function openLedger(date) {
   const d = date || todayISO();
   $("ledgerDate").value = d;
   FINLED.data = null;   // 재오픈 시 완제품 수불부도 새 날짜로 다시 로드
+  $("ledgerStaffTabBtn").style.display = (ROLE === "admin") ? "" : "none";   // 인원 수불부는 admin만
   $("ledgerOverlay").classList.add("on");
   setLedgerTab("raw");
   loadLedger(d);
 }
 window.closeLedger = () => $("ledgerOverlay").classList.remove("on");
-// 수불부 탭 전환 — 원료 수불부(raw) / 완제품 수불부(fin).
+// 수불부 탭 전환 — 원료(raw) / 완제품(fin) / 인원(staff).
 function setLedgerTab(tab) {
   [...$("ledgerTabs").children].forEach(b => b.classList.toggle("on", b.dataset.ltab === tab));
-  const raw = tab === "raw";
+  const raw = tab === "raw", fin = tab === "fin", staff = tab === "staff";
   $("ledgerRawTools").style.display = raw ? "flex" : "none";
-  $("ledgerFinTools").style.display = raw ? "none" : "flex";
+  $("ledgerFinTools").style.display = fin ? "flex" : "none";
+  $("ledgerStaffTools").style.display = staff ? "flex" : "none";
   $("ledgerBody").style.display = raw ? "" : "none";
-  $("ledgerFin").style.display = raw ? "none" : "";
+  $("ledgerFin").style.display = fin ? "" : "none";
+  $("ledgerStaff").style.display = staff ? "" : "none";
   const d = $("ledgerDate").value || todayISO();
-  if (!raw) loadFinLedger(d);                                      // 현재 날짜로 완제품 수불부 로드
-  else if (LEDGER.data && LEDGER.data.date !== d) loadLedger(d);   // 완제품 탭에서 바뀐 날짜 반영
+  if (fin) loadFinLedger(d);                                       // 현재 날짜로 완제품 수불부 로드
+  else if (staff) {                                                // 인원 수불부 — SLED을 이 탭 컨트롤로 연결
+    SLED.body = "ledgerStaff"; SLED.lbl = "ledgerStaffLbl"; SLED.tabs = "ledgerStaffTabs";
+    if (!SLED.date) SLED.date = todayISO();
+    if (SLED.mode === "d") SLED.mode = "m";                        // 수불부 탭은 기본 월별
+    loadStaffLedger();
+  }
+  else if (raw && LEDGER.data && LEDGER.data.date !== d) loadLedger(d);
 }
 $("ledgerTabs").addEventListener("click", e => {
   const b = e.target.closest("[data-ltab]"); if (b) setLedgerTab(b.dataset.ltab);
@@ -7346,10 +7355,11 @@ $("staffDayBody").addEventListener("click", e => {
 window.closeStaffDays = () => $("staffDayOverlay").classList.remove("on");
 
 // ── 전체 출퇴근 원장 (인원 × 근무한 날짜 × 근무시간) ──
-const SLED = { mode: "m", date: "", data: null, body: "staffLedgerBody" };
+const SLED = { mode: "m", date: "", data: null, body: "staffLedgerBody", lbl: "sledLbl", tabs: "sledTabs" };
+function sledUseModal() { SLED.body = "staffLedgerBody"; SLED.lbl = "sledLbl"; SLED.tabs = "sledTabs"; }
 $("staffLedgerBtn").onclick = () => {
   // 원장은 기본 '월별'로 연다(하루만 보면 열이 1개뿐이라 원장 의미가 약함) — 안에서 일/주/년 전환 가능
-  SLED.body = "staffLedgerBody";
+  sledUseModal();
   SLED.mode = (STAFF.mode === "w" || STAFF.mode === "y") ? STAFF.mode : "m";
   SLED.date = STAFF.date || todayISO();
   $("staffLedgerOverlay").classList.add("on");
@@ -7360,9 +7370,11 @@ async function loadStaffLedger() {
   try {
     SLED.data = await api(`/api/staffledger?mode=${SLED.mode}&date=${SLED.date}`);
     SLED.date = SLED.data.date;
-    [...$("sledTabs").children].forEach(b => b.classList.toggle("on", b.dataset.slm === SLED.mode));
+    const tabs = $(SLED.tabs || "sledTabs");
+    if (tabs) [...tabs.children].forEach(b => b.classList.toggle("on", b.dataset.slm === SLED.mode));
     const [a, b] = SLED.data.range;
-    $("sledLbl").textContent = SLED.mode === "d" ? `${SLED.date} (${dowOf(SLED.date)})`
+    const lbl = $(SLED.lbl || "sledLbl");
+    if (lbl) lbl.textContent = SLED.mode === "d" ? `${SLED.date} (${dowOf(SLED.date)})`
       : SLED.mode === "y" ? SLED.date.slice(0, 4) + "년"
       : SLED.mode === "m" ? SLED.date.slice(0, 7).replace("-", "년 ") + "월"
       : `${a} ~ ${b}`;
@@ -7374,8 +7386,9 @@ function renderStaffLedger() {
   const money = canM("labor");
   const h1 = n => NF(Math.round((n || 0) * 10) / 10);
   const dates = d.dates || [];
+  const bodyEl = $(SLED.body || "staffLedgerBody");
   if (!d.staff.length) {
-    $("staffLedgerBody").innerHTML = `<div class="auto" style="padding:20px; text-align:center;">이 기간 출근 기록이 없습니다 — 일일 입력 &gt; 인원·가동에서 기록하면 여기 모입니다</div>`;
+    bodyEl.innerHTML = `<div class="auto" style="padding:20px; text-align:center;">이 기간 출근 기록이 없습니다 — 일일 입력 &gt; 인원·가동에서 기록하면 여기 모입니다</div>`;
     return;
   }
   const TH = "border:1px solid var(--line-soft); padding:4px 6px; background:var(--bg); white-space:nowrap; font-size:11px; text-align:center;";
@@ -7396,11 +7409,12 @@ function renderStaffLedger() {
     ${dates.map(dt => { const t = d.date_tot[dt];
       return `<td style="${TD}">${t ? h1(t.h) : ""}<br><span class="auto" style="font-weight:400; font-size:9px;">${t ? t.n + "명" : ""}</span></td>`; }).join("")}
     <td style="${TD}"></td><td style="${TD}">${h1(d.grand_hours)}</td>${money ? `<td style="${TD}">${NF(d.grand_labor)}</td>` : ""}</tr>`;
-  $("staffLedgerBody").innerHTML = `<table style="border-collapse:collapse; width:100%;">
+  bodyEl.innerHTML = `<table style="border-collapse:collapse; width:100%;">
     <thead>${head}</thead><tbody class="num">${body}${totRow}</tbody></table>`;
 }
+function sledSetMode(m) { SLED.mode = m; loadStaffLedger(); }
 $("sledTabs").addEventListener("click", e => {
-  const b = e.target.closest("[data-slm]"); if (b) { SLED.mode = b.dataset.slm; loadStaffLedger(); }
+  const b = e.target.closest("[data-slm]"); if (b) sledSetMode(b.dataset.slm);
 });
 function sledStep(dir) {
   const dd = new Date((SLED.date || todayISO()) + "T00:00:00");
@@ -7412,14 +7426,22 @@ function sledStep(dir) {
 }
 $("sledPrev").onclick = () => sledStep(-1);
 $("sledNext").onclick = () => sledStep(1);
-$("sledPrintBtn").onclick = () => {
-  $("poPrintArea").innerHTML = `<div style="font-weight:800; font-size:15px; margin-bottom:6px;">전체 출퇴근 원장 · ${$("sledLbl").textContent}</div>` + $("staffLedgerBody").innerHTML;
+function sledPrint(bodyId, lblId) {
+  $("poPrintArea").innerHTML = `<div style="font-weight:800; font-size:15px; margin-bottom:6px;">인원 출퇴근 원장 · ${$(lblId).textContent}</div>` + $(bodyId).innerHTML;
   const st = document.createElement("style"); st.id = "ledgerPageStyle";
   st.textContent = "@page{size:A4 landscape; margin:7mm;} @media print{#poPrintArea{padding:0 !important;}}";
   document.head.appendChild(st); document.body.classList.add("po-print");
   const done = () => { document.body.classList.remove("po-print"); st.remove(); window.removeEventListener("afterprint", done); };
   window.addEventListener("afterprint", done); window.print(); setTimeout(done, 1500);
-};
+}
+$("sledPrintBtn").onclick = () => sledPrint("staffLedgerBody", "sledLbl");
+// 인원 수불부 탭(메인 수불부 모달) 컨트롤 — 같은 SLED 상태·함수 재사용
+$("ledgerStaffTabs").addEventListener("click", e => {
+  const b = e.target.closest("[data-slm]"); if (b) sledSetMode(b.dataset.slm);
+});
+$("lsPrev").onclick = () => sledStep(-1);
+$("lsNext").onclick = () => sledStep(1);
+$("lsPrintBtn").onclick = () => sledPrint("ledgerStaff", "ledgerStaffLbl");
 
 /* ══ LOT 관리 ═════════════════════════ */
 const LOT = { data: null, filter: "all", q: "", shipQ: "", openMap: {},   // openMap: 제품별 펼침 상태 (세션 유지)

@@ -1,5 +1,5 @@
 {
-  "version": "1.51.1",
+  "version": "1.51.2",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· [긴급 수정] 일부 PC에서 업데이트 후 'no such column: is_semi'로 시작이 안 되던 문제 해결(구 DB 자동 보강). · 달력 편의 개선 — 수불부·분석 날짜 달력에 데이터 있는 날 점 표시, 발주 현황·인원 관리도 날짜를 클릭하면 달력이 열립니다(인원은 근무한 날 점 표시)."
+  "notes": "· 수불부에 '인원 수불부' 탭 추가 — 원료·완제품 수불부 옆에서 전체 인원의 출퇴근(인원 × 날짜 × 근무시간)을 한 표로 보고 인쇄할 수 있습니다. (인원 관리 화면의 [전체 출퇴근 원장] 버튼과 같은 내용)"
 }
