@@ -699,9 +699,14 @@ def init_db() -> None:
     pcols = [r[1] for r in con.execute("PRAGMA table_info(product)")]
     if "image" not in pcols:
         con.execute("ALTER TABLE product ADD COLUMN image TEXT DEFAULT ''")
-    # 완제품 수불부 거래처 분리 표시 허용 (1=분리 가능/기본, 0=이 제품은 거래처가 표시여도 합쳐서 표시)
+    # 완제품 수불부 거래처 분리 표시 (0=미분리/기본, 1=이 제품은 거래처별 '거래처명 제품명' 행으로 분리)
     if "fin_split" not in pcols:
-        con.execute("ALTER TABLE product ADD COLUMN fin_split INTEGER DEFAULT 1")
+        con.execute("ALTER TABLE product ADD COLUMN fin_split INTEGER DEFAULT 0")
+    # 일회성: 이전(v1.58.0) 버전에서 fin_split을 기본 1로 채웠던 DB는 기본 미분리(0)로 되돌린다.
+    #  app_setting 플래그로 딱 한 번만 실행 → 이후 사용자가 켠 제품 설정은 보존.
+    if not con.execute("SELECT 1 FROM app_setting WHERE key='fin_split_default0'").fetchone():
+        con.execute("UPDATE product SET fin_split=0")
+        con.execute("INSERT OR REPLACE INTO app_setting(key, value) VALUES('fin_split_default0','1')")
     prcols = [r[1] for r in con.execute("PRAGMA table_info(production)")]
     if "defect_reason" not in prcols:
         con.execute("ALTER TABLE production ADD COLUMN defect_reason TEXT DEFAULT ''")

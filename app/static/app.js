@@ -4434,7 +4434,7 @@ const MFORMS = {
   product: [["name", "제품명 *"], ["category", "카테고리"], ["spec", "규격 (예: 60g/EA)"],
     ["unit_price", "단가 (원)", "num"], ["shelf_days", "소비일 (일)", "num"], ["safety_stock", "안전재고", "num"],
     ["batch_yield", "1배합당 생산수량 (개)", "num"],
-    ["fin_split", "완제품 수불부 거래처 분리 표시", "sel", [["1", "분리 표시 (기본) — 거래처별 '거래처명 제품명' 행"], ["0", "분리 안 함 — 합쳐서 한 행"]]],
+    ["fin_split", "완제품 수불부 거래처 분리 표시", "sel", [["0", "분리 안 함 (기본) — 합쳐서 한 행"], ["1", "분리 표시 — 거래처별 '거래처명 제품명' 행"]]],
     ["initial_stock", "초기재고 (신규만)", "num"], ["stock_set", "현재고 (수정 시 기초재고 자동 조정)", "num"],
     ["status", "상태", "sel", ["판매중", "단종"]], ["note", "비고", "full"]],
   raw: [["name", "자재명 *"], ["kind", "구분", "sel", [["raw", "원재료"], ["sub", "부재료"]]],
@@ -5736,7 +5736,7 @@ function buildFinLedgerDoc(d) {
   const rows = (d.rows || []).filter(r => FINLED.showAll || r.moved || r.stock || r.prev);
   const TD = "border:1px solid #333; padding:3px 6px;";
   const hasSpec = rows.some(r => (r.spec || "").trim());   // 규격이 하나도 없으면 열 자체를 뺀다
-  const nCol = hasSpec ? 8 : 7;
+  const nCol = hasSpec ? 7 : 6;
   const CB = '<label class="lp-row-cb" title="인쇄 포함 (해제하면 이 행은 인쇄 안 됨)"><input type="checkbox" class="lp-row" checked></label>';
   const ED = 'class="lcell" contenteditable="true"';   // 임시 편집 가능 셀 (인쇄 전 수정용, 저장 안 됨)
   const body = rows.map(r => {
@@ -5747,10 +5747,9 @@ function buildFinLedgerDoc(d) {
       return `<div style="white-space:nowrap;"><b>${exp}</b> <span style="color:#777;">(생산 ${esc(made)} · ${NFv(l.qty)}${pk})</span></div>`;
     }).join("") || '<span style="color:#aaa;">—</span>';
     const nameCell = r.partner
-      ? `<td style="${TD} text-align:left; white-space:normal; padding-left:14px; color:#1a4f8a;">${CB}↳ ${esc(r.name)}</td>`
+      ? `<td style="${TD} text-align:left; white-space:normal; padding-left:16px;">${CB}${esc(r.name)}</td>`
       : `<td style="${TD} text-align:left; font-weight:600; white-space:normal;">${CB}${esc(r.name)}</td>`;
     return `<tr>
-      <td style="${TD} text-align:center; color:#555;">${r.partner ? "" : esc(r.category)}</td>
       ${nameCell}
       ${hasSpec ? `<td style="${TD} text-align:center; color:#555;" ${ED}>${esc(r.spec)}</td>` : ""}
       <td style="${TD} text-align:right;" ${ED}>${NFv(r.prev)}</td>
@@ -5776,7 +5775,7 @@ function buildFinLedgerDoc(d) {
     <td style="border:0; text-align:right; vertical-align:top; width:210px;">${approve}</td></tr></table>`;
   const HD = "border:1px solid #333; padding:4px 6px; background:#eef0f2; font-size:11.5px;";
   const head = `<thead><tr>
-    <th style="${HD}">분류</th><th style="${HD} text-align:left;">제 품 명</th>${hasSpec ? `<th style="${HD}">규격</th>` : ""}
+    <th style="${HD} text-align:left;">제 품 명</th>${hasSpec ? `<th style="${HD}">규격</th>` : ""}
     <th style="${HD}">전일재고</th><th style="${HD}">금일생산</th><th style="${HD}">금일출고</th><th style="${HD}">금일재고</th>
     <th style="${HD} text-align:left;">생산일자별 LOT · 소비기한</th></tr></thead>`;
   const tbl = `<table style="border-collapse:collapse; width:100%; font-size:11.5px;">
