@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.62.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.63.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -1209,6 +1209,26 @@ def backup_settings_save(request: Request, body: dict):
     set_app_setting("backup_interval_hours", str(interval))
     set_app_setting("backup_keep_days", str(keep))
     return {"ok": True, "dir": str(backup_dir())}
+
+
+@app.post("/api/pickfolder")
+def pick_folder(request: Request):
+    """서버(=같은 PC)에서 윈도우 탐색기 '폴더 선택' 창을 띄워 경로를 고른다.
+    브라우저는 보안상 서버 경로를 직접 못 고르므로 로컬 앱에서만 쓰는 방식."""
+    require_admin(request)
+    import subprocess
+    ps = ("[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;"
+          "Add-Type -AssemblyName System.Windows.Forms;"
+          "$f=New-Object System.Windows.Forms.FolderBrowserDialog;"
+          "$f.Description='백업 폴더를 선택하세요';$f.ShowNewFolderButton=$true;"
+          "if($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){[Console]::Out.Write($f.SelectedPath)}")
+    try:
+        out = subprocess.run(["powershell", "-NoProfile", "-STA", "-Command", ps],
+                             capture_output=True, timeout=300,
+                             creationflags=0x08000000)   # CREATE_NO_WINDOW (콘솔 숨김, 선택창은 표시)
+        return {"path": out.stdout.decode("utf-8", "replace").strip()}
+    except Exception as e:
+        raise HTTPException(500, f"폴더 선택 창을 열 수 없습니다: {e}")
 
 
 @app.post("/api/backup")
@@ -5716,11 +5736,33 @@ def index():
     return FileResponse(BASE / "static" / "index.html")
 
 
+def _wait_port_free(port, timeout=25):
+    """업데이트 재시작 등으로 직전 인스턴스가 아직 포트를 듣고 있으면 기다린다.
+    127.0.0.1:port로 연결이 되면(=누가 듣고 있음) 잠깐 대기, 연결이 거부되면 비어 있는 것."""
+    import socket as _sock
+    import time as _t
+    deadline = _t.time() + timeout
+    while _t.time() < deadline:
+        s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+        s.settimeout(0.4)
+        try:
+            s.connect(("127.0.0.1", port))
+            s.close()             # 연결됨 = 이전 서버가 아직 살아있음 → 대기
+            _t.sleep(0.5)
+        except OSError:
+            s.close()
+            return True           # 연결 거부 = 포트 비어있음
+    return False
+
+
 if __name__ == "__main__":
     import socket
     import threading
     import webbrowser
     import uvicorn
+    # 업데이트 후 자동 재시작 시 직전 exe가 포트를 놓을 때까지 기다린다 (개발 프리뷰는 고유 포트라 생략)
+    if not os.environ.get("PORT"):
+        _wait_port_free(int(os.environ.get("PORT", "8600")), 25)
     init_db()
     init_chat_db()
     purge_old_chat(CHAT_DIR)      # 보관 주기 지난 대화 정리

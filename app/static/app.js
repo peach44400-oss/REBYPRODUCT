@@ -8350,6 +8350,14 @@ async function loadBackupSettings() {
     $("bkDirNow").textContent = "현재 저장 위치: " + s.dir + (s.custom ? "" : " (기본)");
   } catch (e) { /* api 토스트 */ }
 }
+$("bkPick").onclick = async () => {
+  const btn = $("bkPick"); btn.disabled = true; const t0 = btn.textContent; btn.textContent = "선택 창 열림…";
+  try {
+    const r = await api("/api/pickfolder", { method: "POST" });
+    if (r.path) { $("bkDir").value = r.path; toast("폴더 선택됨 — [설정 저장]을 누르세요"); }
+  } catch (e) { /* api 토스트 */ }
+  finally { btn.disabled = false; btn.textContent = t0; }
+};
 $("bkSaveCfg").onclick = async () => {
   const body = { dir: $("bkDir").value.trim(),
     interval_hours: Number($("bkInterval").value.replace(/,/g, "")) || 0,
