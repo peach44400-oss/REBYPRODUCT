@@ -213,15 +213,25 @@ CREATE TABLE IF NOT EXISTS semi_bom (
 );
 CREATE INDEX IF NOT EXISTS idx_semibom ON semi_bom(semi_id);
 
--- 완제품 배합비에 들어가는 '반제품 재료' — 완제품 1개당 반제품 소요량 (생산 시 반제품 재고 차감 기준)
+-- 완제품 배합비에 들어가는 '반제품 재료' — 완제품 1배합당 반제품 소요량 (생산 시 반제품 재고 차감 기준)
 CREATE TABLE IF NOT EXISTS semi_ingredient (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   product_id INTEGER NOT NULL REFERENCES product(id),   -- 이 반제품을 쓰는 완제품(빵)
   semi_id INTEGER NOT NULL REFERENCES product(id),      -- 재료로 쓰이는 반제품 (product.is_semi=1)
-  qty_per_unit REAL DEFAULT 0,                          -- 완제품 1개당 반제품 소요량 (반제품 재고 단위 기준)
+  qty_per_unit REAL DEFAULT 0,                          -- 완제품 1배합당 반제품 소요량 (반제품 재고 단위 기준)
   unit TEXT DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_semiing ON semi_ingredient(product_id);
+
+-- 반제품 생산 — 완제품 생산실적/집계와 분리된 별도 기록 (반제품은 판매 완제품이 아니므로 production 테이블에 안 넣는다)
+CREATE TABLE IF NOT EXISTS semi_production (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  date TEXT NOT NULL,
+  semi_id INTEGER NOT NULL REFERENCES product(id),
+  batches REAL NOT NULL DEFAULT 0,                      -- 배합수 (원재료 차감 기준)
+  qty REAL NOT NULL DEFAULT 0                           -- 생산량 = 배합수 × 1배합당 생산수량(batch_yield)
+);
+CREATE INDEX IF NOT EXISTS idx_semiprod ON semi_production(semi_id, date);
 
 -- 반제품 소비 기록 — 완제품 생산 저장 시 백엔드가 자동 기록 (반제품 재고 차감의 근거)
 CREATE TABLE IF NOT EXISTS semi_usage (
@@ -603,6 +613,14 @@ def init_db() -> None:
         # 1회 이관: 단일 partner_id → 복수 partner_ids
         con.execute("""UPDATE bom SET partner_ids = CAST(partner_id AS TEXT)
             WHERE partner_id IS NOT NULL AND COALESCE(partner_ids,'')=''""")
+    # 반제품 생산을 production → semi_production 으로 이관 (반제품은 완제품 생산실적/집계에서 분리).
+    # 매 기동 실행해도 안전(이관 후 production엔 is_semi 행이 없어 재실행 시 no-op).
+    con.execute("""INSERT INTO semi_production(date, semi_id, batches, qty)
+        SELECT pr.date, pr.product_id, COALESCE(pr.batches,0), pr.prod_qty
+        FROM production pr JOIN product p ON p.id=pr.product_id
+        WHERE COALESCE(p.is_semi,0)=1""")
+    con.execute("""DELETE FROM production WHERE product_id IN
+        (SELECT id FROM product WHERE COALESCE(is_semi,0)=1)""")
     # (구) plan_split → prod_split 이관 후 제거 (분배 기준을 계획→생산으로 변경, 2026-07-14)
     if con.execute("SELECT name FROM sqlite_master WHERE name='plan_split'").fetchone():
         con.execute("""INSERT INTO prod_split(date, product_id, partner_id, qty)

@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.50.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.51.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -3129,12 +3129,16 @@ def masters(mtype: str, request: Request):
             semi = 1 if mtype == "semi" else 0
             data = rows(con.execute("""
                 SELECT p.*,
-                       COALESCE(os.qty,0) + COALESCE(pr.q,0) - COALESCE(sh.q,0)
+                       COALESCE(os.qty,0) + COALESCE(pr.q,0) + COALESCE(spr.q,0) - COALESCE(sh.q,0)
                          - COALESCE(dp.q,0) - COALESCE(su.q,0) AS stock
                 FROM product p
                 LEFT JOIN opening_stock os ON os.kind='product' AND os.ref_id=p.id
+                -- 완제품 생산 (반제품은 production에 없음)
                 LEFT JOIN (SELECT product_id, SUM(prod_qty) q FROM production GROUP BY product_id) pr
                        ON pr.product_id=p.id
+                -- 반제품 생산 (반제품일 때만 값이 있음)
+                LEFT JOIN (SELECT semi_id, SUM(qty) q FROM semi_production GROUP BY semi_id) spr
+                       ON spr.semi_id=p.id
                 LEFT JOIN (SELECT product_id, SUM(qty) q FROM shipment GROUP BY product_id) sh
                        ON sh.product_id=p.id
                 LEFT JOIN (SELECT product_id, SUM(qty) q FROM disposal GROUP BY product_id) dp
@@ -4273,6 +4277,9 @@ def day_get(date: str, request: Request):
         usage = rows(con.execute("""
             SELECT mu.product_id, mu.material_id, mu.qty, mu.block FROM material_usage mu
             WHERE mu.date=? ORDER BY mu.product_id, mu.block, mu.qty DESC""", (date,)))
+        # 반제품 생산 (완제품 생산실적과 분리) — 그날 반제품별 배합수
+        semi_prod = rows(con.execute(
+            "SELECT semi_id, batches, qty FROM semi_production WHERE date=? ORDER BY id", (date,)))
         photos = rows(con.execute(
             "SELECT id, file, note, at FROM day_photo WHERE date=? ORDER BY id", (date,)))
         # 직전 '생산' 기록일 (어제처럼 복사용 — 자재 prev_date와 별개)
@@ -4290,7 +4297,7 @@ def day_get(date: str, request: Request):
                 "version": rec["updated_at"] if rec else None, "viewers": viewers,
                 "production": production, "shipment": shipment,
                 "materials": materials, "mat_in": mat_in, "pending_orders": pending_orders,
-                "staffing": staffing, "lots": lots, "usage": usage, "photos": photos,
+                "staffing": staffing, "lots": lots, "usage": usage, "semi_prod": semi_prod, "photos": photos,
                 "prev_stock": {r["material_id"]: r["real_qty"] for r in prev},
                 "prev_date": prev_date, "prev_materials": prev_materials,
                 "prev_prod_date": prev_prod_date}
@@ -4390,20 +4397,32 @@ def day_save(request: Request, date: str, body: dict):
                     else:
                         con.execute("DELETE FROM lot_expiry WHERE product_id=? AND made=?",
                                     (r["product_id"], date))
-            # 반제품 소비 자동 기록 — 완제품 생산량 × (완제품 1개당 반제품 소요량).
+            # 반제품 소비 자동 기록 — 완제품 배합수 × (완제품 1배합당 반제품 소요량).
             # 생산이 저장될 때마다 그날 것을 통째로 다시 계산하므로 수량 축소·행 삭제도 그대로 반영된다.
             con.execute("DELETE FROM semi_usage WHERE date=?", (date,))
             for r in body.get("production", []):
                 pid = r.get("product_id")
-                prod = float(r.get("prod_qty") or 0)
-                if not pid or prod <= 0:
+                batches = float(r.get("batches") or 0)
+                if not pid or batches <= 0:
                     continue
                 for ing in con.execute(
                         "SELECT semi_id, SUM(qty_per_unit) q FROM semi_ingredient"
                         " WHERE product_id=? GROUP BY semi_id", (pid,)):
                     if ing["q"]:
                         con.execute("""INSERT OR REPLACE INTO semi_usage(date, semi_id, product_id, qty)
-                            VALUES(?,?,?,?)""", (date, ing["semi_id"], pid, ing["q"] * prod))
+                            VALUES(?,?,?,?)""", (date, ing["semi_id"], pid, ing["q"] * batches))
+        # ── 반제품 생산 (완제품 생산실적과 분리) — 배합수 × 1배합당 생산수량 = 재고 증가 ──
+        if "semi_prod" in body:
+            con.execute("DELETE FROM semi_production WHERE date=?", (date,))
+            for r in body.get("semi_prod", []):
+                sid = r.get("semi_id")
+                batches = float(r.get("batches") or 0)
+                if not sid or batches <= 0:
+                    continue
+                by = con.execute("SELECT batch_yield FROM product WHERE id=?", (sid,)).fetchone()
+                yield_ = float((by["batch_yield"] if by else 0) or 0)
+                con.execute("INSERT INTO semi_production(date, semi_id, batches, qty) VALUES(?,?,?,?)",
+                            (date, sid, batches, batches * yield_))
         if "shipment" in body:
             # 재고 초과 검증: 제품별 그날 출고 합 ≤ 그날 제외 가용재고 (기초+생산−다른날출고−폐기)
             affected_pids |= {r["product_id"] for r in con.execute(
@@ -4696,7 +4715,7 @@ def costs(request: Request):
             semi_ings.setdefault(si["product_id"], []).append(si)
 
         out, no_bom = [], 0
-        for p in con.execute("""SELECT id, name, image, unit_price FROM product
+        for p in con.execute("""SELECT id, name, image, unit_price, batch_yield FROM product
                 WHERE status!='단종' AND COALESCE(is_semi,0)=0 ORDER BY sort, id"""):
             rows_b = boms.get(p["id"])
             ings = semi_ings.get(p["id"])
@@ -4704,12 +4723,14 @@ def costs(request: Request):
                 no_bom += 1
                 continue
             mat_cost, missing, detail = mat_cost_of(rows_b)
-            # 반제품 재료 원가 롤업 — 반제품 단위원가 × 완제품 1개당 소요량
+            # 반제품 재료 원가 롤업 — 반제품은 '완제품 1배합당' 소요량이므로 1개당 = ÷ 완제품 1배합 생산수량
+            by = float(p["batch_yield"] or 0)
             for si in (ings or []):
-                q = float(si["qty_per_unit"] or 0)
+                q_batch = float(si["qty_per_unit"] or 0)          # 완제품 1배합당 반제품 소요량
+                q = q_batch / by if by > 0 else 0                 # 완제품 1개당 (수율 없으면 0 — 원가 계산 불가)
                 suc = float(semi_unit_cost.get(si["semi_id"], 0) or 0)
                 cost = q * suc
-                if suc <= 0:
+                if suc <= 0 or by <= 0:
                     missing += 1
                 mat_cost += cost
                 detail.append({"name": "🧫 " + pnames.get(si["semi_id"], "반제품"),
@@ -5209,17 +5230,15 @@ def plan_needs(request: Request, body: dict):
         for si in con.execute("SELECT product_id, semi_id, qty_per_unit FROM semi_ingredient"):
             semi_ings.setdefault(si["product_id"], []).append(si)
         semi_stock = {r["id"]: (r["stock"] or 0) for r in con.execute("""
-            SELECT p.id, COALESCE(os.qty,0)+COALESCE(pr.q,0)-COALESCE(sh.q,0)
-                     -COALESCE(dp.q,0)-COALESCE(su.q,0) AS stock
+            SELECT p.id, COALESCE(os.qty,0)+COALESCE(pr.q,0)-COALESCE(su.q,0) AS stock
             FROM product p
             LEFT JOIN opening_stock os ON os.kind='product' AND os.ref_id=p.id
-            LEFT JOIN (SELECT product_id, SUM(prod_qty) q FROM production GROUP BY product_id) pr ON pr.product_id=p.id
-            LEFT JOIN (SELECT product_id, SUM(qty) q FROM shipment GROUP BY product_id) sh ON sh.product_id=p.id
-            LEFT JOIN (SELECT product_id, SUM(qty) q FROM disposal GROUP BY product_id) dp ON dp.product_id=p.id
+            LEFT JOIN (SELECT semi_id, SUM(qty) q FROM semi_production GROUP BY semi_id) pr ON pr.semi_id=p.id
             LEFT JOIN (SELECT semi_id, SUM(qty) q FROM semi_usage GROUP BY semi_id) su ON su.semi_id=p.id
             WHERE COALESCE(p.is_semi,0)=1""")}
         pnames = {r["id"]: r["name"] for r in con.execute("SELECT id, name, spec FROM product")}
         pspec = {r["id"]: (r["spec"] or "") for r in con.execute("SELECT id, spec FROM product")}
+        byld = {r["id"]: float(r["batch_yield"] or 0) for r in con.execute("SELECT id, batch_yield FROM product")}
 
         need = {}
         semi_need = {}   # semi_id -> 필요량 (완제품 계획에서)
@@ -5238,8 +5257,11 @@ def plan_needs(request: Request, body: dict):
                 if not m:
                     continue
                 need[b["material_id"]] = need.get(b["material_id"], 0) + bom_qty_per_unit(m, b) * qty
+            # 반제품 소요 = 완제품 배합수 × 1배합당 소요량 (배합수 = 계획수량 ÷ 완제품 1배합 생산수량)
+            by = byld.get(pid, 0)
+            batches = (qty / by) if by > 0 else 0
             for si in (ings or []):
-                semi_need[si["semi_id"]] = semi_need.get(si["semi_id"], 0) + float(si["qty_per_unit"] or 0) * qty
+                semi_need[si["semi_id"]] = semi_need.get(si["semi_id"], 0) + float(si["qty_per_unit"] or 0) * batches
         # 부족한 반제품은 새로 생산해야 하므로, (필요−현재고)만큼 원재료로 전개
         semi_out = []
         for sid, req in semi_need.items():

@@ -1009,7 +1009,7 @@ function loadProdWeekDetail(d, i) {
 }
 
 /* ══ 일일 입력 ═════════════════════════ */
-const E = { date: null, prod: [], ship: [], mat: [], matIn: [], staff: [], usage: [], prevStock: {}, prevMaterials: [], prevDate: null, uratio: {}, shipLots: {} };
+const E = { date: null, prod: [], semiProd: [], ship: [], mat: [], matIn: [], staff: [], usage: [], prevStock: {}, prevMaterials: [], prevDate: null, uratio: {}, shipLots: {} };
 let _usageTimer = null;
 function renderUsageSoon() {   // 생산실적 재렌더 시 그룹 헤더(수량) 동기화
   clearTimeout(_usageTimer);
@@ -1113,6 +1113,7 @@ async function loadDay(date) {
         note: `발주 ${o.rec_date.slice(5)}${o.order_qty ? " · " + NF(o.order_qty) + (o.unit || "") : ""}${o.order_date ? " · " + o.order_date : ""}` });
   });
   E.lots = d.lots || [];
+  E.semiProd = (d.semi_prod || []).map(r => ({ semi_id: r.semi_id, batches: r.batches || "" }));
   E.usage = (d.usage || []).map(u => ({ product_id: u.product_id, material_id: u.material_id, qty: u.qty, block: u.block || "" }));
   E.uratio = {};   // 이 날짜에서 '배합 선택'으로 적용한 배율 (표시 유지용)
   E.uSrc = {};     // "pid|block" → {srcPid, srcBlock} — 다른 제품 배합을 가져와 쓰는 블록
@@ -1220,7 +1221,7 @@ function matOptGroups(val) {
 function matSel(val, dataAttr, extra = "", cls = "nm") {
   return `<select class="mini-sel ${cls}" ${dataAttr}><option value="">— 자재 —</option>${extra}${matOptGroups(val)}</select>`;
 }
-function renderAll() { renderProd(); renderShip(); renderMatIn(); renderMat(); renderStaff(); renderUsage(); renderNeed(); renderPhotos(); }
+function renderAll() { renderProd(); renderSemiProd(); renderShip(); renderMatIn(); renderMat(); renderStaff(); renderUsage(); renderNeed(); renderPhotos(); }
 
 /* 제품별 자재 사용 (material_usage) — 금액(단가×사용량)은 admin 전용 표시.
    원재료/부재료 섹션으로 분리 — 각 섹션에서 바로 추가 가능. block 값은 데이터에만 보존. */
@@ -1384,6 +1385,8 @@ function renderUsage() {
   E.prod.forEach(r => { if (r.product_id && !mainPids.includes(r.product_id)) mainPids.push(r.product_id); });
   const orphanPids = [];
   (E.usage || []).forEach(u => {
+    // 반제품 원재료 소비는 '반제품 생산' 섹션에서 관리 — 자재 사용 카드에는 표시하지 않음
+    if ((productById(u.product_id) || {}).is_semi) return;
     if (u.product_id && !mainPids.includes(u.product_id) && !orphanPids.includes(u.product_id))
       orphanPids.push(u.product_id);
   });
@@ -1782,7 +1785,7 @@ function renderProd() {
     renderUsageSoon();
     const py = productById(r.product_id)?.batch_yield || 0;
     return `<tr data-i="${i}">
-      <td>${selHtml(M.product.concat(M.semi).filter(p => p.status !== "단종"), r.product_id, "product_id", "name", "", "nm")}</td>
+      <td>${selHtml(M.product.filter(p => p.status !== "단종"), r.product_id, "product_id", "name", "", "nm")}</td>
       <td>${prodLineSel(r.line_id)}</td>
       <td class="r"><input class="mini-input num" data-f="batches" value="${r.batches}" style="width:56px"
         title="${py ? "1배합 = " + NF(Math.round(py)) + "개 — 입력 시 계획 자동" : "제품에 1배합당 생산수량 등록 시 계획 자동"}"></td>
@@ -1799,6 +1802,69 @@ function renderProd() {
   }).join("") || `<tr><td colspan="10" class="auto">+ 생산 행 추가를 누르세요</td></tr>`;
   if (typeof renderNeed === "function") renderNeed();   // 생산 행 추가/삭제 시 예상 소요 갱신
 }
+/* ── 반제품 생산 (완제품 생산실적과 분리) — 배합수 → 원재료 차감(E.usage) + 반제품 재고 증가 ── */
+function renderSemiProd() {
+  const box = $("eSemiProd"); if (!box) return;
+  $("qaSemiProdList").innerHTML = (M.semi || []).filter(p => p.status !== "단종")
+    .map(o => `<option value="${esc(o.name)}">`).join("");
+  const semiSel = sid => `<select class="mini-input nm" data-sf="semi_id" style="min-width:150px">
+    <option value="">— 반제품 —</option>
+    ${(M.semi || []).filter(p => p.status !== "단종").map(p => `<option value="${p.id}" ${p.id === sid ? "selected" : ""}>${esc(p.name)}</option>`).join("")}
+  </select>`;
+  box.innerHTML = (E.semiProd || []).map((r, i) => {
+    const sp = productById(r.semi_id) || {};
+    const by = sp.batch_yield || 0;
+    const raws = E.usage.filter(u => u.product_id === r.semi_id && u.material_id && Number(u.qty) > 0)
+      .map(u => { const m = materialById(u.material_id) || {}; return `${esc(m.name || "?")} ${NF(u.qty)}${esc(m.unit || "")}`; });
+    const made = (Number(String(r.batches).replace(/,/g, "")) || 0) * by;
+    const preview = !r.semi_id ? "반제품을 선택하세요"
+      : raws.length ? raws.join(" · ")
+      : (BOMALL && BOMALL[r.semi_id] ? "배합수를 입력하세요" : "이 반제품의 배합비가 없습니다 — 배합비 탭에서 등록");
+    return `<tr data-si="${i}">
+      <td>${semiSel(r.semi_id)}</td>
+      <td class="r"><input class="mini-input num" data-sf="batches" value="${r.batches}" style="width:60px"
+        title="${by ? "1배합 = " + NF(Math.round(by)) + " 생산" : "반제품 기준정보에 1배합당 생산수량 등록 필요"}"></td>
+      <td class="auto" style="text-align:left; font-size:11px;">${preview}${by && made > 0 ? ` <span style="color:var(--ok)">→ 재고 +${NF(Math.round(made))}</span>` : ""}</td>
+      <td><button class="btn ghost sm" data-sdel>삭제</button></td></tr>`;
+  }).join("") || `<tr><td colspan="4" class="auto">+ 반제품 행 추가를 누르세요 (예: 발효종)</td></tr>`;
+}
+// 반제품의 원재료 소비를 E.usage에 채운다 (product_id = 반제품). 자재 사용 카드엔 안 보이고, 여기 미리보기로만.
+async function fillSemiUsage(semiId, batches) {
+  await ensureBomAll();
+  E.usage = E.usage.filter(u => u.product_id !== semiId);   // 이 반제품 것 재계산
+  if (semiId && batches > 0) {
+    const blocks = [...new Set((BOMALL[semiId] || []).map(b => b.block || ""))];
+    for (const bk of blocks) await applyBatchUsage(semiId, batches, bk, true);
+  }
+}
+wireQuickAdd("qaSemiProd", "qaSemiProdList", () => (M.semi || []).filter(p => p.status !== "단종"), hit => {
+  if (E.semiProd.some(r => r.semi_id === hit.id)) return toast(`'${hit.name}'은 이미 반제품 생산에 있습니다`);
+  E.semiProd.push({ semi_id: hit.id, batches: "" }); renderSemiProd();
+}, "addSemiProd", () => { E.semiProd.push({ semi_id: null, batches: "" }); renderSemiProd(); });
+$("eSemiProd").addEventListener("input", async e => {
+  const tr = e.target.closest("tr[data-si]"); if (!tr) return;
+  const r = E.semiProd[+tr.dataset.si]; if (!r) return;
+  if (e.target.dataset.sf === "batches") {          // 입력 중엔 eSemiProd를 다시 그리지 않아 포커스 유지
+    r.batches = e.target.value;
+    await fillSemiUsage(r.semi_id, Number(String(e.target.value).replace(/,/g, "")) || 0);
+  }
+});
+$("eSemiProd").addEventListener("change", async e => {
+  const tr = e.target.closest("tr[data-si]"); if (!tr) return;
+  const r = E.semiProd[+tr.dataset.si]; if (!r) return;
+  if (e.target.dataset.sf === "semi_id") {
+    if (r.semi_id) E.usage = E.usage.filter(u => u.product_id !== r.semi_id);
+    r.semi_id = e.target.value ? +e.target.value : null;
+    await fillSemiUsage(r.semi_id, Number(String(r.batches ?? "").replace(/,/g, "")) || 0);
+  }
+  renderSemiProd();   // 선택/입력 확정 후 미리보기 갱신
+});
+$("eSemiProd").addEventListener("click", e => {
+  const del = e.target.closest("[data-sdel]"); if (!del) return;
+  const tr = del.closest("tr[data-si]"); const r = E.semiProd[+tr.dataset.si];
+  if (r && r.semi_id) E.usage = E.usage.filter(u => u.product_id !== r.semi_id);
+  E.semiProd.splice(+tr.dataset.si, 1); renderSemiProd(); renderUsage();
+});
 /* 생산 LOT 소비기한 분할 모달 */
 const LSP = { idx: -1, rows: [] };
 $("eProd").addEventListener("click", e => {
@@ -2497,7 +2563,7 @@ function wireQuickAdd(inputId, listId, getItems, onPick, addBtnId, addBlank) {
     addBlank();
   };
 }
-wireQuickAdd("qaProd", "qaProducts", () => M.product.concat(M.semi).filter(p => p.status !== "단종"), hit => {
+wireQuickAdd("qaProd", "qaProducts", () => M.product.filter(p => p.status !== "단종"), hit => {
   if (E.prod.some(r => r.product_id === hit.id)) return toast(`'${hit.name}'은 이미 생산실적에 있습니다`);
   E.prod.push({ product_id: hit.id, line_id: hit.line_id || null, batches: "", plan_qty: "", prod_qty: "", defect_qty: "", lotSplits: [], expiry: "" });
   renderProd(); renderUsage();
@@ -2788,6 +2854,9 @@ $("btnSaveDay").onclick = async () => {           // 생산 입력 탭
     // (실측 자동계산은 서버 estimate에서 qty>0만 반영하므로 0 저장이 추정을 왜곡하지 않는다)
     usage: E.usage.filter(u => u.material_id)
       .map(u => ({ ...u, qty: Number(String(u.qty ?? "").replace(/,/g, "")) || 0 })),
+    // 반제품 생산 (완제품 생산실적과 분리) — 배합수 → 원재료 차감(usage) + 반제품 재고 증가
+    semi_prod: (E.semiProd || []).filter(r => r.semi_id).map(r => ({
+      semi_id: r.semi_id, batches: Number(String(r.batches ?? "").replace(/,/g, "")) || 0 })),
   };
   showSaveSum(body, "생산 입력");   // 저장 전 요약 확인 → 확인 시 저장
 };
@@ -3993,7 +4062,7 @@ function renderSemiIngredientSection(cols) {
     .map(p => `<option value="${esc(p.name)}">`).join("");
   const bar = `<tr><td colspan="${cols}" style="background:var(--bg); padding:6px 10px;">
       <b style="font-size:12.5px;">🧫 반제품 재료</b>
-      <span class="auto num" style="margin-left:6px; font-size:11.5px;">${semis.length}종 · 완제품 1개당 소요량 (예: 빵 1개 = 발효종 20)</span>
+      <span class="auto num" style="margin-left:6px; font-size:11.5px;">${semis.length}종 · 완제품 1배합당 소요량 (예: 빵 1배합 = 발효종 20)</span>
       <span style="display:inline-flex; align-items:center; gap:6px; margin-left:10px; flex-wrap:wrap;">
         <input class="mini-input" id="bomSemiSearch" list="qaSemis" placeholder="🔍 반제품 검색 후 Enter = 추가" style="text-align:left; width:230px;">
         <button class="btn ghost sm" id="bomSemiAdd">+ 반제품 추가</button>

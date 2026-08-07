@@ -949,6 +949,16 @@
             <datalist id="qaProducts"></datalist>
           </div>
           <div class="card" data-esec="prod">
+            <h2>🧫 반제품 생산 <span class="sub">완제품과 별개 — 배합수 입력 → 원재료 차감 + 반제품 재고 증가 (생산실적엔 안 뜸)</span></h2>
+            <div class="tbl-wrap"><table>
+              <thead><tr><th>반제품명</th><th class="r">배합수</th><th>원재료 소비 (자동)</th><th></th></tr></thead>
+              <tbody class="num" id="eSemiProd"></tbody>
+            </table></div>
+            <div class="draft-foot"><button class="btn sm" id="addSemiProd">+ 반제품 행 추가</button>
+              <input class="mini-input" id="qaSemiProd" list="qaSemiProdList" placeholder="🔍 반제품 검색 후 Enter = 행 추가" style="text-align:left; width:220px;">
+              <datalist id="qaSemiProdList"></datalist></div>
+          </div>
+          <div class="card" data-esec="prod">
             <h2>완제품 출고</h2>
             <div class="tbl-wrap"><table>
               <thead><tr><th>제품명</th><th>생산일자 (재고 LOT)</th><th>거래처</th><th class="r">출고량</th><th></th></tr></thead>
