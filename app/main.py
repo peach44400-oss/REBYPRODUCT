@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.56.1"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.57.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -1648,13 +1648,19 @@ def matin_made_set(request: Request, body: dict):
         con.close()
 
 
+def _ledgerprint_key(date: str, src: str) -> str:
+    """수불부 종류별 저장 키 — raw는 날짜 그대로(하위호환), fin/staff는 '날짜#종류'."""
+    src = (src or "").strip().lower()
+    return date if src in ("", "raw") else f"{date}#{src}"
+
+
 @app.get("/api/ledgerprint")
-def ledgerprint_get(date: str):
-    """원료 수불부 '출력용' 저장본 조회 (없으면 saved=False)."""
+def ledgerprint_get(date: str, src: str = ""):
+    """수불부 '출력용' 저장본 조회 (없으면 saved=False). src=raw/fin/staff."""
     con = connect()
     try:
         r = con.execute("SELECT html, saved_at, saved_by FROM ledger_print WHERE date=?",
-                        (date,)).fetchone()
+                        (_ledgerprint_key(date, src),)).fetchone()
         if not r or not (r["html"] or "").strip():
             return {"saved": False}
         return {"saved": True, "html": r["html"], "saved_at": r["saved_at"], "saved_by": r["saved_by"]}
@@ -1671,14 +1677,15 @@ def ledgerprint_save(request: Request, body: dict):
     html = body.get("html") or ""
     if not date:
         raise HTTPException(400, "날짜가 필요합니다")
+    key = _ledgerprint_key(date, body.get("src"))
     con = connect()
     try:
         con.execute("""INSERT INTO ledger_print(date, html, saved_at, saved_by)
             VALUES(?,?,datetime('now','localtime'),?)
             ON CONFLICT(date) DO UPDATE SET
                 html=excluded.html, saved_at=excluded.saved_at, saved_by=excluded.saved_by""",
-                    (date, html, CURRENT_USER.get() or ""))
-        audit(con, "ledger_print", f"{date} 출력용 저장")
+                    (key, html, CURRENT_USER.get() or ""))
+        audit(con, "ledger_print", f"{key} 출력용 저장")
         con.commit()
         return {"ok": True}
     finally:

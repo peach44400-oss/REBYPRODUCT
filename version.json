@@ -1,5 +1,5 @@
 {
-  "version": "1.56.1",
+  "version": "1.57.0",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· 완제품 수불부 LOT의 생산일자도 연도까지 표시합니다 (생산 08-05 → 생산 2026-08-05)."
+  "notes": "· 완제품 수불부·인원 수불부에도 원료 수불부와 같은 기능을 넣었습니다 — 행 체크박스(인쇄 포함/제외), [☑ 행 전체], [↺ 초기화], [📌 출력용 저장], [👁 출력용 보기], 숫자 칸 임시 수정. 각 수불부는 종류별로 따로 저장됩니다."
 }

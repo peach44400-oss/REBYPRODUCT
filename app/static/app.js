@@ -5733,13 +5733,15 @@ async function loadFinLedger(date) {
     renderFinLedger();
   } catch (e) { /* api 토스트 */ }
 }
-function renderFinLedger() { if (FINLED.data) $("ledgerFin").innerHTML = buildFinLedgerDoc(FINLED.data); }
+function renderFinLedger() { if (FINLED.data) { $("ledgerFin").innerHTML = buildFinLedgerDoc(FINLED.data); ledgerModeSet("finMode", ""); } }
 function buildFinLedgerDoc(d) {
   const NFv = v => (v == null || v === "") ? "" : Number(Math.round(v * 1000) / 1000).toLocaleString("ko-KR");
   const rows = (d.rows || []).filter(r => FINLED.showAll || r.moved || r.stock || r.prev);
   const TD = "border:1px solid #333; padding:3px 6px;";
   const hasSpec = rows.some(r => (r.spec || "").trim());   // 규격이 하나도 없으면 열 자체를 뺀다
   const nCol = hasSpec ? 8 : 7;
+  const CB = '<label class="lp-row-cb" title="인쇄 포함 (해제하면 이 행은 인쇄 안 됨)"><input type="checkbox" class="lp-row" checked></label>';
+  const ED = 'class="lcell" contenteditable="true"';   // 임시 편집 가능 셀 (인쇄 전 수정용, 저장 안 됨)
   const body = rows.map(r => {
     const lots = (r.lots || []).map(l => {
       const made = l.made ? esc(l.made) : "미상";                        // 생산일자 년도까지 표시
@@ -5748,17 +5750,17 @@ function buildFinLedgerDoc(d) {
       return `<div style="white-space:nowrap;"><b>${exp}</b> <span style="color:#777;">(생산 ${esc(made)} · ${NFv(l.qty)}${pk})</span></div>`;
     }).join("") || '<span style="color:#aaa;">—</span>';
     const nameCell = r.partner
-      ? `<td style="${TD} text-align:left; white-space:normal; padding-left:14px; color:#1a4f8a;">↳ ${esc(r.name)}</td>`
-      : `<td style="${TD} text-align:left; font-weight:600; white-space:normal;">${esc(r.name)}</td>`;
+      ? `<td style="${TD} text-align:left; white-space:normal; padding-left:14px; color:#1a4f8a;">${CB}↳ ${esc(r.name)}</td>`
+      : `<td style="${TD} text-align:left; font-weight:600; white-space:normal;">${CB}${esc(r.name)}</td>`;
     return `<tr>
       <td style="${TD} text-align:center; color:#555;">${r.partner ? "" : esc(r.category)}</td>
       ${nameCell}
-      ${hasSpec ? `<td style="${TD} text-align:center; color:#555;">${esc(r.spec)}</td>` : ""}
-      <td style="${TD} text-align:right;">${NFv(r.prev)}</td>
-      <td style="${TD} text-align:right; color:#0a7a2f; ${r.prod ? "font-weight:700;" : ""}">${r.prod ? NFv(r.prod) : ""}</td>
-      <td style="${TD} text-align:right; color:#b3541e; ${r.ship ? "font-weight:700;" : ""}">${r.ship ? NFv(r.ship) : ""}</td>
-      <td style="${TD} text-align:right; font-weight:700;">${NFv(r.stock)}</td>
-      <td style="${TD} text-align:left; font-size:10.5px; white-space:normal;">${lots}</td></tr>`;
+      ${hasSpec ? `<td style="${TD} text-align:center; color:#555;" ${ED}>${esc(r.spec)}</td>` : ""}
+      <td style="${TD} text-align:right;" ${ED}>${NFv(r.prev)}</td>
+      <td style="${TD} text-align:right; color:#0a7a2f; ${r.prod ? "font-weight:700;" : ""}" ${ED}>${r.prod ? NFv(r.prod) : ""}</td>
+      <td style="${TD} text-align:right; color:#b3541e; ${r.ship ? "font-weight:700;" : ""}" ${ED}>${r.ship ? NFv(r.ship) : ""}</td>
+      <td style="${TD} text-align:right; font-weight:700;" ${ED}>${NFv(r.stock)}</td>
+      <td style="${TD} text-align:left; font-size:10.5px; white-space:normal;" ${ED}>${lots}</td></tr>`;
   }).join("") || `<tr><td style="${TD}" colspan="${nCol}" class="auto" style="padding:16px;">이 날짜에 생산·출고된 완제품이 없습니다 (전체 제품은 [전체 제품] 체크)</td></tr>`;
   const dow = ["일", "월", "화", "수", "목", "금", "토"][new Date(d.date + "T00:00").getDay()];
   const TDm = "border:1px solid #333; padding:2px 6px; font-size:11px;";
@@ -5936,6 +5938,57 @@ $("ledgerViewPrint").onclick = async () => {
     toast("출력용 저장본을 불러왔습니다 — [↺ 초기화]로 원래 데이터로 돌아갑니다");
   } catch (e) { /* api 토스트 */ }
 };
+
+/* ── 수불부 공통: 행 선택 인쇄 + 출력용 저장/보기 (원료·완제품·인원 공통) ── */
+function ledgerModeSet(elId, mode, at, by) {
+  const el = $(elId); if (!el) return;
+  if (mode === "saved") { el.textContent = `📌 출력용 저장본${by ? " · " + by : ""}${at ? " · " + at.slice(5, 16) : ""}`; el.style.color = "var(--warn)"; }
+  else if (mode === "saved-just") { el.textContent = "📌 출력용으로 저장됨"; el.style.color = "var(--ok)"; }
+  else el.textContent = "";
+}
+function ledgerSelAllFor(bodyId) {
+  const boxes = [...$(bodyId).querySelectorAll(".lp-row")]; if (!boxes.length) return;
+  const allOn = boxes.every(b => b.checked);
+  boxes.forEach(b => { b.checked = !allOn; b.closest("tr").classList.toggle("lp-off", allOn); });
+}
+async function ledgerSaveFor(bodyId, src, date, modeId) {
+  if (!date) return toast("먼저 날짜를 불러오세요");
+  $(bodyId).querySelectorAll(".lp-row").forEach(cb => cb.checked ? cb.setAttribute("checked", "") : cb.removeAttribute("checked"));
+  try {
+    await api("/api/ledgerprint", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ date, src, html: $(bodyId).innerHTML }) });
+    toast(`${date} 출력용으로 저장됨`);
+    ledgerModeSet(modeId, "saved-just");
+  } catch (e) { /* api 토스트 */ }
+}
+async function ledgerViewFor(bodyId, src, date, modeId) {
+  if (!date) return;
+  try {
+    const d = await api("/api/ledgerprint?date=" + encodeURIComponent(date) + "&src=" + encodeURIComponent(src));
+    if (!d.saved) return toast("이 날짜에 저장된 '출력용 보기'가 없습니다");
+    $(bodyId).innerHTML = d.html;
+    ledgerModeSet(modeId, "saved", d.saved_at, d.saved_by);
+    toast("출력용 저장본을 불러왔습니다 — [↺ 초기화]로 원래 데이터로 돌아갑니다");
+  } catch (e) { /* api 토스트 */ }
+}
+// 행 체크박스 위임 (완제품·인원) — 해제하면 그 행 인쇄 제외
+["ledgerFin", "ledgerStaff"].forEach(id => {
+  const el = $(id); if (!el) return;
+  el.addEventListener("change", e => {
+    const cb = e.target.closest(".lp-row"); if (!cb) return;
+    const tr = cb.closest("tr"); if (tr) tr.classList.toggle("lp-off", !cb.checked);
+  });
+});
+// 완제품 수불부 도구
+$("finReset").onclick = () => { renderFinLedger(); ledgerModeSet("finMode", ""); toast("임시 수정을 원래 데이터로 되돌렸습니다"); };
+$("finSelAll").onclick = () => ledgerSelAllFor("ledgerFin");
+$("finSavePrint").onclick = () => ledgerSaveFor("ledgerFin", "fin", FINLED.data && FINLED.data.date, "finMode");
+$("finViewPrint").onclick = () => ledgerViewFor("ledgerFin", "fin", FINLED.data && FINLED.data.date, "finMode");
+// 인원 수불부 도구
+$("sledLReset").onclick = () => { renderStaffLedger(); ledgerModeSet("sledLMode", ""); toast("임시 수정을 원래 데이터로 되돌렸습니다"); };
+$("sledLSelAll").onclick = () => ledgerSelAllFor("ledgerStaff");
+$("sledLSavePrint").onclick = () => ledgerSaveFor("ledgerStaff", "staff-" + SLED.mode, SLED.date, "sledLMode");
+$("sledLViewPrint").onclick = () => ledgerViewFor("ledgerStaff", "staff-" + SLED.mode, SLED.date, "sledLMode");
 
 /* ── 월간 마감 리포트 — 생산·출고·자재 사용액·발주 입고액·노무비 한 장 요약 (admin) ── */
 const MR = { data: null };
@@ -7475,12 +7528,14 @@ function renderStaffLedger() {
     <th style="${TH} ${nameCol} z-index:3;">이름</th>
     ${dates.map(dt => `<th style="${TH}">${dt.slice(5)}<br><span class="auto" style="font-weight:400">${dowOf(dt)}</span></th>`).join("")}
     <th style="${TH}">근무일</th><th style="${TH}">합계(h)</th>${money ? `<th style="${TH}">노무비</th>` : ""}</tr>`;
+  const CB = '<label class="lp-row-cb" title="인쇄 포함 (해제하면 이 행은 인쇄 안 됨)"><input type="checkbox" class="lp-row" checked></label>';
+  const ED = 'class="lcell" contenteditable="true"';
   const body = d.staff.map(s => `<tr>
-    <td style="${TD} ${nameCol} z-index:1;">${esc(s.name)}</td>
+    <td style="${TD} ${nameCol} z-index:1;">${CB}${esc(s.name)}</td>
     ${dates.map(dt => { const c = s.cells[dt];
       if (!c) return `<td style="${TD} color:#ccc;">·</td>`;
       const time = c.s ? `<div style="font-size:8.5px; color:#888; font-weight:400; white-space:nowrap;">${esc(c.s)}~${esc(c.e || "?")}</div>` : "";
-      return `<td style="${TD} font-weight:700;">${h1(c.h)}${time}</td>`; }).join("")}
+      return `<td style="${TD} font-weight:700;" ${ED}>${h1(c.h)}${time}</td>`; }).join("")}
     <td style="${TD} font-weight:600;">${s.days}</td>
     <td style="${TD} font-weight:700;">${h1(s.hours)}</td>${money ? `<td style="${TD}">${NF(s.labor)}</td>` : ""}</tr>`).join("");
   const totRow = `<tr style="font-weight:800; background:var(--bg);">
@@ -7490,6 +7545,7 @@ function renderStaffLedger() {
     <td style="${TD}"></td><td style="${TD}">${h1(d.grand_hours)}</td>${money ? `<td style="${TD}">${NF(d.grand_labor)}</td>` : ""}</tr>`;
   bodyEl.innerHTML = `<table style="border-collapse:collapse; width:100%;">
     <thead>${head}</thead><tbody class="num">${body}${totRow}</tbody></table>`;
+  if (typeof ledgerModeSet === "function") ledgerModeSet("sledLMode", "");   // 새로 그리면 출력용 라벨 초기화
 }
 function sledSetMode(m) { SLED.mode = m; loadStaffLedger(); }
 $("sledTabs").addEventListener("click", e => {
