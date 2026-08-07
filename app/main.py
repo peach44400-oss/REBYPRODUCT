@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.57.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.58.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -133,11 +133,11 @@ def audit(con, action, detail):
 
 MASTER_TABLES = {
     "product": ("product", ["name", "category", "spec", "pack_sizes", "line_id", "unit_price",
-                            "shelf_days", "safety_stock", "batch_yield", "status", "note", "is_semi"]),
+                            "shelf_days", "safety_stock", "batch_yield", "status", "note", "is_semi", "fin_split"]),
     "material": ("material", ["kind", "name", "spec", "unit", "pack_count", "pack_set", "unit_price", "partner_id",
                               "safety_stock", "prod_mult", "prod_per", "shelf_days", "status", "note",
                               "is_semi", "batch_yield"]),
-    "partner": ("partner", ["name", "type", "phone", "contact", "note", "status", "biz_no", "ceo", "mobile", "email", "show_fin"]),
+    "partner": ("partner", ["name", "type", "phone", "contact", "note", "status", "biz_no", "ceo", "mobile", "email"]),
     "staff": ("staff", ["name", "kind", "position", "process", "wage", "join_date", "phone", "status", "note"]),
     "line": ("line", ["name", "process", "std_hours", "parent_id", "note", "status"]),
 }
@@ -5027,7 +5027,8 @@ def fin_ledger(request: Request, date: str = ""):
     con = connect()
     try:
         products = rows(con.execute("""
-            SELECT p.id, p.name, p.category, p.spec, COALESCE(os.qty,0) opening
+            SELECT p.id, p.name, p.category, p.spec, COALESCE(p.fin_split,1) fin_split,
+                   COALESCE(os.qty,0) opening
             FROM product p
             LEFT JOIN opening_stock os ON os.kind='product' AND os.ref_id=p.id
             WHERE COALESCE(p.is_semi,0)=0 AND p.status!='단종'
@@ -5040,9 +5041,9 @@ def fin_ledger(request: Request, date: str = ""):
         ship_b, ship_o = sums("shipment", "qty", "<"), sums("shipment", "qty", "=")
         disp_b, disp_o = sums("disposal", "qty", "<"), sums("disposal", "qty", "=")
 
-        # 거래처: 완제품 수불부 분리표시(show_fin) 대상 + 이름
-        partners = {r["id"]: {"name": r["name"], "show": int(r["show_fin"] or 0)}
-                    for r in con.execute("SELECT id, name, show_fin FROM partner")}
+        # 거래처 이름 — 분리 표시는 제품 플래그(fin_split)로만 제어, 거래처는 배분처 이름만 사용
+        partners = {r["id"]: {"name": r["name"]}
+                    for r in con.execute("SELECT id, name FROM partner")}
         # 개입수(pack_count) — LOT 포장(pack_mid=포장자재 / pack_set=세트)에서 유도
         pack_by_mid = {r["id"]: float(r["pack_count"] or 0)
                        for r in con.execute("SELECT id, pack_count FROM material WHERE COALESCE(pack_count,0)>0")}
@@ -5086,13 +5087,16 @@ def fin_ledger(request: Request, date: str = ""):
                     "ship": round(ts, 3), "disp": round(td, 3), "stock": round(stock, 3),
                     "lots": [lot_out(l) for l in raw_lots], "moved": bool(tp or ts or td)}
 
-            # 분리표시(show_fin) 거래처가 이 제품에 걸려 있으면 '거래처명 제품명' 행으로 분리
+            # 이 제품의 '거래처 분리 표시'가 켜져 있으면(fin_split=1) 배분된 모든 거래처를 '거래처명 제품명' 행으로 분리
             grp_lots = {}
             for l in raw_lots:
                 grp_lots.setdefault(l.get("partner_id"), []).append(l)
-            show_ids = {sp for sp in grp_lots if sp and partners.get(sp, {}).get("show")}
-            show_ids |= {sp for (q_pid, sp) in prodsplit_today if q_pid == pid and partners.get(sp, {}).get("show")}
-            show_ids |= {sp for (q_pid, sp) in ship_by_pp if q_pid == pid and partners.get(sp, {}).get("show")}
+            if not int(p["fin_split"] or 0):
+                out.append(base)
+                continue
+            show_ids = {sp for sp in grp_lots if sp and sp in partners}
+            show_ids |= {sp for (q_pid, sp) in prodsplit_today if q_pid == pid and sp in partners}
+            show_ids |= {sp for (q_pid, sp) in ship_by_pp if q_pid == pid and sp in partners}
 
             if not show_ids:
                 out.append(base)
@@ -5112,7 +5116,7 @@ def fin_ledger(request: Request, date: str = ""):
                     "prev": prev_p, "prod": round(prod_p, 3), "ship": round(ship_p, 3), "disp": 0,
                     "stock": round(stock_p, 3), "lots": [lot_out(l) for l in glots],
                     "moved": bool(prod_p or ship_p or stock_p or prev_p), "partner": True})
-            # 잔여(미지정·미표시 거래처) — 합계가 제품 전체와 맞도록 차감해서 산출
+            # 잔여(거래처 미지정분) — 합계가 제품 전체와 맞도록 차감해서 산출
             res_prev = round(prev - sum_prev, 3); res_prod = round(tp - sum_prod, 3)
             res_ship = round(ts - sum_ship, 3); res_stock = round(stock - sum_stock, 3)
             res_lots = [lot_out(l) for l in raw_lots

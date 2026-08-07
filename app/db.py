@@ -699,6 +699,9 @@ def init_db() -> None:
     pcols = [r[1] for r in con.execute("PRAGMA table_info(product)")]
     if "image" not in pcols:
         con.execute("ALTER TABLE product ADD COLUMN image TEXT DEFAULT ''")
+    # 완제품 수불부 거래처 분리 표시 허용 (1=분리 가능/기본, 0=이 제품은 거래처가 표시여도 합쳐서 표시)
+    if "fin_split" not in pcols:
+        con.execute("ALTER TABLE product ADD COLUMN fin_split INTEGER DEFAULT 1")
     prcols = [r[1] for r in con.execute("PRAGMA table_info(production)")]
     if "defect_reason" not in prcols:
         con.execute("ALTER TABLE production ADD COLUMN defect_reason TEXT DEFAULT ''")
