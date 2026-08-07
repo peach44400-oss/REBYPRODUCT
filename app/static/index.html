@@ -951,24 +951,18 @@
             <p class="hint" id="entryTabHint" style="margin:0 0 10px;"></p>
           </div>
           <div class="card" data-esec="prod">
-            <h2>생산실적 <span class="sub">달성률 · 양품 자동 계산 · 소비기한 = 이 생산분(LOT)의 기한 (LOT 관리와 연동)</span></h2>
+            <h2>생산실적 <span class="sub">달성률 · 양품 자동 계산 · 소비기한 = 이 생산분(LOT)의 기한 (LOT 관리와 연동) · 🧫 반제품은 배합수만 입력하면 레시피대로 원재료 자동 차감</span></h2>
             <div class="tbl-wrap"><table>
               <thead><tr><th>제품명</th><th>라인</th><th class="r">배합</th><th class="r">계획</th><th class="r">생산</th><th class="r">불량</th><th class="r">달성률</th><th class="r">양품</th><th>소비기한</th><th></th></tr></thead>
               <tbody class="num" id="eProd"></tbody>
-            </table></div>
-            <div class="draft-foot"><button class="btn sm" id="addProd">+ 생산 행 추가</button>
-              <input class="mini-input" id="qaProd" list="qaProducts" placeholder="🔍 제품 검색 후 Enter = 행 추가" style="text-align:left; width:220px;"></div>
-            <datalist id="qaProducts"></datalist>
-          </div>
-          <div class="card" data-esec="prod">
-            <h2>🧫 반제품 생산 <span class="sub">반제품(발효종 등)을 직접 만들 때 — 배합수만 입력하면 레시피대로 원재료가 자동 차감되고 그만큼 반제품 재고가 늘어납니다 · 반제품·레시피는 기준정보 [반제품]에서 등록</span></h2>
-            <div class="tbl-wrap"><table>
-              <thead><tr><th>반제품명</th><th class="r">배합수</th><th class="r">생산량 <span class="auto" style="font-weight:400">(재고↑)</span></th><th>원재료 소비 (자동)</th><th></th></tr></thead>
               <tbody class="num" id="eSemiProd"></tbody>
             </table></div>
-            <div class="draft-foot"><button class="btn sm" id="addSemiProd">+ 반제품 행 추가</button>
-              <input class="mini-input" id="qaSemiProd" list="qaSemiProdList" placeholder="🔍 반제품 검색 후 Enter = 행 추가" style="text-align:left; width:220px;">
-              <datalist id="qaSemiProdList"></datalist></div>
+            <div class="draft-foot"><button class="btn sm" id="addProd">+ 생산 행 추가</button>
+              <input class="mini-input" id="qaProd" list="qaProducts" placeholder="🔍 제품 검색 후 Enter = 행 추가" style="text-align:left; width:200px;">
+              <button class="btn sm" id="addSemiProd">+ 반제품 행 추가</button>
+              <input class="mini-input" id="qaSemiProd" list="qaSemiProdList" placeholder="🔍 반제품 검색 후 Enter = 행 추가" style="text-align:left; width:200px;"></div>
+            <datalist id="qaProducts"></datalist>
+            <datalist id="qaSemiProdList"></datalist>
           </div>
           <div class="card" data-esec="prod">
             <h2>완제품 출고</h2>
@@ -1560,6 +1554,7 @@
     <div class="draft-foot" style="margin-top:8px;">
       <input class="mini-input" id="srAdd" list="qaMatRaw" placeholder="🔍 원재료 검색 후 Enter = 추가" autocomplete="off" style="text-align:left; width:280px;">
     </div>
+    <div id="srSuggest" style="margin-top:10px; padding:8px 10px; background:var(--bg); border-radius:8px; font-size:12px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;"></div>
     <div class="modal-foot">
       <button class="btn" onclick="closeSemiRecipe()">닫기</button>
       <button class="btn primary" id="srSave">저장</button>

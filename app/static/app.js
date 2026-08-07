@@ -1845,7 +1845,8 @@ function renderProd() {
       <td class="r auto" title="양품 = 생산 ${NF(Number(r.prod_qty) || 0)} − 불량 ${NF(Number(r.defect_qty) || 0)}">${r.prod_qty ? NF(good) : "—"}</td>
       <td>${prodExpiryBtn(r, i)}</td>
       <td><button class="btn ghost sm" data-del>삭제</button></td></tr>`;
-  }).join("") || `<tr><td colspan="10" class="auto">+ 생산 행 추가를 누르세요</td></tr>`;
+  }).join("") || ((E.semiProd || []).length ? "" : `<tr><td colspan="10" class="auto">+ 생산 행 추가를 누르세요</td></tr>`);
+  if (typeof renderSemiProd === "function") renderSemiProd();   // 반제품 행(같은 표)도 함께 갱신
   if (typeof renderNeed === "function") renderNeed();   // 생산 행 추가/삭제 시 예상 소요 갱신
 }
 /* ── 반제품 생산 (반제품=직접 만드는 자재) — 배합수 입력 → 반제품 재고↑ + 원재료 자동 차감(백엔드가 semi_bom대로).
@@ -1864,6 +1865,7 @@ function renderSemiProd() {
     <option value="">— 반제품 —</option>
     ${semis.map(p => `<option value="${p.id}" ${p.id === sid ? "selected" : ""}>${esc(p.name)}</option>`).join("")}
   </select>`;
+  // 반제품 행은 생산실적 표(같은 thead, 10열)에 이어 붙는다 — '반제품' 태그 + 배합수 → 생산량·원재료소비 자동
   box.innerHTML = (E.semiProd || []).map((r, i) => {
     const sm = materialById(r.material_id) || {};
     const unit = sm.unit || "g";
@@ -1883,14 +1885,18 @@ function renderSemiProd() {
       : !recipe || !recipe.length ? "이 반제품의 레시피가 없습니다 — 기준정보 반제품에서 원재료 구성을 등록하세요"
       : batches > 0 ? raws.join(" · ")
       : "배합수를 입력하세요";
-    return `<tr data-si="${i}">
-      <td>${semiSel(r.material_id)}</td>
+    const madeTxt = by && made > 0 ? `생산량 <b style="color:var(--ok)">+${NF(made)}${esc(unit)}</b>`
+      : (r.material_id ? (by ? "생산량 0" : "1배합당 생산량 미등록") : "생산량 —");
+    return `<tr data-si="${i}" style="background:rgba(107,63,160,0.045);">
+      <td><span class="chip" style="background:#efe7fb; color:#6b3fa0; margin-right:4px;">반제품</span>${semiSel(r.material_id)}</td>
+      <td class="auto" style="text-align:center; color:#ccc;">—</td>
       <td class="r"><input class="mini-input num" data-sf="batches" value="${r.batches ?? ""}" style="width:56px"
-        title="몇 배합 만들었나 — 이 값으로 원재료 차감·생산량 계산"></td>
-      <td class="r auto">${by && made > 0 ? `${NF(made)}${esc(unit)}` : (r.material_id ? (by ? "0" : "1배합당 생산량 미등록") : "—")}</td>
-      <td class="auto" style="text-align:left; font-size:11px;">${preview}${by && made > 0 ? ` <span style="color:var(--ok)">· 재고 +${NF(made)}${esc(unit)}</span>` : ""}</td>
+        title="배합수 — 이 값으로 원재료 차감·생산량 계산"></td>
+      <td colspan="5" class="auto" style="text-align:left; font-size:11px;">${madeTxt}
+        <span style="color:#999;"> · 원재료소비 ${preview}</span></td>
+      <td class="auto"></td>
       <td><button class="btn ghost sm" data-sdel>삭제</button></td></tr>`;
-  }).join("") || `<tr><td colspan="5" class="auto">+ 반제품 행 추가를 누르세요 (예: 발효종)</td></tr>`;
+  }).join("");
 }
 wireQuickAdd("qaSemiProd", "qaSemiProdList", () => (M.semi || []).filter(p => p.status !== "단종" && p.status !== "중단"), async hit => {
   if (E.semiProd.some(r => r.material_id === hit.id)) return toast(`'${hit.name}'은 이미 반제품 생산에 있습니다`);
@@ -4497,10 +4503,40 @@ function renderSemiRecipe() {
       <td class="auto">g${conv}</td>
       <td><button class="btn ghost sm" data-srdel>삭제</button></td></tr>`;
   }).join("") || '<tr><td colspan="4" class="auto">아래에서 원재료를 검색해 추가하세요</td></tr>';
+  renderSrSuggest();
 }
+/* 1배합당 생산량 자동 제안 — 레시피 원재료 무게(g) 합계를 그대로 제안 (발효 등으로 물이 더해지면 대략 합계와 비슷).
+   반제품 재고 단위가 kg면 g합계를 kg로 환산해 제안. [적용]하면 그 반제품의 batch_yield로 저장. */
+function renderSrSuggest() {
+  const box = $("srSuggest"); if (!box) return;
+  const s = (M.semi || []).find(x => x.id === SR.semiId) || {};
+  const sumG = SR.rows.reduce((t, r) => t + (Number(String(r.qty ?? "").replace(/,/g, "")) || 0), 0);
+  const unit = (s.unit || "g").toLowerCase();
+  const suggest = unit === "kg" ? sumG / 1000 : sumG;   // 반제품 단위로 환산
+  const cur = Number(s.batch_yield) || 0;
+  if (sumG <= 0) { box.innerHTML = `<span style="color:#999;">원재료 소요량을 입력하면 1배합당 생산량을 자동 제안합니다.</span>`; return; }
+  box.innerHTML = `<span>레시피 원재료 합계 <b>${NF(sumG)}g</b> →
+    1배합당 생산량 제안 <b style="color:var(--ok)">${NF(suggest)}${esc(s.unit || "g")}</b></span>
+    <span style="color:#aaa;">현재 등록: ${cur ? NF(cur) + esc(s.unit || "g") : "미등록"}</span>
+    <button class="btn sm" id="srApplyYield" ${cur === suggest ? "disabled" : ""}>이 값을 1배합당 생산량으로 적용</button>`;
+}
+$("srSuggest").addEventListener("click", async e => {
+  if (!e.target.closest("#srApplyYield")) return;
+  const s = (M.semi || []).find(x => x.id === SR.semiId); if (!s) return;
+  const sumG = SR.rows.reduce((t, r) => t + (Number(String(r.qty ?? "").replace(/,/g, "")) || 0), 0);
+  const unit = (s.unit || "g").toLowerCase();
+  const val = Math.round((unit === "kg" ? sumG / 1000 : sumG) * 1000) / 1000;
+  try {
+    await api("/api/masters/semi/" + s.id, { method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...s, batch_yield: val }) });
+    s.batch_yield = val;   // 로컬 마스터도 갱신 (생산실적 미리보기 즉시 반영)
+    toast(`1배합당 생산량을 ${NF(val)}${s.unit || "g"}로 설정했습니다`);
+    renderSrSuggest();
+  } catch (err) { /* api 토스트 */ }
+});
 $("srBody").addEventListener("input", e => {
   const tr = e.target.closest("[data-sri]"); if (!tr) return;
-  if (e.target.dataset.srq !== undefined) SR.rows[+tr.dataset.sri].qty = e.target.value;
+  if (e.target.dataset.srq !== undefined) { SR.rows[+tr.dataset.sri].qty = e.target.value; renderSrSuggest(); }
 });
 $("srBody").addEventListener("click", e => {
   const d = e.target.closest("[data-srdel]"); if (!d) return;
