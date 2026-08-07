@@ -41,11 +41,11 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.53.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.53.1"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
-UPDATE_MANIFEST_URL = ""  # 예: https://github.com/<user>/<repo>/releases/latest/download/version.json
+UPDATE_MANIFEST_URL = "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/version.json"  # 내장 기본값 (exe 옆 update_url.txt가 있으면 그게 우선)
 
 
 def manifest_url():

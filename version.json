@@ -1,5 +1,5 @@
 {
-  "version": "1.53.0",
+  "version": "1.53.1",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· 인원 수불부 셀에 출퇴근 시간(예: 07:30~18:00)을 근무시간과 함께 표시합니다. · 일일 입력에서 저장하지 않은 채 다른 화면으로 넘어가면 '저장하고 이동 / 저장 안 하고 이동 / 취소' 확인창이 뜹니다."
+  "notes": "· 자동 업데이트 안정화 — 업데이트 확인 주소를 앱에 내장했습니다. 이제 exe 옆에 update_url.txt 파일이 없어도 [관리 → 업데이트 확인]이 동작합니다. (이 버전부터 적용)"
 }
