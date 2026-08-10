@@ -30,7 +30,11 @@ function dutySet(duty) {
 }
 async function api(path, opts) {
   const r = await fetch(path, opts);
-  if (r.status === 401) { showLogin(); throw new Error("unauthorized"); }
+  if (r.status === 401) {
+    let m = ""; try { m = (await r.json()).detail; } catch (e) {}
+    showLogin(typeof m === "string" ? m : "");
+    throw new Error("unauthorized");
+  }
   if (!r.ok) {
     let msg = await r.text();
     try { msg = JSON.parse(msg).detail || msg; } catch (e) { /* raw text */ }
@@ -937,12 +941,12 @@ async function loadProdReport() {
           <td class="r">${NF(r.hours)}</td>${hasLabor ? `<td class="r">${r.labor != null ? NF(Math.round(r.labor)) : "—"}</td>` : ""}</tr>`).join("");
         return `<tr style="font-weight:700; background:var(--bg)">
           <td>🏢 ${esc(partner)}</td><td class="auto" style="font-weight:500">${g.rows.length}일</td>
-          <td class="r">연 ${NF(g.cnt)}명</td><td class="r">${g.male || "·"}</td><td class="r">${g.female || "·"}</td>
+          <td class="r" title="기간 내 투입 인원 합계 — 하루 3명이 3일이면 9명 (아래 날짜별 행이 그날 실제 인원)">${NF(g.cnt)}명</td><td class="r">${g.male || "·"}</td><td class="r">${g.female || "·"}</td>
           <td class="r">${NF(g.hours)}</td>${hasLabor ? `<td class="r">${g.labor ? NF(Math.round(g.labor)) : "—"}</td>` : ""}</tr>` + detail;
       }).join("") + (() => {
         const tc = ar.reduce((s, r) => s + r.cnt, 0), th2 = ar.reduce((s, r) => s + r.hours, 0);
         const tl = ar.reduce((s, r) => s + (r.labor || 0), 0);
-        return `<tr style="font-weight:800"><td>합계</td><td></td><td class="r">연 ${NF(tc)}명</td>
+        return `<tr style="font-weight:800"><td>합계</td><td></td><td class="r" title="기간 내 투입 인원 합계">${NF(tc)}명</td>
           <td class="r">${NF(ar.reduce((s, r) => s + r.male, 0))}</td><td class="r">${NF(ar.reduce((s, r) => s + r.female, 0))}</td>
           <td class="r">${NF(th2)}</td>${hasLabor ? `<td class="r">${tl ? NF(Math.round(tl)) : "—"}</td>` : ""}</tr>`;
       })() + "</tbody></table></div>";
@@ -2839,7 +2843,10 @@ async function saveDayBody(body, label, force) {
       await loadDay(E.date);
       return;
     }
-    if (r.status === 401) { showLogin(); throw new Error("unauthorized"); }
+    if (r.status === 401) {
+      let m = ""; try { m = (await r.json()).detail; } catch (e) {}
+      showLogin(typeof m === "string" ? m : ""); throw new Error("unauthorized");
+    }
     if (!r.ok) {
       let msg = await r.text();
       try { msg = JSON.parse(msg).detail || msg; } catch (e) { /* raw */ }
@@ -7408,7 +7415,7 @@ function renderStaffMgmt() {
         ${money ? `<td></td><td class="r">${NF(Math.round(mem.reduce((s, r) => s + (r.labor || 0), 0)))}</td>` : ""}</tr>` : ""}
     </tbody></table></div>` + pagerHtml(mem.length, STAFF.page, STAFF.per);
   const agTbl = d.agency.length ? `<div class="tbl-wrap"><table>
-    <thead><tr><th>용역 업체</th><th class="r">연인원</th><th class="r">근무일수</th><th class="r">시간(h)</th>${money ? '<th class="r">노무비(원)</th>' : ""}</tr></thead>
+    <thead><tr><th>용역 업체</th><th class="r" title="기간 내 투입 인원 합계 (하루 3명이 3일이면 9명)">총 인원</th><th class="r">근무일수</th><th class="r">시간(h)</th>${money ? '<th class="r">노무비(원)</th>' : ""}</tr></thead>
     <tbody class="num">${d.agency.map(r => `<tr>
       <td><b>${esc(r.partner)}</b></td>
       <td class="r">${NF(r.persondays)}명</td>
@@ -7418,7 +7425,7 @@ function renderStaffMgmt() {
     </tbody></table></div>` : "";
   $("staffBody").innerHTML =
     `<div style="font-size:12.5px; font-weight:700; color:var(--muted); margin:2px 0 6px;">정직원</div>` + memberTbl +
-    (d.agency.length ? `<div style="font-size:12.5px; font-weight:700; color:var(--muted); margin:16px 0 6px;">용역 <span class="auto" style="font-weight:400">— 이름 없이 업체별 합계 (연인원 = 투입 건수)</span></div>` + agTbl : "");
+    (d.agency.length ? `<div style="font-size:12.5px; font-weight:700; color:var(--muted); margin:16px 0 6px;">용역 <span class="auto" style="font-weight:400">— 이름 없이 업체별 합계 (총 인원 = 기간 내 투입 인원 합계)</span></div>` + agTbl : "");
 }
 $("staffTabs").addEventListener("click", e => {
   const b = e.target.closest("button[data-sh]"); if (!b) return;
@@ -8437,8 +8444,9 @@ $("sideDim").onclick = () => sideOpen(false);
 $("nav").addEventListener("click", () => sideOpen(false));   // 메뉴 선택 시 서랍 닫기
 
 /* ── 로그인 / 부팅 ───────────────────── */
-function showLogin() {
+function showLogin(msg) {
   $("loginOverlay").style.display = "flex";
+  if (msg && $("loginMsg")) $("loginMsg").textContent = msg;   // 강제 로그아웃 등 사유 표시
   setTimeout(() => $("loginId").focus(), 60);
 }
 async function startApp(me) {
@@ -8976,19 +8984,28 @@ async function chatSend() {
   }
   pollPresence();
 }
-async function doLogin() {
+async function doLogin(force) {
   $("loginMsg").textContent = "";
   const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username: $("loginId").value, password: $("loginPw").value }) });
+    body: JSON.stringify({ username: $("loginId").value, password: $("loginPw").value, force: !!force }) });
+  if (r.status === 409) {   // 같은 아이디가 이미 다른 곳에서 접속 중
+    let d = {}; try { d = (await r.json()).detail || {}; } catch (e) {}
+    if (d && d.code === "already_online") {
+      if (confirm(`'${d.username || $("loginId").value}' 아이디가 이미 다른 곳에서 접속 중입니다.\n\n기존 접속을 끊고 이곳에서 접속할까요?`))
+        return doLogin(true);   // 강제 접속 — 기존 세션 종료
+      $("loginMsg").textContent = "이미 접속 중이라 로그인하지 않았습니다.";
+      return;
+    }
+  }
   if (!r.ok) {
     let msg = "로그인 실패";
-    try { msg = (await r.json()).detail || msg; } catch (e) {}
+    try { const j = await r.json(); if (typeof j.detail === "string") msg = j.detail; } catch (e) {}
     $("loginMsg").textContent = msg;
     return;
   }
   location.reload();   // 세션 쿠키 반영 후 깨끗하게 재시작
 }
-$("loginBtn").onclick = doLogin;
+$("loginBtn").onclick = () => doLogin();
 $("loginPw").addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); });
 $("loginId").addEventListener("keydown", e => { if (e.key === "Enter") $("loginPw").focus(); });
 $("btnLogout").onclick = async () => { await fetch("/api/logout", { method: "POST" }); location.reload(); };
@@ -9025,6 +9042,6 @@ $("pwSaveBtn").onclick = async () => {
   const t = new Date();
   $("todayLbl").textContent = `${todayISO()} (${DOW[t.getDay()]})`;
   const r = await fetch("/api/me");
-  if (r.status === 401) { showLogin(); return; }
+  if (r.status === 401) { let m=""; try{m=(await r.json()).detail}catch(e){} showLogin(typeof m==="string"?m:""); return; }
   await startApp(await r.json());
 })();

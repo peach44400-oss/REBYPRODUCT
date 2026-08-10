@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.64.1"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.65.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -175,6 +175,10 @@ def ripple_material(con, mid, from_date):
 
 # ── 인증/권한 (admin=전체 / op=시급 제외 / guest=보기 전용) ──
 SESSIONS = {}
+# 강제 로그인으로 끊긴 세션 — 옛 브라우저에 사유를 알리기 위한 표시 (sid -> 메시지)
+KICKED = {}
+# 같은 아이디가 '활동 중'으로 볼 시간(초) — presence(75초)와 동일하게, 브라우저를 그냥 닫은 세션은 만료 후 재로그인 허용
+ONLINE_WINDOW = 75
 
 
 def hashpw(pw: str) -> str:
@@ -231,7 +235,9 @@ async def auth_middleware(request: Request, call_next):
     if path.startswith("/api/") and path != "/api/login":
         user = SESSIONS.get(sid)
         if not user:
-            return JSONResponse({"detail": "로그인이 필요합니다"}, status_code=401)
+            msg = KICKED.pop(sid, None)   # 강제 로그인으로 끊긴 세션이면 사유를 알린다
+            return JSONResponse({"detail": msg or "로그인이 필요합니다", "kicked": bool(msg)},
+                                status_code=401)
         # 유휴 세션 만료 — 마지막 활동 후 SESSION_TTL 지나면 자동 로그아웃 (브라우저가 열려 있으면 폴링이 갱신)
         if time.time() - user.get("seen", 0) > SESSION_TTL:
             SESSIONS.pop(sid, None)
@@ -285,6 +291,15 @@ def login(body: dict, response: Response, request: Request):
             LOGIN_FAILS[ip] = r
             raise HTTPException(401, "아이디 또는 비밀번호가 올바르지 않습니다")
         LOGIN_FAILS.pop(ip, None)   # 성공하면 실패 기록 초기화
+        # 같은 아이디가 이미 다른 곳에서 '활동 중'이면 기본은 차단, force면 그 세션을 끊고 이 접속을 허용
+        now2 = time.time()
+        active = [tok for tok, s in list(SESSIONS.items())
+                  if s.get("username") == u["username"] and now2 - s.get("seen", 0) < ONLINE_WINDOW]
+        if active and not body.get("force"):
+            raise HTTPException(409, {"code": "already_online", "username": u["username"]})
+        for tok in active:   # 강제 접속: 기존 세션 종료 (옛 브라우저는 다음 요청에서 안내와 함께 로그아웃)
+            KICKED[tok] = "다른 기기에서 이 아이디로 로그인해 연결이 끊어졌습니다."
+            SESSIONS.pop(tok, None)
         # 구 방식(SHA-256) 해시면 이번 로그인에서 PBKDF2로 자동 업그레이드
         if not str(u["pw_hash"]).startswith("pbkdf2$"):
             con.execute("UPDATE users SET pw_hash=? WHERE id=?", (make_password(pw), u["id"]))
