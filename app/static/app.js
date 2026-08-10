@@ -3770,7 +3770,7 @@ async function renderUsersTab() {
       : dutyCell(u)}</td>
     <td style="white-space:normal; max-width:340px;">${moneyCell}</td>
     <td class="auto">${(u.created_at || "").slice(0, 10)}</td>
-    <td>${u.username !== USERNAME ? `<button class="btn ghost sm" data-udelusr="${u.id}" data-uname="${esc(u.username)}">삭제</button>` : ""}</td></tr>`;
+    <td style="white-space:nowrap;">${u.role !== "admin" ? `<button class="btn ghost sm" data-upw="${u.id}" data-uname="${esc(u.username)}" title="이 사용자의 비밀번호를 재설정">🔑 비번</button> ` : ""}${u.username !== USERNAME ? `<button class="btn ghost sm" data-udelusr="${u.id}" data-uname="${esc(u.username)}">삭제</button>` : ""}</td></tr>`;
   }).join("");
   $("mHint").textContent = "권한: admin=전체 · op=입력 가능 · guest=보기 전용 | 담당: 체크한 항목만 일일 입력에서 저장 가능 — 여러 개 지정 가능, 전부 체크=전체, 하나도 없으면 저장 불가 (특이사항 메모는 담당이 하나라도 있으면 가능) | 금액: 기본은 전부 숨김 — 체크한 항목만 그 사용자에게 표시. 바꾸면 접속 중인 화면에도 20초 내 적용";
   $("mAdd").textContent = "+ 새 사용자";
@@ -4331,6 +4331,18 @@ $("mBody").addEventListener("click", e => {
     if (sel) sel.value = String(parent.id);
     const proc = document.querySelector('#mstForm [data-mf="process"]');
     if (proc) setTimeout(() => proc.focus(), 60);
+    return;
+  }
+  const upw = e.target.closest("[data-upw]");
+  if (upw) {
+    const name = upw.dataset.uname;
+    const np = prompt(`'${name}' 사용자의 새 비밀번호를 입력하세요.\n(이 비밀번호를 사용자에게 알려주고, 로그인 후 [내 설정]에서 바꾸도록 안내하세요)`);
+    if (np == null) return;                       // 취소
+    if (!np.trim()) return toast("새 비밀번호를 입력하세요");
+    api("/api/users/" + upw.dataset.upw + "/password", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: np.trim() }) })
+      .then(r => toast(`'${r.username}' 비밀번호를 재설정했습니다${r.weak ? " (너무 단순한 비밀번호예요)" : ""} — 이 비밀번호로 로그인하도록 알려주세요`))
+      .catch(() => {});
     return;
   }
   const du = e.target.closest("[data-udelusr]");

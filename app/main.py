@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.65.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.66.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -613,6 +613,34 @@ def users_update(request: Request, uid: int, body: dict):
               + (f" 금액:[{mperms}]" if mperms is not None else ""))
         con.commit()
         return {"ok": True}
+    finally:
+        con.close()
+
+
+@app.post("/api/users/{uid}/password")
+def users_set_password(request: Request, uid: int, body: dict):
+    """관리자가 일반 사용자의 비밀번호를 재설정 (비밀번호를 잊었을 때). admin 계정은 대상 아님.
+    재설정하면 그 사용자의 접속은 끊겨 새 비밀번호로 다시 로그인하게 된다."""
+    require_admin(request)
+    new = (body.get("password") or "").strip()
+    if not new:
+        raise HTTPException(400, "새 비밀번호를 입력하세요")
+    con = connect()
+    try:
+        target = con.execute("SELECT id, username, role FROM users WHERE id=?", (uid,)).fetchone()
+        if not target:
+            raise HTTPException(404, "사용자 없음")
+        if target["role"] == "admin":
+            raise HTTPException(400, "admin 계정 비밀번호는 [내 설정]에서만 바꿀 수 있습니다")
+        con.execute("UPDATE users SET pw_hash=? WHERE id=?", (make_password(new), uid))
+        audit(con, "user_pw_reset", f"{target['username']} 비밀번호 관리자 재설정")
+        con.commit()
+        # 그 사용자가 접속 중이면 끊어 새 비밀번호로 다시 로그인하게 한다
+        for tok, s in list(SESSIONS.items()):
+            if s.get("id") == uid:
+                KICKED[tok] = "관리자가 비밀번호를 재설정했습니다 — 새 비밀번호로 다시 로그인해주세요."
+                SESSIONS.pop(tok, None)
+        return {"ok": True, "username": target["username"], "weak": is_weak_password(new)}
     finally:
         con.close()
 
