@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.77.1"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.77.2"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -3980,6 +3980,26 @@ def dashboard(request: Request):
         expiry = expiry[:8]
         lot_date = today if expiry else None
 
+        # 원부자재 유통기한 만료·임박 — 폐기 전까지 매일 계속 표시(지나간 만료도 까먹지 않게 대시보드 상시 노출)
+        mat_exp = []
+        for m in con.execute("""SELECT id, name, unit, COALESCE(shelf_days,0) shelf_days
+                FROM material WHERE kind IN ('raw','sub') AND COALESCE(status,'') NOT IN ('단종','중지')"""):
+            _, m_expired, m_batches = material_stock_expiry(con, m["id"], today, m["shelf_days"])
+            m_exps = sorted(b["exp"] for b in m_batches if b["exp"])
+            m_next = m_exps[0] if m_exps else ""
+            m_dleft = None
+            if m_next:
+                try:
+                    m_dleft = (dt.date.fromisoformat(m_next) - dt.date.today()).days
+                except (ValueError, TypeError):
+                    m_dleft = None
+            if m_expired > 1e-6 or (m_dleft is not None and 0 <= m_dleft <= 7):
+                mat_exp.append({"id": m["id"], "name": m["name"], "unit": m["unit"],
+                                "expired": m_expired, "expiry": m_next, "days_left": m_dleft})
+        mat_exp.sort(key=lambda x: (x["days_left"] if x["days_left"] is not None else 999))
+        mat_expired_cnt = sum(1 for x in mat_exp if x["expired"] > 1e-6)
+        mat_soon_cnt = sum(1 for x in mat_exp if x["expired"] <= 1e-6)
+
         admin = mcan(request, "prod")            # 생산·출고·재고 금액
         can_labor = mcan(request, "labor")       # 노무비
         base = last or today   # 데이터가 없으면 오늘 기준 (빈 값)
@@ -4110,6 +4130,7 @@ def dashboard(request: Request):
         return {"kpi": kpi, "trend": trend, "low": low, "lastday": lastday,
                 "expiry": expiry, "lot_date": lot_date, "lot_warn": lot_warn,
                 "lot_expired": lot_expired,
+                "mat_expiry": mat_exp[:12], "mat_expired": mat_expired_cnt, "mat_soon": mat_soon_cnt,
                 "today": today, "today_entered": bool(today_entered), "last_day": last,
                 "ach": ach, "prod_low": prod_low,
                 "prod_stock_qty": prod_stock_qty,

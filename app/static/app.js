@@ -467,6 +467,26 @@ async function loadDash() {
       <td>${esc(r.order_date) || "—"}</td><td class="auto">${r.date}</td></tr>`).join("")
     : `<tr><td colspan="6" class="auto">부족 자재가 없습니다. 안전재고는 기준정보에서 설정합니다.</td></tr>`;
 
+  // 자재 유통기한 만료·임박 — 폐기 전까지 대시보드에 상시 노출(지나간 만료도 놓치지 않게)
+  const me = d.mat_expiry || [];
+  const meCard = $("matExpCard");
+  if (meCard) {
+    meCard.style.display = me.length ? "" : "none";
+    $("matExpLbl").textContent = ((d.mat_expired || 0) ? `만료 ${d.mat_expired}종` : "")
+      + ((d.mat_expired || 0) && (d.mat_soon || 0) ? " · " : "") + ((d.mat_soon || 0) ? `임박 ${d.mat_soon}종` : "");
+    $("matExpList").innerHTML = me.map(r => {
+      const expired = r.expired > 0;
+      const badge = expired
+        ? `<span class="chip crit">만료 ${NF(r.expired)}${esc(r.unit)}</span>`
+        : `<span class="q num" style="color:${(r.days_left != null && r.days_left <= 3) ? "var(--crit)" : "#B45309"}">D-${r.days_left}</span>`;
+      return `<div class="feed-item"><span>${expired ? "⚠️ " : "⏰ "}<b>${esc(r.name)}</b>
+        <span class="auto" style="font-size:11.5px"> 소비 ${r.expiry ? esc(r.expiry.slice(5)) : "—"}${expired ? " 지남" : ""}</span></span>
+        ${badge}</div>`;
+    }).join("");
+  }
+  const mc = $("navMatCnt");
+  if (mc) { const n = (d.mat_expired || 0) + lowTotal; mc.style.display = n > 0 ? "" : "none"; mc.textContent = n; }
+
   $("expLbl").textContent = (d.lot_expired ? `만료 ${d.lot_expired} · ` : "") + (d.lot_date ? `${d.lot_date} 기준` : "");
   $("expList").innerHTML = d.expiry.length ? d.expiry.map(r => {
     const expired = r.days_left != null && r.days_left < 0;
