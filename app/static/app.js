@@ -4569,14 +4569,16 @@ const MFORMS = {
     ["spec", "규격 (예: 20kg 포대)"], ["unit", "단위", "sel", ["kg", "g", "L", "개", "ea"]],
     ["pack_count", "개입수 (개수 단위일 때만 · 예: 16개입=16 → 소모=생산수량÷개입수)", "num"],
     ["pack_set", "포장 세트 (읽기 전용 — 부재료 탭의 [📦 포장 세트]에서 관리 · 여러 세트 동시 소속 가능)", "ro"],
-    ["unit_price", "단가 (원)", "num"], ["safety_stock", "안전재고", "num"], ["shelf_days", "소비기한 (보관일수, 일)", "num"], ["initial_stock", "초기재고 (신규만)", "num"],
+    ["unit_price", "단가 (원)", "num"], ["price_from", "단가 적용 시작일 (비우면 오늘 · 이 날짜부터 새 단가로 원가 계산)", "date"],
+    ["safety_stock", "안전재고", "num"], ["shelf_days", "소비기한 (보관일수, 일)", "num"], ["initial_stock", "초기재고 (신규만)", "num"],
     ["stock_set", "현재고 (아래 기준일의 실사 기록으로 저장됩니다)", "num"], ["stock_date", "기준일 (이 날짜에 기록)", "date"],
     ["status", "상태", "sel", ["사용중", "중단"]], ["note", "비고", "full"]],
   sub: [["name", "자재명 *"], ["kind", "구분", "sel", [["sub", "부재료"], ["raw", "원재료"]]],
     ["spec", "규격 (예: 500ea/롤)"], ["unit", "단위", "sel", ["개", "ea", "롤", "박스", "묶음", "매"]],
     ["pack_count", "개입수 (개수 단위일 때만 · 예: 16개입=16 → 소모=생산수량÷개입수)", "num"],
     ["pack_set", "포장 세트 (읽기 전용 — 부재료 탭의 [📦 포장 세트]에서 관리 · 여러 세트 동시 소속 가능)", "ro"],
-    ["unit_price", "단가 (원)", "num"], ["safety_stock", "안전재고", "num"], ["shelf_days", "소비기한 (보관일수, 일)", "num"], ["initial_stock", "초기재고 (신규만)", "num"],
+    ["unit_price", "단가 (원)", "num"], ["price_from", "단가 적용 시작일 (비우면 오늘 · 이 날짜부터 새 단가로 원가 계산)", "date"],
+    ["safety_stock", "안전재고", "num"], ["shelf_days", "소비기한 (보관일수, 일)", "num"], ["initial_stock", "초기재고 (신규만)", "num"],
     ["stock_set", "현재고 (아래 기준일의 실사 기록으로 저장됩니다)", "num"], ["stock_date", "기준일 (이 날짜에 기록)", "date"],
     ["prod_mult", "단위당 수량 (생산가능 환산)", "num"], ["prod_per", "1회 생산 소요량", "num"],
     ["status", "상태", "sel", ["사용중", "중단"]], ["note", "비고", "full"]],
@@ -4695,7 +4697,7 @@ function openMaster(type, row) {
     : "등록 즉시 일일 입력의 선택 목록에 나타납니다.";
   $("mstForm").innerHTML = MFORMS[type].map(([f, label, kind, opts]) => {
     if (row && f === "initial_stock") return "";
-    if (!row && (f === "stock_set" || f === "stock_date")) return "";
+    if (!row && (f === "stock_set" || f === "stock_date" || f === "price_from")) return "";   // 단가 적용일은 수정 시에만
     // 자재의 구분(원↔부)은 수정 시에만 — 신규는 탭이 곧 구분. 인원 등 다른 탭의 kind는 항상 표시
     if (!row && f === "kind" && (type === "raw" || type === "sub")) return "";
     if (f === "wage" && !canM("labor")) return "";     // 시급 — 노무비 권한
@@ -7144,11 +7146,22 @@ async function openMatHistory(mid) {
           <td class="r">${r.cnt}</td>
           <td class="auto" style="text-align:right;">${r.lastDate.slice(5)}</td></tr>`).join("")}</tbody>
       </table>` : "";
+    const periodsTable = (priceD.periods && priceD.periods.length > 1) ? `
+      <div style="font-size:11.5px; font-weight:700; margin:10px 0 4px;">📆 기간별 단가 <span class="auto" style="font-weight:400">— 이 단가로 원가·월간리포트가 계산됩니다</span></div>
+      <table style="width:100%; font-size:11.5px;">
+        <thead><tr style="color:var(--muted);"><th style="text-align:left;">적용 시작</th><th style="text-align:left;">종료</th><th class="r">단가</th><th style="text-align:left;">구분</th></tr></thead>
+        <tbody class="num">${priceD.periods.slice().reverse().map(pr => `<tr>
+          <td style="text-align:left;">${esc(pr.from)}</td>
+          <td style="text-align:left;" class="auto">${pr.to ? esc(pr.to) + " 전날까지" : "현재까지"}</td>
+          <td class="r" style="font-weight:700;">${NF(pr.price)}원</td>
+          <td style="text-align:left;"><span class="chip cat" title="${pr.source === "지정" ? "관리자가 적용 시작일과 함께 지정" : "입고 단가"}">${pr.source}</span></td></tr>`).join("")}</tbody>
+      </table>` : "";
     priceSec = `
     <div style="border:1px solid var(--line-soft); border-radius:10px; padding:10px 12px; margin-bottom:12px;">
       <div style="font-size:12.5px; font-weight:800; margin-bottom:4px;">💰 단가 추이
-        <span class="auto" style="font-weight:500">— 입고 단가 ${pts.length}건 · 최근 ${NF(last.price)}원/${esc(d.unit)}${chg}</span></div>
+        <span class="auto" style="font-weight:500">— 단가 ${pts.length}건 · 최근 ${NF(last.price)}원/${esc(d.unit)}${chg}</span></div>
       <div style="height:150px;"><canvas id="mhPriceCv"></canvas></div>
+      ${periodsTable}
       ${paTable}
     </div>`;
   } else if (priceD) {

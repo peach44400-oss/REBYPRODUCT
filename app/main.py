@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.72.1"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.73.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -1717,7 +1717,16 @@ def latest_material_prices(con, upto=None):
     q2 += " ORDER BY date"
     for r in con.execute(q2, p2):
         priced.append((r["date"], r["material_id"], r["price"]))
-    priced.sort(key=lambda x: x[0])
+    # 관리자가 '적용 시작일'과 함께 지정한 단가 변경 이력도 날짜 포인트로 합친다 (같은 날짜면 수동 지정이 뒤 → 우선)
+    q3 = "SELECT from_date, material_id, price FROM material_price WHERE price>0"
+    p3 = []
+    if upto:
+        q3 += " AND from_date<=?"
+        p3.append(upto)
+    q3 += " ORDER BY from_date, id"
+    for r in con.execute(q3, p3):
+        priced.append((r["from_date"], r["material_id"], r["price"]))
+    priced.sort(key=lambda x: x[0])   # 날짜 오름차순 — dict 갱신으로 각 자재의 '가장 최근' 값이 남음
     return {mid: price for _, mid, price in priced}
 
 
@@ -1751,9 +1760,25 @@ def matprice(request: Request, mid: int):
                 WHERE material_id=? AND price>0 AND note NOT LIKE '발주 #%' ORDER BY date""", (mid,)):
             pts.append({"date": r["date"], "po_id": None, "price": r["price"],
                         "partner": r["partner"], "qty": r["qty"]})
+        # 관리자가 '적용 시작일'과 함께 지정한 단가 변경 이력
+        manual = []
+        for r in con.execute("""SELECT from_date, price FROM material_price
+                WHERE material_id=? ORDER BY from_date, id""", (mid,)):
+            pts.append({"date": r["from_date"], "po_id": None, "price": r["price"],
+                        "partner": "단가 지정", "qty": 0, "manual": True})
+            manual.append({"from_date": r["from_date"], "price": r["price"]})
         pts.sort(key=lambda x: x["date"])
+        # 기간별 단가(periods) — 모든 단가 포인트를 날짜순으로 훑어 값이 바뀔 때마다 한 구간
+        periods = []
+        for p in pts:
+            if not periods or abs(periods[-1]["price"] - p["price"]) > 1e-9:
+                periods.append({"from": p["date"], "price": p["price"],
+                                "source": "지정" if p.get("manual") else "입고"})
+        for i in range(len(periods)):   # 각 구간의 종료일 = 다음 구간 시작 전날 표시용
+            periods[i]["to"] = periods[i + 1]["from"] if i + 1 < len(periods) else ""
         return {"name": m["name"], "unit": m["unit"] or "",
-                "base_price": m["unit_price"] or 0, "points": pts}
+                "base_price": m["unit_price"] or 0, "points": pts,
+                "manual": manual, "periods": periods}
     finally:
         con.close()
 
@@ -3450,6 +3475,10 @@ def master_update(mtype: str, mid: int, body: dict):
         raise HTTPException(400, "현재고에 음수는 입력할 수 없습니다")
     con = connect()
     try:
+        old_price = None   # 자재 단가 변경 이력 기록용 (변경 전 값)
+        if mtype in ("raw", "sub", "semi") and "unit_price" in vals:
+            _op = con.execute("SELECT unit_price FROM material WHERE id=?", (mid,)).fetchone()
+            old_price = _op["unit_price"] if _op else None
         if mtype == "line" and "parent_id" in vals:
             _check_line_parent(con, vals.get("parent_id"), mid)
             # 대표 라인을 공정으로 강등하면 그 아래 공정들이 고아가 됨 → 차단
@@ -3465,6 +3494,19 @@ def master_update(mtype: str, mid: int, body: dict):
                 # 자재 구분(원↔부) 변경 시 같은 이름이 반대 구분에 이미 있으면 발생
                 raise HTTPException(400, "같은 이름의 자재가 대상 구분(원재료/부재료)에 이미 있습니다 — "
                                     "기존 항목을 사용하거나 이름을 구분해 주세요")
+        # 자재 단가가 바뀌었거나 '적용 시작일'을 지정했으면 단가 이력에 한 줄 기록 (그 날짜부터 계산에 반영)
+        if mtype in ("raw", "sub", "semi") and "unit_price" in vals:
+            try:
+                newp = float(vals.get("unit_price") or 0)
+            except (TypeError, ValueError):
+                newp = 0.0
+            pf = (body.get("price_from") or "").strip()
+            changed = abs(float(old_price or 0) - newp) > 1e-9
+            if newp > 0 and (pf or changed):
+                fd = pf if re.match(r"^\d{4}-\d{2}-\d{2}$", pf) else dt.date.today().isoformat()
+                con.execute("INSERT INTO material_price(material_id, from_date, price, set_at) "
+                            "VALUES(?,?,?,datetime('now','localtime'))", (mid, fd, newp))
+                audit(con, "mat_price", f"자재#{mid} 단가 {fd}부터 {newp:g}원")
         # 현재고 직접 수정: 기초재고(opening_stock)를 조정해 계산 재고가 입력값이 되도록
         if mtype == "product" and stock_set is not None:
             cur = con.execute("""

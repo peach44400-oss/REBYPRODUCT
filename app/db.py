@@ -194,6 +194,18 @@ CREATE TABLE IF NOT EXISTS material_in (
 );
 CREATE INDEX IF NOT EXISTS idx_matin_date ON material_in(date);
 
+-- 자재 단가 변경 이력 — 관리자가 '적용 시작일'과 함께 단가를 바꾸면 한 줄씩 쌓인다.
+--  원가·월간리포트는 그 날짜(from_date) 이후로 이 단가를 (실입고 단가와 함께) 날짜별로 반영한다.
+CREATE TABLE IF NOT EXISTS material_price (
+  id INTEGER PRIMARY KEY,
+  material_id INTEGER NOT NULL REFERENCES material(id),
+  from_date TEXT NOT NULL,             -- 적용 시작일 (YYYY-MM-DD)
+  price REAL NOT NULL DEFAULT 0,
+  note TEXT DEFAULT '',
+  set_at TEXT DEFAULT ''               -- 기록 시각
+);
+CREATE INDEX IF NOT EXISTS idx_matprice ON material_price(material_id, from_date);
+
 -- 입고 없이 보유한 재고(전일/초기재고)의 소비기한·제조일자 — 자재 이력에서 수동 입력 (수불부 표시용)
 CREATE TABLE IF NOT EXISTS material_expiry (
   material_id INTEGER NOT NULL,
