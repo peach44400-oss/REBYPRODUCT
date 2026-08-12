@@ -3192,7 +3192,7 @@ function renderPhotos() {
   if ($("capturePhotoBtn")) $("capturePhotoBtn").style.display = (canEdit && isMobileDevice()) ? "" : "none";
   box.innerHTML = (E.photos && E.photos.length)
     ? E.photos.map(p => `<div class="ph-item">
-        <img src="/dayphoto/${encodeURIComponent(p.file)}" alt="생산 사진">
+        <img class="lb-img" style="cursor:zoom-in;" src="/dayphoto/${encodeURIComponent(p.file)}" alt="생산 사진" title="클릭하면 크게 보기">
         ${canEdit ? `<button class="ph-del" data-delphoto="${p.id}" title="삭제">✕</button>` : ""}</div>`).join("")
     : '<div class="ph-empty">첨부된 사진이 없습니다.</div>';
 }
@@ -3223,6 +3223,22 @@ async function uploadDayPhoto(e) {
 }
 $("photoFile").addEventListener("change", uploadDayPhoto);
 $("photoCapture").addEventListener("change", uploadDayPhoto);   // 촬영한 사진도 동일 업로드
+// 사진 크게 보기 — .lb-img 클릭 시 라이트박스로 확대, 아무 곳이나 클릭하면 닫힘
+function openImageLightbox(src) {
+  $("imgLightboxImg").src = src;
+  $("imgLightbox").classList.add("on");
+}
+document.addEventListener("click", e => {
+  const img = e.target.closest("img.lb-img"); if (!img) return;
+  openImageLightbox(img.src);
+});
+$("imgLightbox").addEventListener("click", () => {
+  $("imgLightbox").classList.remove("on");
+  $("imgLightboxImg").src = "";
+});
+document.addEventListener("keydown", e => {   // ESC로 닫기
+  if (e.key === "Escape" && $("imgLightbox").classList.contains("on")) $("imgLightbox").click();
+});
 
 /* ══ 저장 전 요약 확인 ══ */
 function showSaveSum(body, label) {
@@ -4936,8 +4952,8 @@ async function loadLookup(date) {
   // 생산 사진 (보기 전용)
   const photoHtml = (d.photos || []).length
     ? `<div class="photo-grid" style="margin-top:4px;">${d.photos.map(p =>
-        `<div class="ph-item"><img src="/dayphoto/${encodeURIComponent(p.file)}" alt="생산 사진"
-           style="cursor:pointer" onclick="window.open('/dayphoto/${encodeURIComponent(p.file)}','_blank')"></div>`).join("")}</div>`
+        `<div class="ph-item"><img class="lb-img" src="/dayphoto/${encodeURIComponent(p.file)}" alt="생산 사진"
+           style="cursor:zoom-in;" title="클릭하면 크게 보기"></div>`).join("")}</div>`
     : "";
   const sec = (title, html) => html
     ? `<div style="font-size:12px;font-weight:800;color:var(--muted);margin:14px 0 6px;">${title}</div>${html}` : "";

@@ -1,5 +1,5 @@
 {
-  "version": "1.72.0",
+  "version": "1.72.1",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· 분석·조회에 [특이사항] 화면 추가 — 일일 입력에 적은 특이사항(메모)을 날짜별(최신순)로 한 페이지 100건씩 모아 보고, 100건이 넘으면 페이지를 넘겨 볼 수 있습니다."
+  "notes": "· 생산 현장 사진을 클릭하면 팝업으로 크게 볼 수 있습니다 (아무 곳이나 클릭 또는 ESC로 닫기). 기록 조회의 사진도 동일하게 크게 보입니다."
 }

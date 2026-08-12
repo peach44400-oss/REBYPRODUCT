@@ -2227,6 +2227,10 @@
   </div>
 </div>
 <div class="toast" id="toast"></div>
+<!-- 사진 크게 보기 (라이트박스) — 사진 클릭 시 전체화면으로 확대, 아무 곳이나 클릭하면 닫힘 -->
+<div class="overlay" id="imgLightbox" style="cursor:zoom-out; z-index:1600; background:rgba(12,12,12,.82);">
+  <img id="imgLightboxImg" alt="사진 크게 보기" style="max-width:94vw; max-height:92vh; border-radius:8px; box-shadow:0 12px 44px rgba(0,0,0,.55);">
+</div>
 <!-- 전역 저장 FAB — 열린 모달/화면의 저장 버튼을 스크롤 없이 우측 하단에서 실행 -->
 <button class="save-fab" id="globalSaveFab" style="display:none; bottom:22px; z-index:1180;">💾 저장</button>
 <div id="numPad">
