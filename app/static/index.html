@@ -676,6 +676,10 @@
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="7" cy="7" r="4.2" stroke="currentColor" stroke-width="1.5"/><path d="m10.2 10.2 3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
         <em>기록 조회</em>
       </button>
+      <button data-scr="memos" title="일일 입력에 적은 특이사항(메모)을 날짜별로 모아 보기">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2.5" y="2.5" width="11" height="11" rx="2" stroke="currentColor" stroke-width="1.4"/><path d="M5 6h6M5 8.3h6M5 10.6h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        <em>특이사항</em>
+      </button>
       <button id="navLedger" title="수불부 — 원료·완제품 수불을 날짜별(파일철 양식)로 보기·인쇄">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2.5" y="2" width="11" height="12" rx="1" stroke="currentColor" stroke-width="1.4"/><path d="M5 5.5h6M5 8h6M5 10.5h4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
         <em>수불부</em>
@@ -1311,6 +1315,15 @@
             <h2>날짜를 선택하세요</h2>
           </div>
         </div>
+      </div>
+    </section>
+
+    <!-- 특이사항(일일 메모) 목록 -->
+    <section class="screen" id="scr-memos">
+      <div class="card">
+        <h2>특이사항 <span class="sub">일일 입력에 적은 메모를 날짜별로 모아 최신순으로 표시 (한 페이지 100건)</span></h2>
+        <div id="memoList" style="margin-top:6px;"></div>
+        <div id="memoPager" class="pager-wrap" style="margin-top:12px;"></div>
       </div>
     </section>
 

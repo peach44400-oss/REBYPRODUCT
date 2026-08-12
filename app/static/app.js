@@ -79,7 +79,7 @@ async function reloadMaster(t) {
 }
 
 /* ── 네비게이션 ─────────────────────── */
-const TITLES = { dash: "대시보드", prod: "생산 현황", ship: "출고 현황", postat: "발주 현황", entry: "일일 입력", lot: "LOT 관리", items: "기준정보 관리", ana: "분석", lookup: "기록 조회", staff: "인원 관리" };
+const TITLES = { dash: "대시보드", prod: "생산 현황", ship: "출고 현황", postat: "발주 현황", entry: "일일 입력", lot: "LOT 관리", items: "기준정보 관리", ana: "분석", lookup: "기록 조회", memos: "특이사항", staff: "인원 관리" };
 /* 표 검색(필터)은 화면·탭을 옮기면 초기화한다.
    남아 있으면 다른 화면에서 '등록된 항목이 없습니다'만 보여 데이터가 없는 것처럼 오해하게 된다.
    ※ 행 추가용 검색(qaProd 등)은 필터가 아니라 입력칸이므로 대상 아님. */
@@ -115,7 +115,7 @@ $("nav").addEventListener("click", e => {
   $("scrTitle").textContent = TITLES[b.dataset.scr];
   resetSearches();
   const fn = { dash: loadDash, prod: loadProd, ship: loadShip, entry: openEntry, lot: loadLot, items: renderMasters, ana: loadAna, lookup: () => lkCal.render(),
-    postat: loadPoStat,
+    postat: loadPoStat, memos: loadMemos,
     staff: () => { STAFF.mode = "d"; STAFF.date = todayISO();   // 진입 시 항상 일별·오늘로 초기화
       document.querySelectorAll("#staffTabs button").forEach(x => x.classList.toggle("on", x.dataset.sh === "d"));
       loadStaff(); } }[b.dataset.scr];
@@ -747,6 +747,31 @@ function pagerHtml(total, page, per) {
   return h;
 }
 function pageSlice(arr, page, per) { return arr.slice((page - 1) * per, page * per); }
+
+/* ── 특이사항(일일 메모) 목록 — 날짜별, 최신순, 100건/페이지 + 페이지네이션 ── */
+const MEMOS = { page: 1, per: 100 };
+async function loadMemos(page) {
+  MEMOS.page = page || MEMOS.page || 1;
+  let d;
+  try { d = await api(`/api/memos?page=${MEMOS.page}&per=${MEMOS.per}`); }
+  catch (e) { return; }
+  MEMOS.page = d.page;
+  const list = $("memoList"), pager = $("memoPager");
+  if (!list) return;
+  const dow = s => ["일", "월", "화", "수", "목", "금", "토"][new Date(s + "T00:00").getDay()];
+  list.innerHTML = (d.items || []).length
+    ? `<div class="auto" style="font-size:12px; margin-bottom:8px;">전체 ${NF(d.total)}건 · ${MEMOS.page}페이지</div>`
+      + d.items.map(m => `<div style="display:flex; gap:12px; padding:9px 4px; border-bottom:1px solid var(--line-soft); align-items:flex-start;">
+          <span class="num" style="flex:none; min-width:112px; font-weight:700; font-size:12.5px;">${esc(m.date)} <span class="auto" style="font-weight:400;">(${dow(m.date)})</span></span>
+          <span style="flex:1; white-space:pre-wrap; word-break:break-word; font-size:13px; line-height:1.55;">${esc(m.memo)}</span>
+        </div>`).join("")
+    : '<div class="auto" style="padding:20px; text-align:center;">특이사항으로 적은 메모가 없습니다 — 일일 입력의 특이사항 칸에 적으면 여기 모입니다</div>';
+  if (pager) pager.innerHTML = pagerHtml(d.total, MEMOS.page, MEMOS.per);
+}
+$("memoPager").addEventListener("click", e => {
+  const b = e.target.closest("[data-pg]"); if (!b || b.disabled) return;
+  loadMemos(+b.dataset.pg);
+});
 
 function tableToCsv(headEl, bodyEl, filename) {
   const cell = td => `"${td.textContent.replace(/\s+/g, " ").trim().replace(/"/g, '""')}"`;

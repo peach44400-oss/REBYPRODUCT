@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.71.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.72.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -5383,6 +5383,24 @@ def fin_ledger(request: Request, date: str = ""):
                 "rows": out, "prev": prev_d, "next": next_d,
                 "totals": {"prev": round(tot_prev, 3), "prod": round(tot_prod, 3),
                            "ship": round(tot_ship, 3), "stock": round(tot_stock, 3)}}
+    finally:
+        con.close()
+
+
+# ── 특이사항(일일 메모) 목록 ─────────────────────────────
+@app.get("/api/memos")
+def memos_list(request: Request, page: int = 1, per: int = 100):
+    """일일 입력에 적은 특이사항(메모)을 날짜별로 모아 최신순으로 — 페이지네이션."""
+    con = connect()
+    try:
+        per = max(1, min(500, int(per or 100)))
+        page = max(1, int(page or 1))
+        total = con.execute(
+            "SELECT COUNT(*) c FROM day_record WHERE TRIM(COALESCE(memo,''))!=''").fetchone()["c"]
+        items = rows(con.execute(
+            "SELECT date, memo FROM day_record WHERE TRIM(COALESCE(memo,''))!='' "
+            "ORDER BY date DESC LIMIT ? OFFSET ?", (per, (page - 1) * per)))
+        return {"items": items, "total": total, "page": page, "per": per}
     finally:
         con.close()
 
