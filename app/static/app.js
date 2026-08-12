@@ -1108,6 +1108,26 @@ renderEntryTabs();
 $("entrySaveFab").addEventListener("click", () => {
   $(entryTab === "stock" ? "btnSaveStock" : "btnSaveDay").click();
 });
+// 전역 저장 FAB — 열린 모달(팝업)의 [저장] 버튼을 우측 하단에서 대신 눌러준다 (스크롤 없이 저장)
+function refreshGlobalSaveFab() {
+  const fab = $("globalSaveFab"); if (!fab) return;
+  const ovs = [...document.querySelectorAll(".overlay.on")];
+  let target = null;
+  for (const o of ovs) {   // 여러 개면 마지막(가장 위) 모달 기준
+    const b = [...o.querySelectorAll(".modal-foot button")]
+      .find(x => x.offsetParent !== null && !x.disabled && /저장/.test(x.textContent));
+    if (b) target = b;
+  }
+  fab._target = target;
+  if (target) { fab.textContent = "💾 " + target.textContent.trim(); fab.style.display = ""; }
+  else fab.style.display = "none";
+  const ef = $("entrySaveFab");         // 모달이 떠 있으면 일일입력 FAB는 숨겨 중복 방지
+  if (ef) ef.style.display = ovs.length ? "none" : "";
+}
+$("globalSaveFab").addEventListener("click", () => {
+  const t = $("globalSaveFab")._target; if (t) t.click();
+});
+setInterval(refreshGlobalSaveFab, 350);
 
 /* API staffing 행 → 편집 상태. 용역 = 개인별 [{h(시간), w(시급)}] — staffing_agency 상세가 있으면
    그대로, 없으면(구 데이터) 집계값에서 복원(시간 균등 분배, 시급은 라인 공통값). */
