@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.73.1"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.74.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -1762,11 +1762,11 @@ def matprice(request: Request, mid: int):
                         "partner": r["partner"], "qty": r["qty"]})
         # 관리자가 '적용 시작일'과 함께 지정한 단가 변경 이력
         manual = []
-        for r in con.execute("""SELECT from_date, price FROM material_price
+        for r in con.execute("""SELECT id, from_date, price FROM material_price
                 WHERE material_id=? ORDER BY from_date, id""", (mid,)):
             pts.append({"date": r["from_date"], "po_id": None, "price": r["price"],
-                        "partner": "단가 지정", "qty": 0, "manual": True})
-            manual.append({"from_date": r["from_date"], "price": r["price"]})
+                        "partner": "단가 지정", "qty": 0, "manual": True, "pid": r["id"]})
+            manual.append({"id": r["id"], "from_date": r["from_date"], "price": r["price"]})
         pts.sort(key=lambda x: x["date"])
         # 기간별 단가(periods) — 모든 단가 포인트를 날짜순으로 훑어 값이 바뀔 때마다 한 구간
         periods = []
@@ -1779,6 +1779,65 @@ def matprice(request: Request, mid: int):
         return {"name": m["name"], "unit": m["unit"] or "",
                 "base_price": m["unit_price"] or 0, "points": pts,
                 "manual": manual, "periods": periods}
+    finally:
+        con.close()
+
+
+def _sync_material_price(con, mid):
+    """가장 최근(오늘 기준) 단가를 material.unit_price에 반영 — 목록·폴백 표시용."""
+    today = dt.date.today().isoformat()
+    r = con.execute("""SELECT price FROM material_price WHERE material_id=? AND from_date<=?
+                       ORDER BY from_date DESC, id DESC LIMIT 1""", (mid, today)).fetchone()
+    if r:
+        con.execute("UPDATE material SET unit_price=? WHERE id=?", (r["price"], mid))
+
+
+@app.post("/api/matprice/{mid}")
+def matprice_add(request: Request, mid: int, body: dict):
+    """자재 단가 이력 한 줄 추가 — 적용 시작일 + 단가. 같은 날짜면 갱신."""
+    if not mcan(request, "mat"):
+        raise HTTPException(403, "단가 편집 권한이 없습니다")
+    fd = (body.get("from_date") or "").strip()
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", fd):
+        raise HTTPException(400, "적용 시작일(YYYY-MM-DD)을 입력하세요")
+    try:
+        price = float(body.get("price") or 0)
+    except (TypeError, ValueError):
+        price = 0
+    if price <= 0:
+        raise HTTPException(400, "단가를 입력하세요")
+    con = connect()
+    try:
+        ex = con.execute("SELECT id FROM material_price WHERE material_id=? AND from_date=?",
+                         (mid, fd)).fetchone()
+        if ex:
+            con.execute("UPDATE material_price SET price=?, set_at=datetime('now','localtime') WHERE id=?",
+                        (price, ex["id"]))
+        else:
+            con.execute("INSERT INTO material_price(material_id, from_date, price, set_at) "
+                        "VALUES(?,?,?,datetime('now','localtime'))", (mid, fd, price))
+        _sync_material_price(con, mid)
+        audit(con, "mat_price", f"자재#{mid} 단가 {fd}부터 {price:g}원 (이력 추가)")
+        bump_masters()
+        con.commit()
+        return {"ok": True}
+    finally:
+        con.close()
+
+
+@app.delete("/api/matprice/{mid}/{pid}")
+def matprice_delete(request: Request, mid: int, pid: int):
+    """자재 단가 이력 한 줄 삭제 (직접 지정한 단가만 — 입고 단가는 대상 아님)."""
+    if not mcan(request, "mat"):
+        raise HTTPException(403, "단가 편집 권한이 없습니다")
+    con = connect()
+    try:
+        con.execute("DELETE FROM material_price WHERE id=? AND material_id=?", (pid, mid))
+        _sync_material_price(con, mid)
+        audit(con, "mat_price", f"자재#{mid} 단가 이력#{pid} 삭제")
+        bump_masters()
+        con.commit()
+        return {"ok": True}
     finally:
         con.close()
 
@@ -3516,15 +3575,15 @@ def master_update(mtype: str, mid: int, body: dict):
             changed = abs(float(old_price or 0) - newp) > 1e-9
             if newp > 0 and (pf or changed):
                 fd = pf if re.match(r"^\d{4}-\d{2}-\d{2}$", pf) else dt.date.today().isoformat()
-                # 이 자재의 첫 단가 변경이면, 이전 단가를 '이전' 기준(from_date='')으로 먼저 남겨 잃지 않게 한다
-                has_hist = con.execute("SELECT COUNT(*) c FROM material_price WHERE material_id=?",
-                                       (mid,)).fetchone()["c"]
-                if not has_hist and old_price and float(old_price) > 0 and abs(float(old_price) - newp) > 1e-9:
-                    con.execute("INSERT INTO material_price(material_id, from_date, price, note, set_at) "
-                                "VALUES(?,?,?,?,datetime('now','localtime'))",
-                                (mid, "", float(old_price), "이전 단가"))
-                con.execute("INSERT INTO material_price(material_id, from_date, price, set_at) "
-                            "VALUES(?,?,?,datetime('now','localtime'))", (mid, fd, newp))
+                # 같은 적용일에 이미 기록이 있으면 갱신(중복 방지), 없으면 새로 기록
+                ex = con.execute("SELECT id FROM material_price WHERE material_id=? AND from_date=?",
+                                 (mid, fd)).fetchone()
+                if ex:
+                    con.execute("UPDATE material_price SET price=?, set_at=datetime('now','localtime') WHERE id=?",
+                                (newp, ex["id"]))
+                else:
+                    con.execute("INSERT INTO material_price(material_id, from_date, price, set_at) "
+                                "VALUES(?,?,?,datetime('now','localtime'))", (mid, fd, newp))
                 audit(con, "mat_price", f"자재#{mid} 단가 {fd}부터 {newp:g}원")
         # 현재고 직접 수정: 기초재고(opening_stock)를 조정해 계산 재고가 입력값이 되도록
         if mtype == "product" and stock_set is not None:

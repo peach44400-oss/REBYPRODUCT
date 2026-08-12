@@ -4762,25 +4762,68 @@ function openMaster(type, row) {
   if ((type === "raw" || type === "sub" || type === "semi") && row && canM("mat")) renderMatPriceBox(row.id);
   $("mstOverlay").classList.add("on");
 }
-/* 자재 단가 이력 — 자재 수정 폼 하단에 현재 적용 단가 + 기간별 표를 붙인다. */
+/* 자재 단가 이력 — 자재 수정 폼 하단. 현재 적용 단가만 보이고, 클릭하면 이력 펼침 + 추가/삭제. */
 async function renderMatPriceBox(mid) {
   let d;
   try { d = await api("/api/matprice/" + mid); } catch (e) { return; }
   if (!document.querySelector("#mstOverlay.on") || !mstEdit || mstEdit.id !== mid) return;   // 그새 닫혔으면 무시
-  const periods = d.periods || [];
+  const periods = d.periods || [], manual = d.manual || [];
   const cur = periods.length ? periods[periods.length - 1] : null;
+  const wasOpen = document.getElementById("matPriceDetail") &&
+    document.getElementById("matPriceDetail").style.display !== "none";
+  document.getElementById("matPriceBox")?.remove();   // 재호출(추가/삭제 후) 시 갱신
   const box = document.createElement("div");
   box.className = "fld full"; box.id = "matPriceBox";
-  box.innerHTML = `<label>💰 단가 이력 <span class="auto" style="font-weight:400">— 적용 시작일 기준 · 원가·월간리포트가 이 단가로 계산됩니다</span></label>
-    ${cur ? `<div style="font-size:12.5px; margin-bottom:5px;">현재 적용 단가 <b>${NF(cur.price)}원</b> <span class="auto">(${cur.from ? esc(cur.from) + "부터" : "이전부터"})</span></div>`
-      : '<div class="auto" style="font-size:12px; margin-bottom:5px;">단가 이력이 없습니다 — 단가와 적용 시작일을 넣고 저장하면 여기 기록됩니다</div>'}
-    ${periods.length ? `<div style="max-height:150px; overflow-y:auto; border:1px solid var(--line-soft); border-radius:8px;">
-      ${periods.slice().reverse().map(p => `<div style="display:flex; gap:8px; padding:5px 10px; border-bottom:1px solid var(--line-soft); font-size:12px; align-items:center;">
-        <span class="num" style="flex:none; min-width:158px;">${p.from ? esc(p.from) : "이전"}${p.to ? " ~ " + esc(p.to) + " 전날" : " ~ 현재"}</span>
-        <span class="num" style="flex:1; font-weight:700;">${NF(p.price)}원</span>
-        <span class="auto" style="font-size:11px; flex:none;">${esc(p.source)}</span></div>`).join("")}
-    </div>` : ""}`;
+  box.innerHTML = `<label>💰 단가 이력 <span class="auto" style="font-weight:400">— 적용 시작일 기준 · 원가·월간리포트가 이 단가로 계산</span></label>
+    <button type="button" id="matPriceToggle" style="display:flex; width:100%; align-items:center; gap:8px; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:8px 10px; cursor:pointer; font-size:13px; text-align:left;">
+      <span>현재 적용 단가 <b>${cur ? NF(cur.price) + "원" : "미설정"}</b>${cur && cur.from ? ` <span class="auto">(${esc(cur.from)}부터)</span>` : ""}</span>
+      <span style="flex:1;"></span><span class="auto" id="matPriceCaret">${wasOpen ? "닫기 ▴" : "이력·수정 ▾"}</span></button>
+    <div id="matPriceDetail" style="display:${wasOpen ? "" : "none"}; margin-top:6px;">
+      ${periods.length > 1 ? `<div style="font-size:11px; color:var(--muted); margin-bottom:3px;">기간별 적용 단가 (입고 단가 포함)</div>
+        <div style="border:1px solid var(--line-soft); border-radius:8px; margin-bottom:8px; max-height:130px; overflow-y:auto;">
+        ${periods.slice().reverse().map(p => `<div style="display:flex; gap:8px; padding:4px 10px; border-bottom:1px solid var(--line-soft); font-size:12px; align-items:center;">
+          <span class="num" style="flex:none; min-width:150px;">${p.from ? esc(p.from) : "이전"}${p.to ? " ~ " + esc(p.to) + " 전날" : " ~ 현재"}</span>
+          <span class="num" style="flex:1; font-weight:700;">${NF(p.price)}원</span>
+          <span class="auto" style="font-size:11px;">${esc(p.source)}</span></div>`).join("")}</div>` : ""}
+      <div style="font-size:11px; color:var(--muted); margin-bottom:3px;">직접 지정한 단가 (여기서 추가·삭제 · 입고 단가는 입고 기록에서 관리)</div>
+      <div style="border:1px solid var(--line-soft); border-radius:8px;">
+        ${manual.length ? manual.slice().reverse().map(mm => `<div style="display:flex; gap:8px; padding:4px 10px; border-bottom:1px solid var(--line-soft); font-size:12px; align-items:center;">
+          <span class="num" style="flex:none; min-width:110px;">${esc(mm.from_date)}</span>
+          <span class="num" style="flex:1; font-weight:700;">${NF(mm.price)}원</span>
+          <button type="button" class="btn ghost sm" data-mpdel="${mm.id}" style="color:var(--crit); padding:1px 8px;">삭제</button></div>`).join("")
+          : '<div class="auto" style="padding:8px; font-size:12px;">직접 지정한 단가가 없습니다 — 아래에서 추가하세요</div>'}
+      </div>
+      <div style="display:flex; gap:6px; margin-top:6px; align-items:center; flex-wrap:wrap;">
+        <input type="text" id="mpAddDate" class="datepick" readonly placeholder="📅 적용 시작일" data-init=""
+          style="width:130px; box-sizing:border-box; padding:6px 8px; border:1px solid var(--line); border-radius:7px; font-size:12px; cursor:pointer;">
+        <input id="mpAddPrice" inputmode="decimal" placeholder="단가(원)" style="width:100px; box-sizing:border-box; padding:6px 8px; border:1px solid var(--line); border-radius:7px; font-size:12px;">
+        <button type="button" class="btn sm" id="mpAddBtn">＋ 단가 추가</button>
+      </div>
+    </div>`;
   $("mstForm").appendChild(box);
+  document.getElementById("matPriceToggle").onclick = () => {
+    const dt2 = document.getElementById("matPriceDetail");
+    const open = dt2.style.display === "none";
+    dt2.style.display = open ? "" : "none";
+    document.getElementById("matPriceCaret").textContent = open ? "닫기 ▴" : "이력·수정 ▾";
+  };
+  document.getElementById("mpAddBtn").onclick = async () => {
+    const fd = document.getElementById("mpAddDate").value.trim();
+    const pr = Number(document.getElementById("mpAddPrice").value.replace(/,/g, ""));
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fd)) return toast("적용 시작일을 선택하세요");
+    if (!(pr > 0)) return toast("단가를 입력하세요");
+    try {
+      await api("/api/matprice/" + mid, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ from_date: fd, price: pr }) });
+      toast("단가 이력이 추가되었습니다"); renderMatPriceBox(mid);
+    } catch (e) { /* api 토스트 */ }
+  };
+  box.addEventListener("click", async e => {
+    const del = e.target.closest("[data-mpdel]"); if (!del) return;
+    if (!confirm("이 단가 기록을 삭제할까요?")) return;
+    try { await api("/api/matprice/" + mid + "/" + del.dataset.mpdel, { method: "DELETE" });
+      toast("삭제되었습니다"); renderMatPriceBox(mid); } catch (e) { /* api 토스트 */ }
+  });
 }
 /* 거래처별 판매 단가 — 제품 수정 폼 하단에 붙는다. 출고 저장 시 이 단가가 스냅샷으로 기록된다. */
 async function renderProdPrices(pid) {
@@ -5932,7 +5975,8 @@ function buildFinLedgerDoc(d) {
   const lotFmt = (arr, withPack) => (arr || []).map(l => {
     const made = l.made ? esc(l.made) : "미상";
     const exp = l.expiry ? esc(l.expiry) : "—";
-    const pk = (withPack && l.pack) ? ` · ${NFv(l.pack)}개입` : "";
+    // 개입수 + 박스 수(수량 ÷ 개입수) — 예: 5,040 · 30개입 · 168Box
+    const pk = (withPack && l.pack) ? ` · ${NFv(l.pack)}개입 · ${NFv(Math.round((Number(l.qty) || 0) / l.pack))}Box` : "";
     return `<div style="white-space:nowrap;"><b>${exp}</b>(<span style="color:#777;">${made}</span>) · ${NFv(l.qty)}${pk}</div>`;
   }).join("") || '<span style="color:#aaa;">—</span>';
   const body = rows.map(r => {
