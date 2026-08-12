@@ -666,6 +666,10 @@
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2 13.5 4.7v6.6L8 14 2.5 11.3V4.7L8 2Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M2.7 4.8 8 7.4l5.3-2.6M8 7.4V14" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
         <em>LOT 관리</em><span class="cnt" id="navLotCnt" style="display:none">0</span>
       </button>
+      <button data-scr="matstat" title="자재 현황 — 전체 원부자재 재고·유통기한(만료/임박)·부족을 한눈에 · 확정 폐기·발주">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2.5" y="3" width="11" height="10" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M2.5 6.5h11M6 3v10" stroke="currentColor" stroke-width="1.3"/></svg>
+        <em>자재 현황</em><span class="cnt" id="navMatCnt" style="display:none">0</span>
+      </button>
 
       <div class="nav-sep"><span>분석 · 조회</span></div>
       <button data-scr="ana">
@@ -1282,6 +1286,31 @@
     </section>
 
     <!-- 기록 조회 -->
+    <section class="screen" id="scr-matstat">
+      <div class="card">
+        <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:4px;">
+          <h2 style="margin:0;">📦 자재 현황</h2>
+          <span class="auto" id="msDateLbl" style="font-size:12.5px;"></span>
+          <span style="flex:1;"></span>
+          <input type="text" id="msDate" class="datepick" readonly placeholder="📅 기준일" data-init="" style="width:150px; box-sizing:border-box; padding:7px 9px; border:1px solid var(--line); border-radius:8px; cursor:pointer; font-size:13px;">
+          <button class="btn ghost sm" id="msReload">↻ 새로고침</button>
+        </div>
+        <p class="hint" style="margin:0 0 10px;">전체 원부자재의 현재고·유통기한(FEFO)·안전재고 대비 부족을 한눈에 봅니다 — 유통기한 만료분은 [확정 폐기], 부족분은 [발주]로 바로 처리하세요.</p>
+        <div id="msSummary" style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;"></div>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:8px;">
+          <div id="msFilters" style="display:flex; gap:6px; flex-wrap:wrap;"></div>
+          <span style="flex:1;"></span>
+          <input id="msSearch" placeholder="🔍 자재명 검색" autocomplete="off" style="width:200px; box-sizing:border-box; padding:7px 10px; border:1px solid var(--line); border-radius:8px; font-size:13px;">
+        </div>
+        <div style="overflow-x:auto;">
+          <table style="width:100%; border-collapse:collapse; min-width:760px;" id="msTable">
+            <thead><tr id="msHead"></tr></thead>
+            <tbody id="msBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
     <section class="screen" id="scr-lookup">
       <div class="entry-grid">
         <div class="dash-col">

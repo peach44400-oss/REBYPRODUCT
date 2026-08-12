@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.76.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.77.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -2647,6 +2647,69 @@ def matdisposal_delete(request: Request, did: int):
         bump_masters()
         con.commit()
         return {"ok": True}
+    finally:
+        con.close()
+
+
+MATSTATUS_SOON_DAYS = 7   # 유통기한 임박 기준(일)
+
+
+@app.get("/api/matstatus")
+def matstatus(request: Request, date: str = ""):
+    """자재 현황 — 전체 원부자재의 현재고·유통기한(만료/임박)·안전재고 대비 부족·최근입고를 한 번에."""
+    date = date or dt.date.today().isoformat()
+    con = connect()
+    try:
+        onhand = {r["material_id"]: float(r["real_qty"] or 0) for r in con.execute(
+            """SELECT md.material_id, md.real_qty FROM material_daily md
+               JOIN (SELECT material_id, MAX(date) mx FROM material_daily WHERE date<=? GROUP BY material_id) x
+                 ON x.material_id=md.material_id AND x.mx=md.date""", (date,))}
+        last_in = {r["material_id"]: r["d"] for r in con.execute(
+            "SELECT material_id, MAX(date) d FROM material_in WHERE date<=? GROUP BY material_id", (date,))}
+        ordered = {}
+        for r in con.execute("""SELECT o.material_id, o.order_qty, o.order_date
+              FROM (SELECT material_id, MAX(date) d FROM material_daily
+                    WHERE (order_qty>0 OR COALESCE(order_date,'')!='') AND date<=? GROUP BY material_id) x
+              JOIN material_daily o ON o.material_id=x.material_id AND o.date=x.d
+              WHERE NOT EXISTS (SELECT 1 FROM material_in mi
+                                WHERE mi.material_id=o.material_id AND mi.date>x.d AND mi.date<=?)""", (date, date)):
+            ordered[r["material_id"]] = {"qty": r["order_qty"], "date": r["order_date"] or ""}
+        admin = mcan(request, "mat")
+        items, summ = [], {"expired": 0, "soon": 0, "low": 0}
+        for m in con.execute("""SELECT id, name, unit, kind, COALESCE(is_semi,0) is_semi,
+                COALESCE(safety_stock,0) safety_stock, COALESCE(shelf_days,0) shelf_days,
+                COALESCE(unit_price,0) unit_price, partner_id
+                FROM material WHERE kind IN ('raw','sub')
+                  AND COALESCE(status,'') NOT IN ('단종','중지') ORDER BY is_semi, kind, sort, name"""):
+            oh = onhand.get(m["id"], 0.0)
+            _, expired, batches = material_stock_expiry(con, m["id"], date, m["shelf_days"])
+            soon = None
+            for b in batches:
+                if b["expired"] or not b["exp"]:
+                    continue
+                try:
+                    dd = (dt.date.fromisoformat(b["exp"]) - dt.date.fromisoformat(date)).days
+                except (ValueError, TypeError):
+                    continue
+                if 0 <= dd <= MATSTATUS_SOON_DAYS and (soon is None or dd < soon["days"]):
+                    soon = {"exp": b["exp"], "days": dd, "qty": b["qty"]}
+            safety = float(m["safety_stock"] or 0)
+            low = safety > 0 and oh < safety - 1e-6
+            if expired > 1e-6:
+                summ["expired"] += 1
+            if soon:
+                summ["soon"] += 1
+            if low:
+                summ["low"] += 1
+            items.append({"id": m["id"], "name": m["name"], "unit": m["unit"], "kind": m["kind"],
+                          "is_semi": m["is_semi"], "onhand": round(oh, 3), "safety": safety,
+                          "low": low, "shortage": round(safety - oh, 3) if low else 0,
+                          "expired": expired, "exp_batches": [b for b in batches if b["expired"]],
+                          "soon": soon, "last_in": last_in.get(m["id"], "") or "",
+                          "ordered": ordered.get(m["id"]),
+                          "price": (m["unit_price"] if admin else None),
+                          "partner_id": m["partner_id"]})
+        return {"date": date, "items": items, "summary": summ, "soon_days": MATSTATUS_SOON_DAYS}
     finally:
         con.close()
 
