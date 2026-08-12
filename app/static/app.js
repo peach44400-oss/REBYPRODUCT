@@ -6305,7 +6305,13 @@ function buildLedgerDoc(d, forPrint) {
     <td style="${TD} text-align:right; font-weight:700;" ${ED}>${NFv(r.real)}</td>
     <td style="${TD} text-align:center; font-size:8.5px; white-space:nowrap; color:#444;" ${ED}>${esc(r.in_date || "")}</td>
     <td style="${TD} text-align:center; font-size:8.5px; white-space:nowrap; color:#444;" ${ED}>${esc(r.made || "")}</td>
-    <td style="${TD} text-align:center; font-size:8.5px; white-space:nowrap;${r.expiry_est ? " color:#888; font-style:italic;" : ((r.expiry && r.expiry < d.date) ? " color:#c0392b; font-weight:700;" : "")}" ${ED} title="${r.expiry_est ? "기준정보 소비일로 자동 계산 (입고 시 미입력)" : ((r.expiry && r.expiry < d.date) ? "유통기한이 지난 재고입니다 — 자재 현황/일일 입력에서 확정 폐기하세요" : "지금 소진 중인 배치(FEFO)의 소비기한")}">${esc(r.expiry || "")}${(r.expiry && r.expiry < d.date) ? " (만료)" : ""}</td>
+    <td style="${TD} text-align:center; font-size:8.5px; white-space:nowrap;${r.expiry_est ? " color:#888; font-style:italic;" : ""}" ${ED} title="${r.expiry_est ? "기준정보 소비일로 자동 계산 (입고 시 미입력)" : "지금 소진 중인 배치(FEFO)의 소비기한 — 빨강 = 유통기한 지남(만료)"}">${(() => {
+      const parts = String(r.expiry || "").split(",").map(s => s.trim()).filter(Boolean);
+      if (!parts.length) return "";
+      // 여러 기한이 섞이면 지난 날짜만 빨강 — 유효한 날짜는 그대로 (통째 만료 표시 방지)
+      return parts.map(e => (/^\d{4}-\d{2}-\d{2}$/.test(e) && e < d.date)
+        ? `<span style="color:#c0392b; font-weight:700;">${esc(e)} 지남</span>` : esc(e)).join(", ");
+    })()}</td>
     <td style="${TD} text-align:left; font-size:9px; white-space:normal;" ${ED}>${esc(r.note || "")}</td></tr>`).join("");
   const dow = ["일", "월", "화", "수", "목", "금", "토"][new Date(d.date + "T00:00").getDay()];
   const TDm = "border:1px solid #333; padding:2px 6px; font-size:11px;";
