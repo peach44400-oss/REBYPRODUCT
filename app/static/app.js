@@ -1142,11 +1142,11 @@ setInterval(refreshGlobalSaveFab, 350);
 function mapStaffRow(r) {
   let ag = [];
   try { ag = JSON.parse(r.agency || "[]"); } catch (e) { ag = []; }
-  // 휴게 미입력(0·빈값)은 기본 60분으로 — 안 그러면 칸에 회색 60만 보이고 계산은 0분으로 됨.
-  // (휴게 없음이 정말 필요하면 0을 직접 입력 — 단 다시 불러오면 60으로 돌아오는 한계 있음)
+  // 휴게: 저장된 값이 있으면 그대로(0=휴게 없음도 유지), 값이 아예 없을 때만 기본 60분.
+  const brkOf = v => (v == null || v === "" ? "60" : v);   // 0은 0으로 보존, 미입력만 60
   if (ag.length) {
     ag = ag.map(a => ({ h: a.h || "", w: a.w == null ? "" : a.w, g: a.g || "", pid: a.pid || null,
-      start: a.start || "", end: a.end || "", brk: a.brk || "60" }));
+      start: a.start || "", end: a.end || "", brk: brkOf(a.brk) }));
   } else {
     const n = Number(r.agency_count) || 0, th = Number(r.agency_hours) || 0;
     const perH = n ? Math.round(th / n * 100) / 100 : "";
@@ -1157,7 +1157,7 @@ function mapStaffRow(r) {
     agency: ag, agency_wage: r.agency_wage ?? "",
     target_hours: r.target_hours || "", work_hours: r.work_hours, stop_reason: r.stop_reason || "",
     members: JSON.parse(r.members || "[]").map(m => ({ id: m.id, h: m.h || "",
-      start: m.start || "", end: m.end || "", brk: m.brk || "60" })) };
+      start: m.start || "", end: m.end || "", brk: brkOf(m.brk) })) };
 }
 async function loadDay(date) {
   const d = await api("/api/day/" + date);
@@ -1275,12 +1275,17 @@ function selHtml(list, val, field, nameKey = "name", extra = "", cls = "") {
   return `<select class="mini-sel ${cls}" data-f="${field}"><option value="">— 선택 —</option>${extra}` +
     list.map(o => `<option value="${o.id}" ${o.id === val ? "selected" : ""}>${esc(o[nameKey])}</option>`).join("") + "</select>";
 }
+/* 거래처 유형 — 콤마로 구분한 복수 유형(예: "판매처, 자재 공급처")을 배열/포함 판정으로 다룬다. */
+function pTypes(p) { return String((p && p.type) || "").split(",").map(s => s.trim()).filter(Boolean); }
+function pHasType(p, t) { return pTypes(p).includes(t); }
 /* 거래처 select 옵션 — 유형별 optgroup으로 구분 표시.
-   firstType이 맨 앞 그룹 (일일 입력=판매처, 발주서=자재 공급처), 나머지는 가나다순 */
+   firstType이 맨 앞 그룹 (일일 입력=판매처, 발주서=자재 공급처), 나머지는 가나다순.
+   복수 유형이면 firstType이 있으면 그 그룹에, 없으면 첫 유형 그룹에 한 번만 넣는다. */
 function partnerOptGroups(selId, list, firstType = "판매처") {
   const by = {};
   (list || M.partner.filter(isSeller)).forEach(p => {
-    const t = p.type || "기타";
+    const ts = pTypes(p);
+    const t = ts.includes(firstType) ? firstType : (ts[0] || "기타");
     (by[t] = by[t] || []).push(p);
   });
   const order = Object.keys(by).sort((a, b) =>
@@ -2249,8 +2254,14 @@ $("lotSplitSave").onclick = () => {
   updatePackUsage(pr.product_id);   // 포장 선택에 따라 부재료(BOX) 사용량 재계산
   toast(valid.length ? `소비기한 ${valid.length}구간 설정됨 — 저장 시 반영` : "소비기한 분할 해제됨");
 };
-// 출고·분배 대상 거래처 = 자재 공급처/용역업체가 아닌 모든 유형 (직접 입력 유형 포함 — 예: 기부)
-function isSeller(p) { return p.status !== "중지" && p.type !== "자재 공급처" && p.type !== "용역업체"; }
+// 출고·분배 대상 거래처 = 판매 성격이 있는 곳 (자재 공급처·용역업체'만'인 곳은 제외).
+//  복수 유형이면 판매처 등 다른 유형이 하나라도 있으면 대상 (예: "자재 공급처, 판매처").
+function isSeller(p) {
+  if (p.status === "중지") return false;
+  const ts = pTypes(p);
+  if (!ts.length) return true;   // 유형 미지정은 판매처로 간주 (기존 동작)
+  return ts.some(t => t !== "자재 공급처" && t !== "용역업체");
+}
 // 제품의 이날 가용 재고 = 현재고 + 이날 이미 저장된 출고분 (이날 편집 중 출고는 이 안에서만 가능)
 function shipAvail(pid) {
   if (!pid) return Infinity;
@@ -2402,7 +2413,7 @@ function renderMatIn() {
   const all = M.raw.concat(M.sub);
   // 거래처 자동완성 — 자재 공급처 우선 정렬 (발주서와 동일 기준)
   $("miPaDl").innerHTML = M.partner.filter(p => p.status !== "중지")
-    .sort((a, b) => (b.type === "자재 공급처") - (a.type === "자재 공급처") || a.name.localeCompare(b.name, "ko"))
+    .sort((a, b) => (pHasType(b,"자재 공급처") - pHasType(a,"자재 공급처")) || a.name.localeCompare(b.name, "ko"))
     .map(p => `<option value="${esc(p.name)}">${esc(p.type || "")}</option>`).join("");
   $("eMatIn").innerHTML = E.matIn.map((r, i) => {
     const m = materialById(r.material_id) || {};
@@ -2545,7 +2556,7 @@ function renderStaff() {
         <button data-rm="${m.id}">✕</button></span>` : "";
     }).join("");
     // 용역 칩 — 업체·성별 + 각자 투입시간 + 개인별 시급 묶음 (시급은 admin만)
-    const agencyPartners = M.partner.filter(p => p.status !== "중지" && p.type === "용역업체");
+    const agencyPartners = M.partner.filter(p => p.status !== "중지" && pHasType(p, "용역업체"));
     const agChips = (r.agency || []).map((a, ai) => `<span class="member-chip agstack" style="background:var(--bg); color:var(--muted)">
         <span style="white-space:nowrap">
           <select class="mini-sel" data-apt="${ai}" title="용역 업체 (거래처에 '용역업체' 유형으로 등록)" style="max-width:88px; font-size:10.5px; padding:1px 2px;">
@@ -4645,6 +4656,19 @@ function openMaster(type, row) {
         : (row[f] ?? ""))
       : (kind === "combo" && opts && opts.length ? opts[0] : "");
     const cls = kind === "full" ? "fld full" : "fld";
+    // 거래처 '유형' — 복수 선택(판매처+자재공급처 등). 표준 3종 체크박스 + 기타 직접 입력.
+    if (type === "partner" && f === "type") {
+      const cur = new Set(String((row && row.type) || "").split(",").map(s => s.trim()).filter(Boolean));
+      const std = ["판매처", "자재 공급처", "용역업체"];
+      const etc = [...cur].filter(t => !std.includes(t)).join(", ");
+      return `<div class="fld full"><label>유형 <span class="auto" style="font-weight:400">(여러 개 선택 가능)</span></label>
+        <div style="display:flex; gap:16px; flex-wrap:wrap; padding:3px 0;">
+          ${std.map(t => `<label style="display:inline-flex; align-items:center; gap:5px; cursor:pointer; font-size:13px;">
+            <input type="checkbox" data-ptype value="${esc(t)}" ${cur.has(t) ? "checked" : ""} style="width:15px; height:15px;">${esc(t)}</label>`).join("")}
+        </div>
+        <input data-ptype-etc value="${esc(etc)}" placeholder="기타 유형 직접 입력 (쉼표로 여러 개 · 예: 기부)"
+          style="margin-top:4px; width:100%; box-sizing:border-box; padding:6px 9px; border:1px solid var(--line); border-radius:7px; font-size:12.5px;"></div>`;
+    }
     // 라인 폼 '소속 라인' — 옵션은 대표 라인들(소속 없는 라인)만, 자기 자신 제외 (동적)
     if (type === "line" && f === "parent_id")
       opts = [["", "— (독립 라인 / 대표)"]].concat(
@@ -4719,6 +4743,12 @@ $("mstSave").onclick = async () => {
     body[el.dataset.mf] = v === "" ? null : (el.matches('[inputmode="decimal"]') ? Number(v.replace(/,/g, "")) : v);
   });
   if (mstEdit.type === "line" && body.parent_id != null) body.parent_id = +body.parent_id;
+  if (mstEdit.type === "partner") {   // 유형 = 체크한 표준 유형 + 기타 직접 입력 (콤마로 합침)
+    const checked = [...document.querySelectorAll("#mstForm [data-ptype]:checked")].map(c => c.value);
+    const etcEl = document.querySelector("#mstForm [data-ptype-etc]");
+    const etc = etcEl ? etcEl.value.split(",").map(s => s.trim()).filter(Boolean) : [];
+    body.type = [...new Set([...checked, ...etc])].join(", ") || null;
+  }
   if (mstEdit.type === "users") {
     // 담당 체크박스는 value가 아니라 체크 상태로 모은다 (복수 지정)
     body.duty = [...document.querySelectorAll("#mstForm [data-newduty]")]
@@ -4997,7 +5027,7 @@ async function openPo(prefillLow) {
   PO.items = []; PO.id = null;
   // 거래처: 검색 입력(datalist) — 자재 공급처를 먼저, 미등록 이름 직접 입력도 허용
   const list = M.partner.filter(p => p.status !== "중지")
-    .sort((a, b) => (b.type === "자재 공급처") - (a.type === "자재 공급처") || a.name.localeCompare(b.name, "ko"));
+    .sort((a, b) => (pHasType(b,"자재 공급처") - pHasType(a,"자재 공급처")) || a.name.localeCompare(b.name, "ko"));
   $("poPartnerDl").innerHTML = list.map(p => `<option value="${esc(p.name)}">${esc(p.type || "")}</option>`).join("");
   $("poPartner").value = "";
   $("poDate").value = todayISO();
@@ -5585,7 +5615,7 @@ async function poBulkFromItems(items) {
 window.closePoBulk = () => $("poBulkOverlay").classList.remove("on");
 function renderPoBulk() {
   const paDl = `<datalist id="pbPaDl">${M.partner.filter(p => p.status !== "중지")
-    .sort((a, b) => (b.type === "자재 공급처") - (a.type === "자재 공급처") || a.name.localeCompare(b.name, "ko"))
+    .sort((a, b) => (pHasType(b,"자재 공급처") - pHasType(a,"자재 공급처")) || a.name.localeCompare(b.name, "ko"))
     .map(p => `<option value="${esc(p.name)}">${esc(p.type || "")}</option>`).join("")}</datalist>`;
   const rows = (POBULK.items || []).map((it, i) => `
     <tr>
