@@ -1215,6 +1215,8 @@ async function loadDay(date) {
   E.uSrc = {};     // "pid|block" → {srcPid, srcBlock} — 다른 제품 배합을 가져와 쓰는 블록
   E.staff = d.staffing.map(mapStaffRow);
   E.prevStock = d.prev_stock; E.prevMaterials = d.prev_materials; E.prevDate = d.prev_date;
+  E.matExpiry = d.mat_expiry || {};      // {material_id: {onhand, expired, batches[{exp,qty}]}} — 유통기한 만료 재고
+  E.matDisposal = d.mat_disposal || [];  // 그날 확정 폐기 기록
   snapshotSaved();   // 이 날짜의 '저장된 값' 스냅샷 — 키패드가 이전 값을 보여주는 근거 (DB 추가 불필요)
   E.photos = d.photos || []; E.prevProdDate = d.prev_prod_date;
   $("eMemo").value = d.memo || "";
@@ -2475,6 +2477,28 @@ function lossHtml(mid, used) {
   return `<div class="auto" style="font-size:10.5px; color:${diff > 0 ? "#B45309" : "var(--ok)"}"
     title="실사 사용량 ${NF(used)} − 기록된 제품별 사용 합 ${NF(rec)} — 국자 계량 오차·흘림 등 자연 로스는 이 값으로 흡수하면 되고, 입고를 가짜로 넣을 필요 없습니다">로스 ${diff > 0 ? "+" : ""}${NF(diff)}</div>`;
 }
+// 유통기한 만료 재고 경고 + 확정 폐기 버튼 (자동/실사 행 공통) · 그날 폐기 기록·취소
+function matExpiryHtml(mid) {
+  if (!mid) return "";
+  const unit = (materialById(mid) || {}).unit || "";
+  const ex = (E.matExpiry || {})[mid];
+  const disp = (E.matDisposal || []).filter(x => x.material_id === mid);
+  const canStock = typeof MYDUTY !== "undefined" && MYDUTY.has && MYDUTY.has("stock");
+  let html = "";
+  if (ex && ex.expired > 0) {
+    const exps = (ex.batches || []).map(b => b.exp).filter(Boolean);
+    const el = exps.length ? ` · 기한 ${exps.join(", ")} 지남` : "";
+    html += `<div style="margin-top:3px; font-size:11px; color:var(--crit); display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+      <span title="유통기한이 지난 재고입니다 — 확정 폐기하면 실재고에서 차감되어 더 이상 사용되지 않습니다">⚠ 만료 <b>${NF(ex.expired)}${esc(unit)}</b>${el}</span>
+      ${canStock ? `<button type="button" class="btn ghost sm" data-matdispose="${mid}" style="color:var(--crit); border-color:var(--crit); padding:1px 8px;">확정 폐기</button>` : ""}</div>`;
+  }
+  if (disp.length) {
+    const tot = disp.reduce((s, x) => s + (Number(x.qty) || 0), 0);
+    html += `<div style="margin-top:2px; font-size:11px; color:var(--muted);">🗑 폐기 ${NF(tot)}${esc(unit)}${canStock ? disp.map(x =>
+      `<button type="button" class="btn ghost sm" data-matdispundo="${x.id}" style="padding:0 6px; margin-left:4px;" title="${esc((x.reason || "") + " " + (x.expiry || ""))} — 클릭하면 취소(재고 복구)">취소</button>`).join("") : ""}</div>`;
+  }
+  return html;
+}
 function renderMat() {
   const all = M.raw.concat(M.sub);
   // 실사 행이 있는 자재는 자동 반영 행을 숨김 (실사 우선 — 저장 시에도 실사 기준으로 계산됨)
@@ -2490,7 +2514,7 @@ function renderMat() {
       <td><div class="namecell">
         ${matSel(r.material_id, 'data-f="material_id"', NEWMAT_OPTS)}${replacing
         ? '<span class="chip cat" style="flex:none; white-space:nowrap" title="이 자재는 자동 반영(제품별 사용 합계) 대신 이 실사 값이 우선 적용됩니다 — 자동 반영 행은 숨겨집니다">실사 우선</span>' : ""}
-      </div></td>
+      </div>${matExpiryHtml(r.material_id)}</td>
       <td class="auto">${esc(m.unit || "")}</td>
       <td class="r auto">${NF(prev)}</td>
       <td class="r auto" ${inq > 0 ? 'style="color:var(--ok); font-weight:700"' : ""} title="입고는 '원부자재 입고' 카드에서 입력">${inq ? "+" + NF(inq) : "0"}</td>
@@ -2502,18 +2526,35 @@ function renderMat() {
       <td><button class="btn ghost sm" data-del>삭제</button></td></tr>`;
   }).join("");
   const autoRows = (E.autoMat || []).filter(r => !manualIds.has(r.material_id)).map(r => `<tr style="color:var(--muted)">
-    <td>${esc(r.name)} <span class="chip cat">자동 반영</span></td>
+    <td>${esc(r.name)} <span class="chip cat">자동 반영</span>${matExpiryHtml(r.material_id)}</td>
     <td>${esc(r.unit)}</td><td class="r">${NF(r.prev_qty)}</td>
     <td class="r" ${r.in_qty > 0 ? 'style="color:var(--ok); font-weight:700"' : ""}>${r.in_qty ? "+" + NF(r.in_qty) : "0"}</td>
     <td class="r"><button class="uselink num" data-fixreal="${r.material_id}"
       title="실재고가 맞지 않으면 클릭해서 직접 입력 — 자동 계산 대신 이 값이 적용됩니다">${NF(r.real_qty)} ✏️</button></td>
     <td class="r"><button class="uselink num" data-use="${r.material_id}">${NF(r.used_qty)}</button></td>
     <td colspan="3" class="hint" style="white-space:normal">전일재고 + 입고 − 제품별 사용 합계로 자동 계산 — 실재고를 클릭하면 실사로 고칠 수 있습니다</td></tr>`).join("");
-  $("eMat").innerHTML = (rows + autoRows)
+  // 이 날짜에 실사·자동 행이 없어도 유통기한 만료 재고(또는 폐기 기록)가 있는 자재는 별도 행으로 노출 → 확정 폐기 가능
+  const shownIds = new Set([...E.mat.map(r => r.material_id), ...(E.autoMat || []).map(r => r.material_id)].filter(Boolean));
+  const extraIds = [...new Set([...Object.keys(E.matExpiry || {}).map(Number),
+                                ...(E.matDisposal || []).map(x => x.material_id)])].filter(mid => !shownIds.has(mid));
+  const expRows = extraIds.map(mid => {
+    const m = materialById(mid) || {};
+    const oh = (E.matExpiry[mid] || {}).onhand;
+    return `<tr style="color:var(--muted)"><td>${esc(m.name || ("#" + mid))}${matExpiryHtml(mid)}</td>
+      <td>${esc(m.unit || "")}</td>
+      <td class="r">${oh != null ? NF(oh) : "—"}</td>
+      <td colspan="6" class="hint" style="white-space:normal">이 날짜엔 입력 기록이 없지만 유통기한 만료 재고가 있습니다 — 확정 폐기로 재고에서 차감하세요</td></tr>`;
+  }).join("");
+  $("eMat").innerHTML = (rows + autoRows + expRows)
     || `<tr><td colspan="9" class="auto">+ 자재 행 추가 또는 직전 기록일 자재 불러오기 · 실사가 없으면 입고·제품별 사용으로 자동 계산됩니다</td></tr>`;
 }
 // 자동 반영 행 전용 동작 — 이 행들은 tr[data-i]가 없어 wireEntryTable 핸들러가 잡지 못한다
 $("eMat").addEventListener("click", e => {
+  // 만료 폐기 버튼은 실사·자동 행 어디에 있든 여기서 처리 (tr[data-i] 가드보다 먼저)
+  const dz = e.target.closest("[data-matdispose]");
+  if (dz) { e.stopPropagation(); openMatDispose(+dz.dataset.matdispose); return; }
+  const du = e.target.closest("[data-matdispundo]");
+  if (du) { e.stopPropagation(); undoMatDispose(+du.dataset.matdispundo); return; }
   if (e.target.closest("tr[data-i]")) return;      // 실사 행은 wireEntryTable이 처리
   const fix = e.target.closest("[data-fixreal]");
   if (fix) {
@@ -2532,6 +2573,31 @@ $("eMat").addEventListener("click", e => {
   const u = e.target.closest("[data-use]");        // 자동 반영 행의 사용량 클릭 → 사용처 분석
   if (u) openUse(+u.dataset.use, E.date);
 });
+// 유통기한 만료분 확정 폐기 — 실재고에서 차감(더 이상 사용 불가), 취소 시 재고 복구
+async function openMatDispose(mid) {
+  const m = materialById(mid) || {};
+  const ex = (E.matExpiry || {})[mid];
+  if (!ex || !(ex.expired > 0)) return;
+  const exps = (ex.batches || []).map(b => b.exp).filter(Boolean);
+  const msg = `'${m.name}' 유통기한 만료 재고 ${NF(ex.expired)}${m.unit || ""}를 확정 폐기할까요?\n`
+    + (exps.length ? `(유통기한 ${exps.join(", ")} 지남)\n` : "")
+    + `\n폐기하면 실재고에서 차감되어 더 이상 사용되지 않습니다. (취소로 되돌릴 수 있습니다)`;
+  if (!confirm(msg)) return;
+  try {
+    await api("/api/matdisposal", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ date: E.date, material_id: mid, qty: ex.expired, reason: "유통기한 만료", expiry: exps.join(", ") }) });
+    toast(`${m.name} ${NF(ex.expired)}${m.unit || ""} 폐기 처리되었습니다`);
+    await loadDay(E.date);
+  } catch (e) { /* api 토스트 */ }
+}
+async function undoMatDispose(did) {
+  if (!confirm("이 폐기 기록을 취소할까요? — 재고가 복구됩니다")) return;
+  try {
+    await api("/api/matdisposal/" + did, { method: "DELETE" });
+    toast("폐기가 취소되었습니다 — 재고가 복구되었습니다");
+    await loadDay(E.date);
+  } catch (e) { /* api 토스트 */ }
+}
 function staffRate(r) {   // 가동률 = 실가동 ÷ 목표가동(그날 입력, 없으면 라인 정상가동시간)
   const line = M.line.find(l => l.id === r.line_id);
   const std = Number(r.target_hours) > 0 ? Number(r.target_hours) : (line ? line.std_hours : 0);

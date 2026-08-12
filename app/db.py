@@ -215,6 +215,21 @@ CREATE TABLE IF NOT EXISTS material_expiry (
   PRIMARY KEY(material_id, date)
 );
 
+-- 원부자재 유통기한 만료 폐기 — 확정 폐기 시 한 줄. 재고(material_daily)에서 그날 outflow로 차감된다.
+--  자동(1차)은 계산만(만료분 표시·차단), 확정(2차) 폐기가 여기에 기록되어 실제 재고를 줄인다.
+CREATE TABLE IF NOT EXISTS material_disposal (
+  id INTEGER PRIMARY KEY,
+  date TEXT NOT NULL,
+  material_id INTEGER NOT NULL REFERENCES material(id),
+  qty REAL NOT NULL DEFAULT 0,
+  expiry TEXT DEFAULT '',               -- 폐기한 재고의 유통기한 (표시용)
+  reason TEXT DEFAULT '',
+  note TEXT DEFAULT '',
+  created_at TEXT DEFAULT '',
+  created_by TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_matdisp ON material_disposal(material_id, date);
+
 -- 반제품(semi) 레시피 — 반제품 1단위를 만드는 데 필요한 원재료 구성 (반제품 생산 시 원재료 차감 기준)
 CREATE TABLE IF NOT EXISTS semi_bom (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.75.1"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.76.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -158,19 +158,71 @@ def ripple_material(con, mid, from_date):
         WHERE material_id=? AND date<=? ORDER BY date DESC LIMIT 1""",
                            (mid, from_date)).fetchone()
     prev = float(prev_row["real_qty"]) if prev_row else 0.0
+    # 그날 폐기 outflow (확정 폐기) — 자동 행은 전일재고+입고−사용−폐기로 재계산
+    disp = {r["date"]: float(r["q"] or 0) for r in con.execute(
+        "SELECT date, SUM(qty) q FROM material_disposal WHERE material_id=? AND date>? GROUP BY date",
+        (mid, from_date))}
     for r in con.execute("""SELECT id, date, in_qty, real_qty, used_qty, src
             FROM material_daily WHERE material_id=? AND date>? ORDER BY date""",
                          (mid, from_date)).fetchall():
+        d = disp.get(r["date"], 0.0)
         if r["src"] == "auto":
-            real = prev + float(r["in_qty"]) - float(r["used_qty"])
+            real = prev + float(r["in_qty"]) - float(r["used_qty"]) - d
             con.execute("UPDATE material_daily SET prev_qty=?, real_qty=? WHERE id=?",
                         (prev, real, r["id"]))
             prev = real
-        else:
+        else:   # 실사 행: 실재고=세어본 값(폐기는 이미 반영된 실측) 유지, 전일재고·사용량만 재계산
             used = prev + float(r["in_qty"]) - float(r["real_qty"])
             con.execute("UPDATE material_daily SET prev_qty=?, used_qty=? WHERE id=?",
                         (prev, used, r["id"]))
             prev = float(r["real_qty"])
+
+
+def material_stock_expiry(con, mid, as_of, shelf_days=0):
+    """as_of 기준 현재고를 입고 배치(FEFO)로 복원해 만료 재고를 산출.
+    유효기한 = material_in.expiry, 없으면 (제조일 또는 입고일) + shelf_days.
+    '당일까지 사용' 규칙: 유효기한 < as_of(오늘) 인 배치의 잔량이 만료.
+    FEFO(먼저 만료되는 것부터 소진)라 남는 재고는 기한 늦은 배치 → 잔량을 기한 늦은 배치부터 채워 복원.
+    반환: (onhand, expired_qty, batches[{exp, qty, expired}]) — 초과분(기록 배치보다 많이 보유)은 기한미상으로 제외."""
+    r = con.execute("""SELECT real_qty FROM material_daily
+        WHERE material_id=? AND date<=? ORDER BY date DESC LIMIT 1""", (mid, as_of)).fetchone()
+    onhand = float(r["real_qty"]) if r else 0.0
+    if onhand <= 1e-6:
+        return onhand, 0.0, []
+    bs = []
+    for b in con.execute("SELECT date, qty, expiry, made_date FROM material_in"
+                         " WHERE material_id=? AND date<=?", (mid, as_of)):
+        exp = (b["expiry"] or "").strip()
+        if not exp and shelf_days and int(shelf_days) > 0:
+            base = (b["made_date"] or b["date"] or "").strip()
+            try:
+                exp = (dt.date.fromisoformat(base) + dt.timedelta(days=int(shelf_days))).isoformat()
+            except (ValueError, TypeError):
+                exp = ""
+        bs.append({"in": b["date"] or "", "qty": float(b["qty"] or 0), "exp": exp})
+    if not bs:
+        return onhand, 0.0, []
+    # 소진 우선순위 = 수불부 FEFO와 동일: 유효기한 이른 순(기한 없으면 입고일로 대체).
+    bs_sorted = sorted(bs, key=lambda b: (b["exp"] or b["in"], b["in"]))
+    total = sum(b["qty"] for b in bs_sorted)
+    rem = [0.0] * len(bs_sorted)
+    fill = min(onhand, total)   # 초과분 = 초기재고(기한 미상) → 만료 판정에서 제외
+    for i in range(len(bs_sorted) - 1, -1, -1):   # 기한 늦은 배치부터 채움(FEFO 잔량 복원)
+        if fill <= 1e-6:
+            break
+        take = min(fill, bs_sorted[i]["qty"])
+        rem[i] = take
+        fill -= take
+    expired = 0.0
+    out = []
+    for i, b in enumerate(bs_sorted):
+        if rem[i] <= 1e-6:
+            continue
+        is_exp = bool(b["exp"]) and b["exp"] < as_of   # 오늘 > 기한 = 만료(당일까지 사용)
+        if is_exp:
+            expired += rem[i]
+        out.append({"exp": b["exp"], "qty": round(rem[i], 3), "expired": is_exp})
+    return onhand, round(expired, 3), out
 
 
 # ── 인증/권한 (admin=전체 / op=시급 제외 / guest=보기 전용) ──
@@ -2512,6 +2564,93 @@ def disposal_delete(request: Request, did: int):
         con.close()
 
 
+def _recompute_material_day(con, mid, date, manual_delta=0.0):
+    """확정 폐기/취소 후 그날 자재 재고를 재계산하고 이후 날짜를 ripple.
+    - 자동 행: 실재고 = 전일 + 입고 − 사용 − (그날 폐기 합계). (폐기 총액 기준 재계산 → 멱등)
+    - 실사 행: 세어본 실재고에 폐기 증감분(manual_delta)만 직접 반영. (실측 baseline을 알 수 없어 증분 처리)
+    - 기록 없음: 폐기만 반영한 자동 행 신설."""
+    disp = float(con.execute("SELECT COALESCE(SUM(qty),0) q FROM material_disposal"
+                             " WHERE material_id=? AND date=?", (mid, date)).fetchone()["q"] or 0)
+    prev_row = con.execute("""SELECT real_qty FROM material_daily
+        WHERE material_id=? AND date<? ORDER BY date DESC LIMIT 1""", (mid, date)).fetchone()
+    prev = float(prev_row["real_qty"]) if prev_row else 0.0
+    row = con.execute("SELECT id, in_qty, used_qty, real_qty, src FROM material_daily"
+                      " WHERE material_id=? AND date=?", (mid, date)).fetchone()
+    if row is None:
+        con.execute("""INSERT INTO material_daily(date, material_id, prev_qty, in_qty, real_qty, used_qty, src)
+            VALUES(?,?,?,?,?,?, 'auto')""", (date, mid, prev, 0.0, prev - disp, 0.0))
+    elif row["src"] == "auto":
+        inq = float(row["in_qty"] or 0)
+        used = float(row["used_qty"] or 0)
+        con.execute("UPDATE material_daily SET prev_qty=?, real_qty=? WHERE id=?",
+                    (prev, prev + inq - used - disp, row["id"]))
+    else:   # 실사 행 — 세어본 실재고에 폐기 증감분만 반영
+        inq = float(row["in_qty"] or 0)
+        real = float(row["real_qty"] or 0) + manual_delta
+        con.execute("UPDATE material_daily SET prev_qty=?, real_qty=?, used_qty=? WHERE id=?",
+                    (prev, real, prev + inq - real, row["id"]))
+    ripple_material(con, mid, date)
+
+
+def require_stock_duty(request: Request):
+    if "stock" not in duty_set(request.state.user):
+        raise HTTPException(403, "재고 담당 계정만 폐기할 수 있습니다 — 관리자에게 담당 지정을 요청하세요")
+
+
+@app.post("/api/matdisposal")
+def matdisposal_create(request: Request, body: dict):
+    """원부자재 유통기한 만료분 확정 폐기 — material_disposal 기록 + 실재고 차감."""
+    require_stock_duty(request)
+    mid = body.get("material_id")
+    try:
+        qty = float(body.get("qty") or 0)
+    except (TypeError, ValueError):
+        qty = 0
+    if not mid or qty <= 0:
+        raise HTTPException(400, "자재와 폐기 수량을 입력하세요")
+    date = body.get("date") or dt.date.today().isoformat()
+    con = connect()
+    try:
+        m = con.execute("SELECT name, unit FROM material WHERE id=?", (mid,)).fetchone()
+        if not m:
+            raise HTTPException(404, "자재 없음")
+        onhand = material_stock_expiry(con, mid, date)[0]
+        if qty - onhand > 1e-6:
+            raise HTTPException(400, f"폐기 수량 {qty:g}{m['unit']}이(가) "
+                                f"현재고 {onhand:g}{m['unit']}를 초과합니다")
+        con.execute("""INSERT INTO material_disposal(date, material_id, qty, expiry, reason, note, created_at, created_by)
+            VALUES(?,?,?,?,?,?,datetime('now','localtime'),?)""",
+                    (date, mid, qty, (body.get("expiry") or "").strip(),
+                     body.get("reason") or "유통기한 만료", body.get("note") or "",
+                     request.state.user.get("username", "")))
+        _recompute_material_day(con, mid, date, manual_delta=-qty)
+        audit(con, "mat_disposal", f"{date} {m['name']} {qty:g}{m['unit']} 폐기 ({body.get('reason','유통기한 만료')})")
+        bump_masters()
+        con.commit()
+        return {"ok": True}
+    finally:
+        con.close()
+
+
+@app.delete("/api/matdisposal/{did}")
+def matdisposal_delete(request: Request, did: int):
+    require_stock_duty(request)
+    con = connect()
+    try:
+        row = con.execute("""SELECT d.*, m.name, m.unit FROM material_disposal d
+            JOIN material m ON m.id=d.material_id WHERE d.id=?""", (did,)).fetchone()
+        if not row:
+            raise HTTPException(404, "폐기 기록 없음")
+        con.execute("DELETE FROM material_disposal WHERE id=?", (did,))
+        _recompute_material_day(con, row["material_id"], row["date"], manual_delta=float(row["qty"] or 0))
+        audit(con, "mat_disposal_undo", f"{row['date']} {row['name']} {float(row['qty'] or 0):g}{row['unit']}")
+        bump_masters()
+        con.commit()
+        return {"ok": True}
+    finally:
+        con.close()
+
+
 # ── 자재 입출고 이력 ──────────────────────────
 @app.get("/api/mathistory/{mid}")
 def mat_history(mid: int, limit: int = 40):
@@ -4649,6 +4788,19 @@ def day_get(date: str, request: Request):
         # 직전 '생산' 기록일 (어제처럼 복사용 — 자재 prev_date와 별개)
         ppd = con.execute("SELECT MAX(date) d FROM production WHERE date<?", (date,)).fetchone()
         prev_prod_date = ppd["d"] if ppd else None
+        # 원부자재 유통기한 만료 재고 (FEFO · '당일까지 사용' → 오늘 > 기한 = 만료) + 그날 확정 폐기 기록
+        mat_expiry = {}
+        for mm in con.execute(
+                "SELECT id, shelf_days FROM material WHERE COALESCE(is_semi,0)=0"
+                " AND (COALESCE(shelf_days,0)>0 OR id IN"
+                " (SELECT material_id FROM material_in WHERE date<=? AND COALESCE(expiry,'')!=''))", (date,)):
+            onhand, expired, batches = material_stock_expiry(con, mm["id"], date, mm["shelf_days"] or 0)
+            if expired > 1e-6:
+                mat_expiry[mm["id"]] = {"onhand": onhand, "expired": expired,
+                                        "batches": [b for b in batches if b["expired"]]}
+        mat_disposal = rows(con.execute(
+            "SELECT id, material_id, qty, expiry, reason, note FROM material_disposal"
+            " WHERE date=? ORDER BY id", (date,)))
         # 동시 편집 감지: 이 사용자가 이 날짜를 열었음을 표시 + 같은 날짜 열람 중인 다른 사용자
         me = request.state.user
         me["editing"] = {"date": date, "t": time.time()}
@@ -4662,6 +4814,7 @@ def day_get(date: str, request: Request):
                 "production": production, "shipment": shipment,
                 "materials": materials, "mat_in": mat_in, "pending_orders": pending_orders,
                 "staffing": staffing, "lots": lots, "usage": usage,
+                "mat_expiry": mat_expiry, "mat_disposal": mat_disposal,
                 "semi_prod": semi_prod, "semi_mat_prod": semi_mat_prod, "photos": photos,
                 "prev_stock": {r["material_id"]: r["real_qty"] for r in prev},
                 "prev_date": prev_date, "prev_materials": prev_materials,
@@ -4943,9 +5096,13 @@ def day_save(request: Request, date: str, body: dict):
             else:   # 기존 실사 행이 우선
                 explicit = {r["material_id"] for r in con.execute(
                     "SELECT material_id FROM material_daily WHERE date=? AND src!='auto'", (date,))}
-            for mid in (set(sums) | set(in_totals)) - explicit:
+            # 그날 확정 폐기 outflow — 자동 행 실재고에서 함께 차감 (재저장돼도 폐기분 유지)
+            disp_tot = {r["material_id"]: float(r["q"] or 0) for r in con.execute(
+                "SELECT material_id, SUM(qty) q FROM material_disposal WHERE date=? GROUP BY material_id", (date,))}
+            for mid in (set(sums) | set(in_totals) | set(disp_tot)) - explicit:
                 used = sums.get(mid, 0.0)
                 inq = in_totals.get(mid, 0.0)
+                dsp = disp_tot.get(mid, 0.0)
                 prev_row = con.execute("""SELECT real_qty FROM material_daily
                     WHERE material_id=? AND date<? ORDER BY date DESC LIMIT 1""",
                                        (mid, date)).fetchone()
@@ -4953,7 +5110,7 @@ def day_save(request: Request, date: str, body: dict):
                 con.execute("""INSERT OR REPLACE INTO material_daily
                     (date, material_id, prev_qty, in_qty, real_qty, used_qty, src)
                     VALUES(?,?,?,?,?,?,'auto')""",
-                            (date, mid, prev, inq, prev + inq - used, used))
+                            (date, mid, prev, inq, prev + inq - used - dsp, used))
             # 이후 날짜 체인 재계산 — 과거 날짜를 고쳐도 미래 기록의 전일재고가 따라오도록
             affected_mids |= {r["material_id"] for r in con.execute(mid_q, (date, date, date))}
             for mid in affected_mids:
