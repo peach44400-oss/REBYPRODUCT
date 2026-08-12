@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.77.3"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.78.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -223,6 +223,66 @@ def material_stock_expiry(con, mid, as_of, shelf_days=0):
             expired += rem[i]
         out.append({"exp": b["exp"], "qty": round(rem[i], 3), "expired": is_exp})
     return onhand, round(expired, 3), out
+
+
+def material_expiry_alerts(con, today, horizon=14):
+    """최근(horizon일 내) 유통기한이 지난 재고가 '있었는데' 아직 폐기·확인되지 않은 자재.
+    오늘 기준 현재고엔 없어도(그새 생산에 소진돼도) 폐기/확인 전까지 계속 알린다 →
+    '만료된 자재를 폐기 안 하고 넘어가는' 것을 막는다. (자재당 1건 — 알림 과다 방지)
+    반환: [{id, name, unit, expiry, onhand_expired(현재 보유 만료량), consumed(소진 여부)}]"""
+    try:
+        today_d = dt.date.fromisoformat(today)
+    except (ValueError, TypeError):
+        return []
+    from_d = (today_d - dt.timedelta(days=horizon)).isoformat()
+    acked = {(r["material_id"], r["expiry"]) for r in con.execute(
+        "SELECT material_id, expiry FROM material_expiry_ack")}
+    last_disp = {r["material_id"]: r["d"] for r in con.execute(
+        "SELECT material_id, MAX(date) d FROM material_disposal GROUP BY material_id")}
+    alerts = []
+    for m in con.execute("""SELECT id, name, unit, COALESCE(shelf_days,0) shelf_days
+            FROM material WHERE kind IN ('raw','sub') AND COALESCE(status,'') NOT IN ('단종','중지')"""):
+        mid, sd = m["id"], m["shelf_days"]
+        # 후보 기한: 최근(horizon) 내에 지난 입고 배치의 유효기한
+        cand = set()
+        for b in con.execute("SELECT date, made_date, expiry FROM material_in"
+                             " WHERE material_id=? AND date<=?", (mid, today)):
+            e = (b["expiry"] or "").strip()
+            if not e and sd and int(sd) > 0:
+                base = (b["made_date"] or b["date"] or "").strip()
+                try:
+                    e = (dt.date.fromisoformat(base) + dt.timedelta(days=int(sd))).isoformat()
+                except (ValueError, TypeError):
+                    e = ""
+            if e and from_d <= e < today:
+                cand.add(e)
+        _, _, cur_batches = material_stock_expiry(con, mid, today, sd)
+        # ① 현재 보유 중인 만료분 (즉시 폐기 대상) — 최근 기한만, 확인 처리된 건 제외
+        on_dates = [b["exp"] for b in cur_batches
+                    if b["expired"] and b["exp"] and b["exp"] >= from_d and (mid, b["exp"]) not in acked]
+        on_qty = sum(b["qty"] for b in cur_batches if b["exp"] in on_dates)
+        if on_qty > 1e-6:
+            alerts.append({"id": mid, "name": m["name"], "unit": m["unit"], "expiry": min(on_dates),
+                           "onhand_expired": round(on_qty, 3), "consumed": False})
+            continue
+        # ② 소진돼 재고엔 없지만 폐기·확인 안 된 최근 만료 — 가장 최근 것 1건
+        ld = last_disp.get(mid)
+        consumed = []
+        for e in cand:
+            if (mid, e) in acked or (ld and ld >= e):
+                continue
+            try:
+                ep1 = (dt.date.fromisoformat(e) + dt.timedelta(days=1)).isoformat()
+            except (ValueError, TypeError):
+                continue
+            _, _, b1 = material_stock_expiry(con, mid, ep1, sd)
+            if any(bb["exp"] == e and bb["expired"] for bb in b1):   # 만료 당시 실제 보유했었나
+                consumed.append(e)
+        if consumed:
+            alerts.append({"id": mid, "name": m["name"], "unit": m["unit"], "expiry": max(consumed),
+                           "onhand_expired": 0, "consumed": True})
+    alerts.sort(key=lambda x: (x["consumed"], x["expiry"]))
+    return alerts
 
 
 # ── 인증/권한 (admin=전체 / op=시급 제외 / guest=보기 전용) ──
@@ -2651,6 +2711,28 @@ def matdisposal_delete(request: Request, did: int):
         con.close()
 
 
+@app.post("/api/matexpiryack")
+def matexpiry_ack(request: Request, body: dict):
+    """이미 소진돼 폐기할 수 없는 만료분을 '확인함'으로 알림에서 내린다 (재고 담당)."""
+    require_stock_duty(request)
+    mid = body.get("material_id")
+    expiry = (body.get("expiry") or "").strip()
+    if not mid or not expiry:
+        raise HTTPException(400, "자재와 유통기한이 필요합니다")
+    con = connect()
+    try:
+        con.execute("INSERT OR REPLACE INTO material_expiry_ack(material_id, expiry, acked_at, acked_by) "
+                    "VALUES(?,?,datetime('now','localtime'),?)",
+                    (mid, expiry, request.state.user.get("username", "")))
+        m = con.execute("SELECT name FROM material WHERE id=?", (mid,)).fetchone()
+        audit(con, "mat_expiry_ack", f"{(m['name'] if m else mid)} 유통기한 {expiry} 만료 확인")
+        bump_masters()
+        con.commit()
+        return {"ok": True}
+    finally:
+        con.close()
+
+
 MATSTATUS_SOON_DAYS = 7   # 유통기한 임박 기준(일)
 
 
@@ -3980,25 +4062,25 @@ def dashboard(request: Request):
         expiry = expiry[:8]
         lot_date = today if expiry else None
 
-        # 원부자재 유통기한 만료·임박 — 폐기 전까지 매일 계속 표시(지나간 만료도 까먹지 않게 대시보드 상시 노출)
-        mat_exp = []
+        # 원부자재 유통기한 — ①미처리 만료(최근 지났는데 폐기·확인 안 됨, 소진돼도 추적) ②임박(7일내 예정, 현재 보유)
+        mat_alerts = material_expiry_alerts(con, today)   # 소진 후에도 폐기/확인 전까지 계속 알림
+        mat_soon = []
         for m in con.execute("""SELECT id, name, unit, COALESCE(shelf_days,0) shelf_days
                 FROM material WHERE kind IN ('raw','sub') AND COALESCE(status,'') NOT IN ('단종','중지')"""):
-            _, m_expired, m_batches = material_stock_expiry(con, m["id"], today, m["shelf_days"])
-            m_exps = sorted(b["exp"] for b in m_batches if b["exp"])
-            m_next = m_exps[0] if m_exps else ""
-            m_dleft = None
-            if m_next:
-                try:
-                    m_dleft = (dt.date.fromisoformat(m_next) - dt.date.today()).days
-                except (ValueError, TypeError):
-                    m_dleft = None
-            if m_expired > 1e-6 or (m_dleft is not None and 0 <= m_dleft <= 7):
-                mat_exp.append({"id": m["id"], "name": m["name"], "unit": m["unit"],
-                                "expired": m_expired, "expiry": m_next, "days_left": m_dleft})
-        mat_exp.sort(key=lambda x: (x["days_left"] if x["days_left"] is not None else 999))
-        mat_expired_cnt = sum(1 for x in mat_exp if x["expired"] > 1e-6)
-        mat_soon_cnt = sum(1 for x in mat_exp if x["expired"] <= 1e-6)
+            _, _, m_batches = material_stock_expiry(con, m["id"], today, m["shelf_days"])
+            m_fut = sorted(b["exp"] for b in m_batches if b["exp"] and not b["expired"])
+            if not m_fut:
+                continue
+            try:
+                m_dleft = (dt.date.fromisoformat(m_fut[0]) - dt.date.today()).days
+            except (ValueError, TypeError):
+                m_dleft = None
+            if m_dleft is not None and 0 <= m_dleft <= 7:
+                mat_soon.append({"id": m["id"], "name": m["name"], "unit": m["unit"],
+                                 "expiry": m_fut[0], "days_left": m_dleft})
+        mat_soon.sort(key=lambda x: x["days_left"])
+        mat_expired_cnt = len(mat_alerts)
+        mat_soon_cnt = len(mat_soon)
 
         admin = mcan(request, "prod")            # 생산·출고·재고 금액
         can_labor = mcan(request, "labor")       # 노무비
@@ -4130,7 +4212,8 @@ def dashboard(request: Request):
         return {"kpi": kpi, "trend": trend, "low": low, "lastday": lastday,
                 "expiry": expiry, "lot_date": lot_date, "lot_warn": lot_warn,
                 "lot_expired": lot_expired,
-                "mat_expiry": mat_exp[:12], "mat_expired": mat_expired_cnt, "mat_soon": mat_soon_cnt,
+                "mat_alerts": mat_alerts[:12], "mat_soon_list": mat_soon[:8],
+                "mat_expired": mat_expired_cnt, "mat_soon": mat_soon_cnt,
                 "today": today, "today_entered": bool(today_entered), "last_day": last,
                 "ach": ach, "prod_low": prod_low,
                 "prod_stock_qty": prod_stock_qty,

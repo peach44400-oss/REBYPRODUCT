@@ -363,6 +363,33 @@ window.addEventListener("resize", dpClose);
 
 /* ══ 대시보드 ══════════════════════════ */
 const DONUT_PALETTE = ["#8B5E34", "#C4841D", "#3E7A50", "#5B7C99", "#B0ADA6", "#C2372C", "#9C6644", "#7A9E7E", "#D4A24C", "#6B7280"];
+// 대시보드 '자재 유통기한 만료·임박' 카드 — 미처리 만료 액션(확정 폐기 / 확인)
+let DASH_MAT_ALERTS = [];
+$("matExpList").addEventListener("click", async e => {
+  const dz = e.target.closest("[data-medispose]");
+  if (dz) {
+    const r = (DASH_MAT_ALERTS || []).find(x => x.id === +dz.dataset.medispose);
+    if (!r || !(r.onhand_expired > 0)) return;
+    if (!confirm(`'${r.name}' 유통기한 만료 재고 ${NF(r.onhand_expired)}${r.unit} (유통기한 ${r.expiry} 지남)를 확정 폐기할까요?\n\n폐기하면 실재고에서 차감됩니다.`)) return;
+    try {
+      await api("/api/matdisposal", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date: todayISO(), material_id: r.id, qty: r.onhand_expired, reason: "유통기한 만료", expiry: r.expiry }) });
+      toast(`${r.name} 폐기 처리되었습니다`); loadDash();
+    } catch (e) { /* api 토스트 */ }
+    return;
+  }
+  const ak = e.target.closest("[data-meack]");
+  if (ak) {
+    const [mid, expiry] = ak.dataset.meack.split("|");
+    const r = (DASH_MAT_ALERTS || []).find(x => x.id === +mid && x.expiry === expiry);
+    if (!confirm(`'${r ? r.name : ""}' 유통기한 ${expiry} 만료분을 '확인함'으로 내릴까요?\n이미 생산에 소진돼 폐기할 재고가 없는 경우에만 사용하세요.`)) return;
+    try {
+      await api("/api/matexpiryack", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ material_id: +mid, expiry }) });
+      toast("확인 처리되었습니다"); loadDash();
+    } catch (e) { /* api 토스트 */ }
+  }
+});
 async function loadDash() {
   const d = await api("/api/dashboard");
   const k = d.kpi;
@@ -467,22 +494,30 @@ async function loadDash() {
       <td>${esc(r.order_date) || "—"}</td><td class="auto">${r.date}</td></tr>`).join("")
     : `<tr><td colspan="6" class="auto">부족 자재가 없습니다. 안전재고는 기준정보에서 설정합니다.</td></tr>`;
 
-  // 자재 유통기한 만료·임박 — 폐기 전까지 대시보드에 상시 노출(지나간 만료도 놓치지 않게)
-  const me = d.mat_expiry || [];
+  // 자재 유통기한 — ①미처리 만료(최근 지났는데 폐기·확인 안 됨, 소진돼도 계속) ②임박. 폐기 전까지 상시 노출.
+  const alerts = d.mat_alerts || [], soonL = d.mat_soon_list || [];
+  DASH_MAT_ALERTS = alerts;
+  const canStock = typeof MYDUTY !== "undefined" && MYDUTY.has && MYDUTY.has("stock");
   const meCard = $("matExpCard");
   if (meCard) {
-    meCard.style.display = me.length ? "" : "none";
-    $("matExpLbl").textContent = ((d.mat_expired || 0) ? `만료 ${d.mat_expired}종` : "")
-      + ((d.mat_expired || 0) && (d.mat_soon || 0) ? " · " : "") + ((d.mat_soon || 0) ? `임박 ${d.mat_soon}종` : "");
-    $("matExpList").innerHTML = me.map(r => {
-      const expired = r.expired > 0;
-      const badge = expired
-        ? `<span class="chip crit">만료 ${NF(r.expired)}${esc(r.unit)}</span>`
-        : `<span class="q num" style="color:${(r.days_left != null && r.days_left <= 3) ? "var(--crit)" : "#B45309"}">D-${r.days_left}</span>`;
-      return `<div class="feed-item"><span>${expired ? "⚠️ " : "⏰ "}<b>${esc(r.name)}</b>
-        <span class="auto" style="font-size:11.5px"> 소비 ${r.expiry ? esc(r.expiry.slice(5)) : "—"}${expired ? " 지남" : ""}</span></span>
-        ${badge}</div>`;
+    meCard.style.display = (alerts.length || soonL.length) ? "" : "none";
+    $("matExpLbl").textContent = (alerts.length ? `미처리 만료 ${alerts.length}종` : "")
+      + (alerts.length && soonL.length ? " · " : "") + (soonL.length ? `임박 ${soonL.length}종` : "");
+    const aHtml = alerts.map(r => {
+      const badge = r.onhand_expired > 0
+        ? `<span class="chip crit">만료 ${NF(r.onhand_expired)}${esc(r.unit)}</span>`
+        : `<span class="chip" style="background:#fde8e8; color:#c0392b;" title="이미 생산에 소진됨 — 폐기할 재고가 없습니다. 확인만 하세요">소진됨·미폐기</span>`;
+      const act = canStock ? (r.onhand_expired > 0
+        ? ` <button class="btn ghost sm" data-medispose="${r.id}" style="color:#c0392b; border-color:#c0392b; padding:0 7px;">확정 폐기</button>`
+        : ` <button class="btn ghost sm" data-meack="${r.id}|${esc(r.expiry)}" style="padding:0 7px;" title="이미 소진돼 폐기 불가 — 확인함으로 내림">확인</button>`) : "";
+      return `<div class="feed-item"><span>⚠️ <b>${esc(r.name)}</b>
+        <span class="auto" style="font-size:11.5px"> 소비 ${esc(r.expiry.slice(5))} 지남</span></span>
+        <span style="white-space:nowrap;">${badge}${act}</span></div>`;
     }).join("");
+    const sHtml = soonL.map(r => `<div class="feed-item"><span>⏰ <b>${esc(r.name)}</b>
+      <span class="auto" style="font-size:11.5px"> 소비 ${esc(r.expiry.slice(5))}</span></span>
+      <span class="q num" style="color:${r.days_left <= 3 ? "var(--crit)" : "#B45309"}">D-${r.days_left}</span></div>`).join("");
+    $("matExpList").innerHTML = aHtml + sHtml;
   }
   const mc = $("navMatCnt");
   if (mc) { const n = (d.mat_expired || 0) + lowTotal; mc.style.display = n > 0 ? "" : "none"; mc.textContent = n; }
@@ -6305,7 +6340,7 @@ function buildLedgerDoc(d, forPrint) {
     <td style="${TD} text-align:right; font-weight:700;" ${ED}>${NFv(r.real)}</td>
     <td style="${TD} text-align:center; font-size:8.5px; white-space:nowrap; color:#444;" ${ED}>${esc(r.in_date || "")}</td>
     <td style="${TD} text-align:center; font-size:8.5px; white-space:nowrap; color:#444;" ${ED}>${esc(r.made || "")}</td>
-    <td style="${TD} text-align:center; font-size:8.5px; white-space:nowrap;${r.expiry_est ? " color:#888; font-style:italic;" : ""}" ${ED} title="${r.expiry_est ? "기준정보 소비일로 자동 계산 (입고 시 미입력)" : "지금 소진 중인 배치(FEFO)의 소비기한 — 빨강 = 유통기한 지남(만료)"}">${(() => {
+    <td style="${TD} text-align:center; font-size:8.5px; white-space:normal; word-break:keep-all; line-height:1.3;${r.expiry_est ? " color:#888; font-style:italic;" : ""}" ${ED} title="${r.expiry_est ? "기준정보 소비일로 자동 계산 (입고 시 미입력)" : "지금 소진 중인 배치(FEFO)의 소비기한 — 빨강 = 유통기한 지남(만료)"}">${(() => {
       const parts = String(r.expiry || "").split(",").map(s => s.trim()).filter(Boolean);
       if (!parts.length) return "";
       // 여러 기한이 섞이면 지난 날짜만 빨강 — 유효한 날짜는 그대로 (통째 만료 표시 방지)

@@ -230,6 +230,16 @@ CREATE TABLE IF NOT EXISTS material_disposal (
 );
 CREATE INDEX IF NOT EXISTS idx_matdisp ON material_disposal(material_id, date);
 
+-- 유통기한 만료 '확인' 처리 — 이미 소진돼 폐기할 수 없는 만료분을 '확인함'으로 알림에서 내린다.
+--  (폐기하면 자동으로 처리됨 · 이건 소진 후 폐기 불가한 건을 수동 확인하는 용도)
+CREATE TABLE IF NOT EXISTS material_expiry_ack (
+  material_id INTEGER NOT NULL,
+  expiry TEXT NOT NULL,
+  acked_at TEXT DEFAULT '',
+  acked_by TEXT DEFAULT '',
+  PRIMARY KEY(material_id, expiry)
+);
+
 -- 반제품(semi) 레시피 — 반제품 1단위를 만드는 데 필요한 원재료 구성 (반제품 생산 시 원재료 차감 기준)
 CREATE TABLE IF NOT EXISTS semi_bom (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
