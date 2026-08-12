@@ -2227,6 +2227,15 @@
   </div>
 </div>
 <div class="toast" id="toast"></div>
+<!-- 자재 단가 이력 팝업 — 단가 칸에서 열어 기간별 단가 보기 + 직접 추가/삭제 -->
+<div class="overlay" id="matPriceOverlay">
+  <div class="modal" style="width:min(540px, 96vw);">
+    <h3 id="matPriceTitle">💰 단가 이력</h3>
+    <p class="hint" style="margin:0 0 10px;">적용 시작일 기준 · 원가·월간리포트가 이 단가로 계산됩니다. 입고 단가는 입고 기록에서 자동 반영됩니다.</p>
+    <div id="matPriceBody"></div>
+    <div class="modal-foot"><button class="btn" id="matPriceClose">닫기</button></div>
+  </div>
+</div>
 <!-- 사진 크게 보기 (라이트박스) — 사진 클릭 시 전체화면으로 확대, 아무 곳이나 클릭하면 닫힘 -->
 <div class="overlay" id="imgLightbox" style="cursor:zoom-out; z-index:1600; background:rgba(12,12,12,.82);">
   <img id="imgLightboxImg" alt="사진 크게 보기" style="max-width:94vw; max-height:92vh; border-radius:8px; box-shadow:0 12px 44px rgba(0,0,0,.55);">

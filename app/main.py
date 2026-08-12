@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.74.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.75.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -1121,6 +1121,34 @@ def _backfill_matin_po():
             if po["pname"] or price:
                 con.execute("UPDATE material_in SET partner=?, price=? WHERE id=?",
                             (po["pname"], float(price), r["id"]))
+        con.commit()
+    except Exception:
+        pass
+    finally:
+        con.close()
+
+
+def _backfill_matprice():
+    """단가 이력이 없는 자재에 '최초 등록일' 기준 초기 단가를 한 줄 넣는다 (전체·1회).
+    등록일 = created_at → 초기재고 등록일 → 최초 입고/실사일 → 오늘 순으로 추정."""
+    con = connect()
+    try:
+        if con.execute("SELECT 1 FROM app_setting WHERE key='matprice_backfill_v1'").fetchone():
+            return
+        for m in con.execute("SELECT id, unit_price FROM material WHERE COALESCE(unit_price,0)>0"):
+            if con.execute("SELECT 1 FROM material_price WHERE material_id=? LIMIT 1", (m["id"],)).fetchone():
+                continue
+            fd = con.execute("""SELECT COALESCE(
+                NULLIF((SELECT created_at FROM material WHERE id=?),''),
+                (SELECT date FROM opening_stock WHERE kind='material' AND ref_id=? LIMIT 1),
+                (SELECT MIN(date) FROM material_in WHERE material_id=?),
+                (SELECT MIN(date) FROM material_daily WHERE material_id=?),
+                date('now','localtime')) fd""",
+                (m["id"], m["id"], m["id"], m["id"])).fetchone()["fd"]
+            con.execute("INSERT INTO material_price(material_id, from_date, price, note, set_at) "
+                        "VALUES(?,?,?,?,datetime('now','localtime'))",
+                        (m["id"], fd, m["unit_price"], "등록(자동)"))
+        con.execute("INSERT OR REPLACE INTO app_setting(key, value) VALUES('matprice_backfill_v1','1')")
         con.commit()
     except Exception:
         pass
@@ -3506,8 +3534,9 @@ def master_create(mtype: str, body: dict):
         qs = ",".join("?" * len(vals))
         cur = con.execute(f"INSERT INTO {table}({ks}) VALUES({qs})", list(vals.values()))
         new_id = cur.lastrowid
-        # 자재 신규 등록 시 초기 단가도 단가 이력에 남긴다 (적용 시작일=등록일 · 이후 기간별 계산의 기준)
+        # 자재 신규 등록 시 등록일 기록 + 초기 단가를 단가 이력에 남긴다 (적용 시작일=등록일)
         if mtype in ("raw", "sub", "semi"):
+            con.execute("UPDATE material SET created_at=date('now','localtime') WHERE id=?", (new_id,))
             try:
                 ip = float(vals.get("unit_price") or 0)
             except (TypeError, ValueError):
@@ -5962,6 +5991,7 @@ if __name__ == "__main__":
     purge_old_chat(CHAT_DIR)      # 보관 주기 지난 대화 정리
     ensure_admin()
     _backfill_matin_po()          # v1.24 이전 발주 입고분에 거래처·단가 소급 (빈 행만)
+    _backfill_matprice()          # 단가 이력 없는 자재에 최초 등록일 기준 초기 단가 1회 백필
     port = int(os.environ.get("PORT", "8600"))
     SERVE_PORT["v"] = port
     url = f"http://127.0.0.1:{port}"

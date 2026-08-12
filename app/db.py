@@ -708,6 +708,8 @@ def init_db() -> None:
     mcols = [r[1] for r in con.execute("PRAGMA table_info(material)")]
     if "pack_count" not in mcols:
         con.execute("ALTER TABLE material ADD COLUMN pack_count REAL DEFAULT 0")
+    if "created_at" not in mcols:   # 자재 최초 등록일 (단가 이력 초기 시작일 등)
+        con.execute("ALTER TABLE material ADD COLUMN created_at TEXT DEFAULT ''")
     pcols = [r[1] for r in con.execute("PRAGMA table_info(product)")]
     if "image" not in pcols:
         con.execute("ALTER TABLE product ADD COLUMN image TEXT DEFAULT ''")
