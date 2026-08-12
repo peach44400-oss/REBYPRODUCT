@@ -283,11 +283,13 @@ function dpEnsure() {
   document.body.appendChild(dpPop);
 }
 function dpValidISO(v) { return /^\d{4}-\d{2}-\d{2}$/.test(v || "") ? v : ""; }
-let dpDots = false, dpDotSet = new Set(), dpDotYM = null;   // data-dots 입력만 달력에 데이터 점 표시
+let dpDots = false, dpDotSet = new Set(), dpDotYM = null, dpDotSrc = "";   // data-dots 입력만 달력에 데이터 점 표시
 async function dpRefresh() {
   if (dpDots && dpDotYM !== dpYM) {
-    try { const d = await api("/api/calendar?ym=" + dpYM); dpDotSet = new Set(d.dates); dpDotYM = dpYM; }
-    catch (e) { dpDotSet = new Set(); }
+    try {
+      const d = await api("/api/calendar?ym=" + dpYM + (dpDotSrc ? "&src=" + encodeURIComponent(dpDotSrc) : ""));
+      dpDotSet = new Set(d.dates); dpDotYM = dpYM;
+    } catch (e) { dpDotSet = new Set(); }
   }
   dpRender();
 }
@@ -295,6 +297,7 @@ function dpOpen(input) {
   dpEnsure();
   dpTarget = input;
   dpDots = input.dataset.dots !== undefined;   // 이 입력이 데이터 점 표시를 원하는지
+  dpDotSrc = input.dataset.dotsSrc || "";      // 점 종류(예: matstat=자재 만료·활동일)
   dpDotYM = null; dpDotSet = new Set();
   const cur = dpValidISO(input.value) || todayISO();
   dpYM = cur.slice(0, 7);
@@ -7539,7 +7542,13 @@ async function openMatHistory(mid) {
       }</td>
       <td class="auto">${esc(r.order_date || "")}${r.order_qty ? " (" + NF(r.order_qty) + ")" : ""}
         ${(d.in_po && d.in_po[r.date]) ? d.in_po[r.date].map(pid =>
-          `<button class="uselink" data-poin="${pid}" style="font-size:11px; font-weight:700; margin-left:4px;" title="이 입고의 발주서 보기">📋 #${pid}</button>`).join("") : ""}</td></tr>`).join("")
+          `<button class="uselink" data-poin="${pid}" style="font-size:11px; font-weight:700; margin-left:4px;" title="이 입고의 발주서 보기">📋 #${pid}</button>`).join("") : ""}</td></tr>${
+      (d.disp && d.disp[r.date]) ? `<tr style="background:#fdecea; color:#c0392b;">
+        <td style="font-weight:700;">${r.date} 🗑 폐기</td>
+        <td class="r auto">·</td><td class="r auto">·</td>
+        <td class="r" style="font-weight:700;">−${NF(d.disp[r.date].qty)}</td>
+        <td class="r auto">·</td>
+        <td colspan="3" class="auto" style="color:#c0392b; text-align:left; white-space:nowrap;">${esc(d.disp[r.date].reason || "유통기한 만료")} 폐기${d.disp[r.date].exps ? " · 기한 " + esc(d.disp[r.date].exps) : ""} (실재고에서 차감됨)</td></tr>` : ""}`).join("")
       || '<tr><td colspan="8" class="auto">기록 없음</td></tr>'}</tbody></table></div>`;
   // 단가 추이 차트 — 기준 단가(회색 점선)와 함께. 이전 차트는 파기 후 재생성
   if (window.MHCHART) { try { window.MHCHART.destroy(); } catch (e) { } window.MHCHART = null; }
