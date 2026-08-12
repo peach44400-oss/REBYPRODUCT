@@ -1,5 +1,5 @@
 {
-  "version": "1.70.1",
+  "version": "1.71.0",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· 인원·가동의 출퇴근 시각(시/분) 드롭다운 폭을 키워 '00'·'30' 같은 값이 잘리지 않게 했습니다."
+  "notes": "· 휴대폰으로 접속하면 생산 현장 사진에 [📸 사진 촬영] 버튼이 생겨 카메라로 바로 찍어 첨부할 수 있습니다. PC에서는 이 버튼이 숨겨지고 기존 [📷 사진 추가]만 보입니다."
 }

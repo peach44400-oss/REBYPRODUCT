@@ -3155,10 +3155,16 @@ window.saveDreason = () => {
 };
 
 /* ══ 생산 현장 사진 ══ */
+// 휴대폰/태블릿(카메라 촬영 가능) 판정 — PC(마우스)에서는 촬영 버튼을 숨긴다
+function isMobileDevice() {
+  return /Android|iPhone|iPad|iPod|IEMobile|BlackBerry|Opera Mini|Mobile/i.test(navigator.userAgent)
+    || (navigator.maxTouchPoints > 0 && window.matchMedia && matchMedia("(pointer: coarse)").matches);
+}
 function renderPhotos() {
   const box = $("ePhotos"); if (!box) return;
   const canEdit = ROLE !== "guest";
   $("addPhotoBtn").style.display = canEdit ? "" : "none";
+  if ($("capturePhotoBtn")) $("capturePhotoBtn").style.display = (canEdit && isMobileDevice()) ? "" : "none";
   box.innerHTML = (E.photos && E.photos.length)
     ? E.photos.map(p => `<div class="ph-item">
         <img src="/dayphoto/${encodeURIComponent(p.file)}" alt="생산 사진">
@@ -3174,7 +3180,8 @@ $("ePhotos").addEventListener("click", async e => {
   toast("사진이 삭제되었습니다");
 });
 $("addPhotoBtn").onclick = () => { if (!mustDate()) return; $("photoFile").click(); };
-$("photoFile").addEventListener("change", async e => {
+$("capturePhotoBtn").onclick = () => { if (!mustDate()) return; $("photoCapture").click(); };   // 폰 카메라
+async function uploadDayPhoto(e) {
   const f = e.target.files[0]; e.target.value = "";
   if (!f) return;
   if (f.size > 8 * 1024 * 1024) return toast("이미지는 8MB 이하만 가능합니다");
@@ -3188,7 +3195,9 @@ $("photoFile").addEventListener("change", async e => {
     renderPhotos();
     toast("사진이 첨부되었습니다");
   } catch (err) { /* api()가 토스트 표시 */ }
-});
+}
+$("photoFile").addEventListener("change", uploadDayPhoto);
+$("photoCapture").addEventListener("change", uploadDayPhoto);   // 촬영한 사진도 동일 업로드
 
 /* ══ 저장 전 요약 확인 ══ */
 function showSaveSum(body, label) {
