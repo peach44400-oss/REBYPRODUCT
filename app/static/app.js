@@ -1118,9 +1118,17 @@ function refreshGlobalSaveFab() {
       .find(x => x.offsetParent !== null && !x.disabled && /저장/.test(x.textContent));
     if (b) target = b;
   }
+  // 모달이 없고 기준정보 관리 화면이면 '+ 새 XXX' 추가 버튼을 대신 (배합비·이력 탭은 버튼이 숨겨져 제외)
+  if (!target) {
+    const items = document.getElementById("scr-items"), add = document.getElementById("mAdd");
+    if (items && items.classList.contains("on") && add && add.offsetParent !== null) target = add;
+  }
   fab._target = target;
-  if (target) { fab.textContent = "💾 " + target.textContent.trim(); fab.style.display = ""; }
-  else fab.style.display = "none";
+  if (target) {
+    const t = target.textContent.trim();
+    fab.textContent = /저장/.test(t) ? "💾 " + t : t;   // 저장 버튼은 💾, 추가 버튼은 원문 그대로(+ 새 …)
+    fab.style.display = "";
+  } else fab.style.display = "none";
   const ef = $("entrySaveFab");         // 모달이 떠 있으면 일일입력 FAB는 숨겨 중복 방지
   if (ef) ef.style.display = ovs.length ? "none" : "";
 }
