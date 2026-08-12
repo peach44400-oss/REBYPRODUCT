@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.73.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.73.1"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -3447,6 +3447,18 @@ def master_create(mtype: str, body: dict):
         qs = ",".join("?" * len(vals))
         cur = con.execute(f"INSERT INTO {table}({ks}) VALUES({qs})", list(vals.values()))
         new_id = cur.lastrowid
+        # 자재 신규 등록 시 초기 단가도 단가 이력에 남긴다 (적용 시작일=등록일 · 이후 기간별 계산의 기준)
+        if mtype in ("raw", "sub", "semi"):
+            try:
+                ip = float(vals.get("unit_price") or 0)
+            except (TypeError, ValueError):
+                ip = 0.0
+            if ip > 0:
+                fd = (body.get("price_from") or "").strip()
+                if not re.match(r"^\d{4}-\d{2}-\d{2}$", fd):
+                    fd = dt.date.today().isoformat()
+                con.execute("INSERT INTO material_price(material_id, from_date, price, note, set_at) "
+                            "VALUES(?,?,?,?,datetime('now','localtime'))", (new_id, fd, ip, "등록"))
         # 초기재고 → opening_stock
         init_qty = body.get("initial_stock")
         if init_qty not in (None, "", 0):
@@ -3504,6 +3516,13 @@ def master_update(mtype: str, mid: int, body: dict):
             changed = abs(float(old_price or 0) - newp) > 1e-9
             if newp > 0 and (pf or changed):
                 fd = pf if re.match(r"^\d{4}-\d{2}-\d{2}$", pf) else dt.date.today().isoformat()
+                # 이 자재의 첫 단가 변경이면, 이전 단가를 '이전' 기준(from_date='')으로 먼저 남겨 잃지 않게 한다
+                has_hist = con.execute("SELECT COUNT(*) c FROM material_price WHERE material_id=?",
+                                       (mid,)).fetchone()["c"]
+                if not has_hist and old_price and float(old_price) > 0 and abs(float(old_price) - newp) > 1e-9:
+                    con.execute("INSERT INTO material_price(material_id, from_date, price, note, set_at) "
+                                "VALUES(?,?,?,?,datetime('now','localtime'))",
+                                (mid, "", float(old_price), "이전 단가"))
                 con.execute("INSERT INTO material_price(material_id, from_date, price, set_at) "
                             "VALUES(?,?,?,datetime('now','localtime'))", (mid, fd, newp))
                 audit(con, "mat_price", f"자재#{mid} 단가 {fd}부터 {newp:g}원")

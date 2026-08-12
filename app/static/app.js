@@ -4758,7 +4758,29 @@ function openMaster(type, row) {
   }).join("");
   // 제품 수정 시 — 거래처별 판매 단가 (기본 단가와 다른 곳만 입력, 비우면 기본 단가 적용)
   if (type === "product" && row && canM("prod")) renderProdPrices(row.id);
+  // 자재 수정 시 — 현재 적용 단가 + 기간별 단가 이력 (적용 시작일 기준)
+  if ((type === "raw" || type === "sub" || type === "semi") && row && canM("mat")) renderMatPriceBox(row.id);
   $("mstOverlay").classList.add("on");
+}
+/* 자재 단가 이력 — 자재 수정 폼 하단에 현재 적용 단가 + 기간별 표를 붙인다. */
+async function renderMatPriceBox(mid) {
+  let d;
+  try { d = await api("/api/matprice/" + mid); } catch (e) { return; }
+  if (!document.querySelector("#mstOverlay.on") || !mstEdit || mstEdit.id !== mid) return;   // 그새 닫혔으면 무시
+  const periods = d.periods || [];
+  const cur = periods.length ? periods[periods.length - 1] : null;
+  const box = document.createElement("div");
+  box.className = "fld full"; box.id = "matPriceBox";
+  box.innerHTML = `<label>💰 단가 이력 <span class="auto" style="font-weight:400">— 적용 시작일 기준 · 원가·월간리포트가 이 단가로 계산됩니다</span></label>
+    ${cur ? `<div style="font-size:12.5px; margin-bottom:5px;">현재 적용 단가 <b>${NF(cur.price)}원</b> <span class="auto">(${cur.from ? esc(cur.from) + "부터" : "이전부터"})</span></div>`
+      : '<div class="auto" style="font-size:12px; margin-bottom:5px;">단가 이력이 없습니다 — 단가와 적용 시작일을 넣고 저장하면 여기 기록됩니다</div>'}
+    ${periods.length ? `<div style="max-height:150px; overflow-y:auto; border:1px solid var(--line-soft); border-radius:8px;">
+      ${periods.slice().reverse().map(p => `<div style="display:flex; gap:8px; padding:5px 10px; border-bottom:1px solid var(--line-soft); font-size:12px; align-items:center;">
+        <span class="num" style="flex:none; min-width:158px;">${p.from ? esc(p.from) : "이전"}${p.to ? " ~ " + esc(p.to) + " 전날" : " ~ 현재"}</span>
+        <span class="num" style="flex:1; font-weight:700;">${NF(p.price)}원</span>
+        <span class="auto" style="font-size:11px; flex:none;">${esc(p.source)}</span></div>`).join("")}
+    </div>` : ""}`;
+  $("mstForm").appendChild(box);
 }
 /* 거래처별 판매 단가 — 제품 수정 폼 하단에 붙는다. 출고 저장 시 이 단가가 스냅샷으로 기록된다. */
 async function renderProdPrices(pid) {
