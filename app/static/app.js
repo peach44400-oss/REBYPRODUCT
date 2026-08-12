@@ -2639,12 +2639,15 @@ function renderMatStatus() {
   if (MATSTAT.q) items = items.filter(x => x.name.toLowerCase().includes(MATSTAT.q.toLowerCase()));
   const rowHtml = it => {
     const u = esc(it.unit || "");
-    let exp = '<span class="auto">—</span>';
+    // 유통기한은 만료/임박이 아니어도 항상 현재 소비기한(날짜+D-day)을 표시 — 기준일 이동 없이 지났는지 바로 확인
+    let exp = '<span class="auto" title="입고 유통기한·보관일수(소비기한)가 없는 자재">—</span>';
     if (it.expired > 0) {
       const exps = (it.exp_batches || []).map(b => b.exp).filter(Boolean);
       exp = `<span style="color:#c0392b; font-weight:700;">⚠ 만료 ${NF(it.expired)}${u}</span>${exps.length ? ` <span class="auto" style="font-size:11px;">${esc(exps.join(", "))} 지남</span>` : ""}`;
-    } else if (it.soon) {
-      exp = `<span style="color:#B45309; font-weight:600;">⏰ ${esc(it.soon.exp)}</span> <span class="auto" style="font-size:11px;">D-${it.soon.days}</span>`;
+    } else if (it.exp) {
+      const dd = it.exp_days;
+      if (dd != null && dd <= (d.soon_days || 7)) exp = `<span style="color:#B45309; font-weight:600;">⏰ ${esc(it.exp)}</span> <span class="auto" style="font-size:11px;">D-${dd}</span>`;
+      else exp = `<span>${esc(it.exp)}</span>${dd != null ? ` <span class="auto" style="font-size:11px;">D-${dd}</span>` : ""}`;
     }
     let saf = it.safety > 0 ? `${NF(it.safety)}${u}` : '<span class="auto">—</span>';
     if (it.low) saf = `<span style="color:#B45309; font-weight:700;">${NF(it.safety)}${u}</span><div class="auto" style="font-size:11px; color:#B45309;">부족 ${NF(it.shortage)}${u}${it.ordered ? " · 발주됨" : ""}</div>`;

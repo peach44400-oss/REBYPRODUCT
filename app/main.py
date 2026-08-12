@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.77.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.77.1"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -2683,16 +2683,17 @@ def matstatus(request: Request, date: str = ""):
                   AND COALESCE(status,'') NOT IN ('단종','중지') ORDER BY is_semi, kind, sort, name"""):
             oh = onhand.get(m["id"], 0.0)
             _, expired, batches = material_stock_expiry(con, m["id"], date, m["shelf_days"])
-            soon = None
-            for b in batches:
-                if b["expired"] or not b["exp"]:
-                    continue
+            # 현재 소비기한 = 보유 배치 중 가장 이른 유효기한(FEFO 활성) — 만료/임박 아니어도 항상 표시
+            exps_on = sorted(b["exp"] for b in batches if b["exp"])
+            next_exp = exps_on[0] if exps_on else ""
+            exp_days = None
+            if next_exp:
                 try:
-                    dd = (dt.date.fromisoformat(b["exp"]) - dt.date.fromisoformat(date)).days
+                    exp_days = (dt.date.fromisoformat(next_exp) - dt.date.fromisoformat(date)).days
                 except (ValueError, TypeError):
-                    continue
-                if 0 <= dd <= MATSTATUS_SOON_DAYS and (soon is None or dd < soon["days"]):
-                    soon = {"exp": b["exp"], "days": dd, "qty": b["qty"]}
+                    exp_days = None
+            soon = {"exp": next_exp, "days": exp_days} if (
+                next_exp and exp_days is not None and 0 <= exp_days <= MATSTATUS_SOON_DAYS) else None
             safety = float(m["safety_stock"] or 0)
             low = safety > 0 and oh < safety - 1e-6
             if expired > 1e-6:
@@ -2705,7 +2706,8 @@ def matstatus(request: Request, date: str = ""):
                           "is_semi": m["is_semi"], "onhand": round(oh, 3), "safety": safety,
                           "low": low, "shortage": round(safety - oh, 3) if low else 0,
                           "expired": expired, "exp_batches": [b for b in batches if b["expired"]],
-                          "soon": soon, "last_in": last_in.get(m["id"], "") or "",
+                          "exp": next_exp, "exp_days": exp_days, "soon": soon,
+                          "last_in": last_in.get(m["id"], "") or "",
                           "ordered": ordered.get(m["id"]),
                           "price": (m["unit_price"] if admin else None),
                           "partner_id": m["partner_id"]})
