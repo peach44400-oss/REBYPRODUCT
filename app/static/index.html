@@ -359,7 +359,7 @@
     .need-head, .need-row{grid-template-columns:minmax(0,1fr) 92px 104px; gap:8px;}
   }
   /* 불량 사유 버튼(생산실적 행 내) */
-  .dfr-btn{margin-top:3px; width:100%; font-size:11px; padding:2px 4px;}
+  .dfr-btn{display:block; margin-top:3px; width:100%; box-sizing:border-box; font-size:11px; padding:2px 4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
   .dfr-btn.set{border-color:var(--warn); color:#98670F; background:var(--warn-soft);}
   .dchip{border:1px solid var(--line); background:var(--surface); border-radius:14px; padding:4px 10px; font-size:12px; cursor:pointer;}
   .dchip:hover{border-color:var(--ink);}
