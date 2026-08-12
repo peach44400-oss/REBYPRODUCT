@@ -2278,10 +2278,11 @@ function renderShip() {
   // + 이미 다른 출고 행에 올린 제품은 제외 — 중복 선택 방지(재고 다 올렸는데 또 뜨는 문제)
   const prodToday = new Set(E.prod.filter(x => x.product_id &&
     Number(String(x.prod_qty).replace(/,/g, "")) > 0).map(x => x.product_id));
-  const chosen = new Set(E.ship.map(x => x.product_id).filter(Boolean));
+  // 남은 재고(가용 − 이미 출고행에 입력한 합)가 있으면 계속 선택 가능 —
+  // 같은 제품이 생산일자(LOT)가 여러 개면 다른 행에서 다른 LOT로 또 출고할 수 있어야 한다.
   const shipProducts = r => M.product.filter(p => p.status !== "단종" &&
     (p.id === r.product_id ||
-     (!chosen.has(p.id) && (prodToday.has(p.id) || shipAvail(p.id) > 0.0005))));
+     prodToday.has(p.id) || (shipAvail(p.id) - (sum[p.id] || 0) > 0.0005)));
   $("eShip").innerHTML = E.ship.map((r, i) => {
     const avail = shipAvail(r.product_id);
     const over = r.product_id && sum[r.product_id] - avail > 0.5;
@@ -2292,8 +2293,11 @@ function renderShip() {
     <td><select class="mini-sel" data-f="partner_id"><option value="">— 선택 —</option>${partnerOptGroups(r.partner_id)}</select></td>
     <td class="r"><input class="mini-input num${over ? " ship-over" : ""}" data-f="qty" value="${r.qty || ""}"
       title="${r.product_id ? "이날 가용 재고 " + NF(avail) + "개" : ""}"></td>
-    <td>${r.product_id ? `<span class="ship-warn num" style="color:${over ? "var(--crit)" : "#B45309"}; font-size:11px; ${warnTxt ? "" : "display:none"}">${warnTxt}</span> `
-      + `<button class="btn ghost sm" data-shipall="${i}" title="선택한 LOT(또는 제품)의 재고 전량을 출고량에 입력">전량</button> ` : ""}<button class="btn ghost sm" data-del>삭제</button></td></tr>`;
+    <td style="white-space:nowrap;">${r.product_id ? `<span class="ship-warn num" style="color:${over ? "var(--crit)" : "#B45309"}; font-size:11px; ${warnTxt ? "" : "display:none"}">${warnTxt}</span> `
+      + `<button class="btn ghost sm" data-shipall="${i}" title="선택한 LOT(또는 제품)의 재고 전량을 출고량에 입력">전량</button> `
+      + ((E.shipLots[r.product_id] || []).filter(l => (l.qty || 0) > 0.0005).length > 1
+          ? `<button class="btn ghost sm" data-shipsplit="${i}" title="이 제품의 생산일자(LOT)별 재고를 각각 전량으로 한 번에 추가 — 여러 LOT를 두 번 나눠 넣을 필요 없이 한 번에">LOT별 전량</button> ` : "")
+      : ""}<button class="btn ghost sm" data-del>삭제</button></td></tr>`;
   }).join("")
     || `<tr><td colspan="5" class="auto">+ 출고 행 추가를 누르세요</td></tr>`;
 }
@@ -2331,6 +2335,21 @@ $("eShip").addEventListener("click", e => {
   r.qty = Math.round((Number(qty) || 0) * 1000) / 1000;
   renderShip();
   toast(`전량 ${NF(r.qty)}개 입력됨`);
+});
+// [LOT별 전량] — 이 제품의 생산일자(LOT)별 재고를 각각 전량으로 한 번에 여러 행으로 추가
+$("eShip").addEventListener("click", e => {
+  const b = e.target.closest("[data-shipsplit]"); if (!b) return;
+  const idx = +b.dataset.shipsplit;
+  const r = E.ship[idx]; if (!r || !r.product_id) return toast("제품을 먼저 선택하세요");
+  const lots = (E.shipLots[r.product_id] || []).filter(l => (l.qty || 0) > 0.0005);
+  if (lots.length <= 1) return toast("이 제품은 생산일자(LOT)가 하나뿐입니다");
+  const partner = r.partner_id;   // 현재 행의 거래처를 각 LOT 행에 그대로 적용
+  const rows = lots.map(l => ({ product_id: r.product_id, partner_id: partner,
+    prod_date: l.made || "", lotExpiry: l.expiry || "", lotNo: l.no || 0,
+    qty: Math.round((Number(l.qty) || 0) * 1000) / 1000 }));
+  E.ship.splice(idx, 1, ...rows);   // 현재 행을 LOT별 행들로 교체
+  renderShip();
+  toast(`${lots.length}개 LOT 전량(${NF(lots.reduce((s, l) => s + (Number(l.qty) || 0), 0))}개) 추가됨`);
 });
 /* 출고 생산일자(LOT) 선택: 그날 남아있는 생산일자별 재고를 불러와 표시 */
 const _lotFetching = {};
