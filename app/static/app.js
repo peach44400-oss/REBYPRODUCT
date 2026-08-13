@@ -7574,7 +7574,7 @@ async function openMatHistory(mid) {
       <table style="width:100%; margin-top:10px; font-size:11.5px;">
         <thead><tr style="color:var(--muted);"><th style="text-align:left;">거래처</th><th class="r">최근 단가</th><th class="r">평균</th><th class="r">최저</th><th class="r">건수</th><th style="text-align:right;">최근 발주</th></tr></thead>
         <tbody class="num">${paRows.map(r => `<tr>
-          <td style="text-align:left; font-weight:700;">${esc(r.name)}${r.last === cheapest && byPa.size > 1 ? ' <span class="chip" style="background:var(--ok-soft); color:var(--ok);">최저가</span>' : ""}</td>
+          <td style="text-align:left; font-weight:700; white-space:normal; word-break:keep-all;">${esc(r.name)}${r.last === cheapest && byPa.size > 1 ? ' <span class="chip" style="background:var(--ok-soft); color:var(--ok);">최저가</span>' : ""}</td>
           <td class="r" style="font-weight:700;">${NF(r.last)}</td>
           <td class="r">${NF(Math.round(r.avg))}</td>
           <td class="r">${NF(r.min)}</td>
@@ -7641,9 +7641,9 @@ async function openMatHistory(mid) {
   const effExp = {}; let _lastExp = "";
   for (const rr of _ascRows) { const s = rowExp(rr); if (s) _lastExp = s; effExp[rr.date] = _lastExp; }
   const modalEl = document.querySelector("#anaOverlay .modal");
-  if (modalEl) modalEl.style.width = "min(1180px, 96vw)";   // 자재 이력: 2단(좌 정보 · 우 이력표)이라 넓게
+  if (modalEl) modalEl.style.width = "min(1320px, 96vw)";   // 자재 이력: 2단(좌 정보 · 우 이력표)이라 넓게
   $("anaPBody").innerHTML = `<div style="display:flex; gap:16px; align-items:stretch; flex-wrap:wrap; max-height:76vh;">
-    <div style="flex:0 0 336px; min-width:260px; overflow:auto;">${bomSec}${priceSec}</div>
+    <div style="flex:0 0 452px; min-width:300px; overflow-y:auto; overflow-x:hidden;">${bomSec}${priceSec}</div>
     <div style="flex:1 1 auto; min-width:0; overflow:auto;"><div class="tbl-wrap"><table style="width:100%;">
     <thead><tr><th>날짜</th><th class="r">전일</th><th class="r">입고</th><th class="r">사용</th><th class="r">실재고</th><th>제조일자</th><th>소비기한</th><th>발주</th></tr></thead>
     <tbody class="num">${d.rows.map(r => `<tr ${r.in_qty > 0 ? 'style="background:var(--ok-soft)"' : ""}>
