@@ -534,6 +534,16 @@ CREATE TABLE IF NOT EXISTS audit_log (
   detail TEXT,
   username TEXT DEFAULT ''             -- 누가 (로그인 사용자)
 );
+
+-- 주간 생산·출고 스케줄 — 계획이 자주 바뀌므로 주(월요일 기준) 단위 JSON 한 덩어리로 저장(유연).
+--   data = {title, note, author, legend, refNote, shipDates:[...], groups:[{name, shipDate, expiry, memo,
+--           items:[{product_id, label, qty, pack, boxes, expiry, partner, memo}]}]}
+CREATE TABLE IF NOT EXISTS schedule (
+  week_start TEXT PRIMARY KEY,          -- 그 주 월요일(ISO) — 주간 식별
+  data TEXT NOT NULL DEFAULT '{}',      -- 스케줄 전체 JSON
+  updated_at TEXT DEFAULT (datetime('now','localtime')),
+  updated_by TEXT DEFAULT ''
+);
 """
 
 

@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.81.4"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.82.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -5186,6 +5186,74 @@ def check_del(request: Request, cid: int):
     con = connect()
     try:
         con.execute("DELETE FROM daily_check WHERE id=?", (cid,))
+        con.commit()
+        return {"ok": True}
+    finally:
+        con.close()
+
+
+# ── 주간 생산·출고 스케줄 ──────────────────────────────
+def _week_monday(iso: str) -> str:
+    """아무 날짜(ISO)나 받아 그 주 월요일(ISO)로 스냅."""
+    try:
+        d = dt.date.fromisoformat(iso)
+    except (ValueError, TypeError):
+        d = dt.date.today()
+    return (d - dt.timedelta(days=d.weekday())).isoformat()
+
+
+@app.get("/api/schedule")
+def schedule_get(week: str = ""):
+    """그 주(월요일 기준) 스케줄 JSON. 없으면 빈 스케줄을 돌려줌(저장 전)."""
+    mon = _week_monday(week or dt.date.today().isoformat())
+    con = connect()
+    try:
+        row = con.execute("SELECT data, updated_at, updated_by FROM schedule WHERE week_start=?",
+                          (mon,)).fetchone()
+        data = {}
+        if row:
+            try:
+                data = json.loads(row["data"] or "{}")
+            except ValueError:
+                data = {}
+        # 저장된 주 목록(주 이동 드롭다운/표시용)
+        weeks = [r["week_start"] for r in con.execute(
+            "SELECT week_start FROM schedule ORDER BY week_start DESC")]
+        return {"week_start": mon, "data": data, "weeks": weeks,
+                "updated_at": row["updated_at"] if row else "",
+                "updated_by": row["updated_by"] if row else ""}
+    finally:
+        con.close()
+
+
+@app.post("/api/schedule")
+def schedule_save(request: Request, body: dict):
+    _require_writer(request)
+    mon = _week_monday(body.get("week_start") or dt.date.today().isoformat())
+    data = body.get("data")
+    if not isinstance(data, (dict, list)):
+        raise HTTPException(400, "스케줄 데이터가 올바르지 않습니다")
+    con = connect()
+    try:
+        con.execute("""INSERT INTO schedule(week_start, data, updated_at, updated_by)
+            VALUES(?,?,datetime('now','localtime'),?)
+            ON CONFLICT(week_start) DO UPDATE SET
+              data=excluded.data, updated_at=excluded.updated_at, updated_by=excluded.updated_by""",
+            (mon, json.dumps(data, ensure_ascii=False), request.state.user.get("username", "")))
+        audit(con, "save_schedule", f"주간 스케줄 저장 — {mon}")
+        con.commit()
+        return {"ok": True, "week_start": mon}
+    finally:
+        con.close()
+
+
+@app.delete("/api/schedule")
+def schedule_del(request: Request, week: str = ""):
+    _require_writer(request)
+    mon = _week_monday(week or dt.date.today().isoformat())
+    con = connect()
+    try:
+        con.execute("DELETE FROM schedule WHERE week_start=?", (mon,))
         con.commit()
         return {"ok": True}
     finally:

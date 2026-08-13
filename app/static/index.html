@@ -670,6 +670,10 @@
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2.5" y="3" width="11" height="10" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M2.5 6.5h11M6 3v10" stroke="currentColor" stroke-width="1.3"/></svg>
         <em>자재 현황</em><span class="cnt" id="navMatCnt" style="display:none">0</span>
       </button>
+      <button data-scr="sched" title="주간 생산·출고 스케줄 — 제품군별 발주량·소비기한·거래처를 한 주 단위로 편집하고 가로로 예쁘게 인쇄">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2.5" y="3" width="11" height="10.5" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M2.5 6h11M5.5 2v2.5M10.5 2v2.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        <em>주간 스케줄</em>
+      </button>
 
       <div class="nav-sep"><span>분석 · 조회</span></div>
       <button data-scr="ana">
@@ -1366,6 +1370,42 @@
         <h2>특이사항 <span class="sub">일일 입력에 적은 메모를 날짜별로 모아 최신순으로 표시 (한 페이지 100건)</span></h2>
         <div id="memoList" style="margin-top:6px;"></div>
         <div id="memoPager" class="pager-wrap" style="margin-top:12px;"></div>
+      </div>
+    </section>
+
+    <!-- 주간 생산·출고 스케줄 -->
+    <section class="screen" id="scr-sched">
+      <div class="card">
+        <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:6px;">
+          <h2 style="margin:0;">🗓 주간 생산·출고 스케줄</h2>
+          <span class="sub" id="schedWeekLabel"></span>
+          <span class="auto" id="schedSaved" style="font-size:11.5px;"></span>
+        </div>
+        <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:10px;">
+          <button class="btn ghost sm" id="schedPrev" title="이전 주">◀</button>
+          <input type="text" id="schedDate" class="datepick" readonly placeholder="📅 주 선택" style="width:150px; text-align:center;">
+          <button class="btn ghost sm" id="schedNext" title="다음 주">▶</button>
+          <button class="btn ghost sm" id="schedThis">이번 주</button>
+          <span style="flex:1;"></span>
+          <button class="btn sm" id="schedAddGroup">＋ 제품군</button>
+          <button class="btn sm" id="schedSave" style="background:var(--ink); color:#fff;">💾 저장</button>
+          <button class="btn ghost sm" id="schedPrintBtn">🖨 인쇄</button>
+          <button class="btn ghost sm" id="schedPdf">📄 PDF</button>
+          <button class="btn sm" id="schedFull" title="새 창을 열어 전체화면으로 — 현장 모니터에 실시간 표시(10초마다 자동 새로고침)">🖥 전체화면</button>
+        </div>
+        <!-- 상단 메타(제목·작성자·안내·범례) -->
+        <div id="schedMeta" style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;"></div>
+        <!-- 제품군 편집 카드들 -->
+        <div id="schedGroups"></div>
+        <!-- 하단 참고 박스 -->
+        <div style="margin-top:12px;">
+          <label class="auto" style="font-size:12px; font-weight:700;">하단 참고(파렛트 적재수량 · 소비기한 기준 등)</label>
+          <textarea id="schedRef" rows="3" placeholder="예) 파렛트(PLT) 적재수량: 135입 48박스 … / 소비기한 기준: 우리밀 출고(월)+70일 …"
+            style="width:100%; margin-top:4px; font-size:12px; padding:6px 8px; border:1px solid var(--line); border-radius:8px; resize:vertical;"></textarea>
+        </div>
+        <!-- 인쇄 미리보기 (= 인쇄본) -->
+        <div style="margin-top:16px; font-weight:800; font-size:13px;">📄 인쇄 미리보기 <span class="auto" style="font-weight:400;">— 실제 인쇄·전체화면에 이 모양으로 출력됩니다</span></div>
+        <div id="schedDoc" style="overflow-x:auto; border:1px solid var(--line); border-radius:10px; padding:10px; margin-top:6px; background:#fff;"></div>
       </div>
     </section>
 

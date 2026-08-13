@@ -79,7 +79,7 @@ async function reloadMaster(t) {
 }
 
 /* ── 네비게이션 ─────────────────────── */
-const TITLES = { dash: "대시보드", prod: "생산 현황", ship: "출고 현황", postat: "발주 현황", entry: "일일 입력", lot: "LOT 관리", matstat: "자재 현황", items: "기준정보 관리", ana: "분석", lookup: "기록 조회", memos: "특이사항", staff: "인원 관리" };
+const TITLES = { dash: "대시보드", prod: "생산 현황", ship: "출고 현황", postat: "발주 현황", entry: "일일 입력", lot: "LOT 관리", matstat: "자재 현황", sched: "주간 스케줄", items: "기준정보 관리", ana: "분석", lookup: "기록 조회", memos: "특이사항", staff: "인원 관리" };
 /* 표 검색(필터)은 화면·탭을 옮기면 초기화한다.
    남아 있으면 다른 화면에서 '등록된 항목이 없습니다'만 보여 데이터가 없는 것처럼 오해하게 된다.
    ※ 행 추가용 검색(qaProd 등)은 필터가 아니라 입력칸이므로 대상 아님. */
@@ -115,7 +115,7 @@ $("nav").addEventListener("click", e => {
   $("scrTitle").textContent = TITLES[b.dataset.scr];
   resetSearches();
   const fn = { dash: loadDash, prod: loadProd, ship: loadShip, entry: openEntry, lot: loadLot, items: renderMasters, ana: loadAna, lookup: () => lkCal.render(),
-    postat: loadPoStat, memos: loadMemos, matstat: loadMatStatus,
+    postat: loadPoStat, memos: loadMemos, matstat: loadMatStatus, sched: () => loadSchedule(),
     staff: () => { STAFF.mode = "d"; STAFF.date = todayISO();   // 진입 시 항상 일별·오늘로 초기화
       document.querySelectorAll("#staffTabs button").forEach(x => x.classList.toggle("on", x.dataset.sh === "d"));
       loadStaff(); } }[b.dataset.scr];
@@ -9698,6 +9698,244 @@ $("pwSaveBtn").onclick = async () => {
   $("pwOld").value = ""; $("pwNew").value = "";
   toast("비밀번호가 변경되었습니다");
 };
+
+// ══ 주간 생산·출고 스케줄 ══════════════════════════════════════════
+// 계획이 자주 바뀌므로 주(월요일 기준) 단위 JSON 한 덩어리로 편집·저장한다(느슨한 구조).
+// 편집기(제품군 카드) → SCHED.data 갱신 → 미리보기(=인쇄본) 실시간 갱신. 전체화면은 새 창(#schedfull) 재사용.
+const SCHED = { week: "", data: null, saved: "", weeks: [] };
+const _SCHED_DOW = ["일", "월", "화", "수", "목", "금", "토"];
+function _schedMonday(iso) {
+  const d = new Date((iso || todayISO()) + "T00:00:00");
+  if (isNaN(d)) return _schedMonday(todayISO());
+  const m = new Date(d); m.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  return fmtISO(m);
+}
+function _schedAddDays(iso, n) { const d = new Date(iso + "T00:00:00"); d.setDate(d.getDate() + n); return fmtISO(d); }
+function _schedMD(iso) {
+  if (!iso) return "";
+  const d = new Date(iso + "T00:00:00"); if (isNaN(d)) return esc(iso);
+  return `${d.getMonth() + 1}/${d.getDate()}(${_SCHED_DOW[d.getDay()]})`;
+}
+function _schedBlankItem() { return { product_id: null, label: "", qty: "", pack: "", boxes: "", expiry: "", partner: "", memo: "" }; }
+function _schedBlank(week) {
+  const dates = []; for (let i = 0; i < 6; i++) dates.push(_schedAddDays(week, i));
+  return { title: "주간 생산·출고 스케줄", note: "※ 스케줄은 현장 상황에 맞게 변경될 수 있음",
+    author: (window.ME && ME.username) || "", legend: "", refNote: "", shipDates: dates, groups: [] };
+}
+function _schedNorm(d, week) {
+  d = d || {};
+  d.title = d.title || "주간 생산·출고 스케줄";
+  if (d.note == null) d.note = "※ 스케줄은 현장 상황에 맞게 변경될 수 있음";
+  d.author = d.author || ""; d.legend = d.legend || ""; d.refNote = d.refNote || "";
+  if (!Array.isArray(d.shipDates) || !d.shipDates.length) { d.shipDates = []; for (let i = 0; i < 6; i++) d.shipDates.push(_schedAddDays(week, i)); }
+  if (!Array.isArray(d.groups)) d.groups = [];
+  d.groups.forEach(g => {
+    g.name = g.name || ""; g.shipDate = g.shipDate || ""; g.memo = g.memo || "";
+    if (!Array.isArray(g.items)) g.items = [];
+    g.items.forEach(it => { for (const k of ["label", "boxes", "expiry", "partner", "memo"]) it[k] = it[k] || "";
+      if (it.qty == null) it.qty = ""; if (it.pack == null) it.pack = ""; });
+  });
+  return d;
+}
+async function loadSchedule(dateOpt) {
+  const week = _schedMonday(dateOpt || SCHED.week || todayISO());
+  try {
+    const r = await api("/api/schedule?week=" + week);
+    SCHED.week = r.week_start; SCHED.weeks = r.weeks || [];
+    SCHED.data = _schedNorm((r.data && Object.keys(r.data).length) ? r.data : _schedBlank(r.week_start), r.week_start);
+    SCHED.saved = r.updated_at ? `저장됨 · ${String(r.updated_at).slice(0, 16)}${r.updated_by ? " · " + r.updated_by : ""}` : "아직 저장 안 됨 (새 스케줄)";
+  } catch (e) { SCHED.week = week; SCHED.data = _schedNorm(_schedBlank(week), week); SCHED.saved = ""; }
+  if ($("schedDate")) $("schedDate").value = SCHED.week;
+  renderSchedule();
+}
+let _schedDocT = null;
+function _schedDocLater() { clearTimeout(_schedDocT); _schedDocT = setTimeout(renderSchedDoc, 220); }
+function renderSchedule() {
+  const d = SCHED.data; if (!d) return;
+  const end = _schedAddDays(SCHED.week, 5);
+  if ($("schedWeekLabel")) $("schedWeekLabel").textContent = `${SCHED.week} ~ ${end}`;
+  if ($("schedSaved")) $("schedSaved").textContent = SCHED.saved || "";
+  const IN = "width:100%; font-size:12px; padding:5px 7px; border:1px solid var(--line); border-radius:7px;";
+  $("schedMeta").innerHTML = `
+    <label style="flex:1 1 160px; font-size:11.5px; font-weight:700;">작성자
+      <input id="schedAuthor" value="${esc(d.author)}" style="${IN}"></label>
+    <label style="flex:3 1 300px; font-size:11.5px; font-weight:700;">안내문 (제목 아래 표시)
+      <input id="schedNote" value="${esc(d.note)}" style="${IN}"></label>
+    <label style="flex:3 1 300px; font-size:11.5px; font-weight:700;">범례 (우상단)
+      <input id="schedLegend" value="${esc(d.legend)}" placeholder="예) 소보로T 트레이더스 · 소보로E 이마트" style="${IN}"></label>`;
+  $("schedAuthor").oninput = e => { d.author = e.target.value; _schedDocLater(); };
+  $("schedNote").oninput = e => { d.note = e.target.value; _schedDocLater(); };
+  $("schedLegend").oninput = e => { d.legend = e.target.value; _schedDocLater(); };
+  if ($("schedRef")) { $("schedRef").value = d.refNote || ""; $("schedRef").oninput = e => { d.refNote = e.target.value; _schedDocLater(); }; }
+  renderSchedGroups();
+  renderSchedDoc();
+}
+function renderSchedGroups() {
+  const d = SCHED.data; if (!d) return;
+  const prodDl = `<datalist id="schedProdDl">${(M.product || []).map(p => `<option value="${esc(p.name)}">`).join("")}</datalist>`;
+  const IN = "font-size:12px; padding:4px 6px; border:1px solid var(--line); border-radius:6px;";
+  const cards = d.groups.map((g, gi) => {
+    const rows = g.items.map((it, ii) => `<tr>
+        <td><input data-g="${gi}" data-i="${ii}" data-f="label" list="schedProdDl" value="${esc(it.label)}" placeholder="제품/품목" style="${IN} width:148px;"></td>
+        <td><input data-g="${gi}" data-i="${ii}" data-f="qty" value="${esc(it.qty)}" inputmode="numeric" placeholder="수량" style="${IN} width:82px; text-align:right;"></td>
+        <td><input data-g="${gi}" data-i="${ii}" data-f="pack" value="${esc(it.pack)}" inputmode="numeric" placeholder="개입" style="${IN} width:56px; text-align:right;"></td>
+        <td><input data-g="${gi}" data-i="${ii}" data-f="boxes" value="${esc(it.boxes)}" placeholder="박스/PLT" style="${IN} width:104px;"></td>
+        <td><input data-g="${gi}" data-i="${ii}" data-f="expiry" class="datepick" readonly value="${esc(it.expiry)}" placeholder="📅 소비기한" style="${IN} width:104px;"></td>
+        <td><input data-g="${gi}" data-i="${ii}" data-f="partner" value="${esc(it.partner)}" placeholder="거래처" style="${IN} width:92px;"></td>
+        <td><input data-g="${gi}" data-i="${ii}" data-f="memo" value="${esc(it.memo)}" placeholder="비고" style="${IN} width:110px;"></td>
+        <td><button class="btn ghost sm" data-schedidel="${gi}:${ii}" title="항목 삭제" style="color:var(--crit); padding:0 7px;">×</button></td></tr>`).join("");
+    return `<div class="card" style="padding:10px 12px; margin-bottom:10px; border:1px solid var(--line);">
+      <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
+        <input data-g="${gi}" data-f="name" value="${esc(g.name)}" placeholder="제품군명 (예: 달광도넛◎)" style="${IN} flex:2 1 200px; font-weight:800;">
+        <input data-g="${gi}" data-f="shipDate" class="datepick" readonly value="${esc(g.shipDate)}" placeholder="📅 출고일" style="${IN} width:130px;">
+        <input data-g="${gi}" data-f="memo" value="${esc(g.memo)}" placeholder="제품군 비고" style="${IN} flex:1 1 140px;">
+        <button class="btn ghost sm" data-schedgdel="${gi}" style="color:var(--crit);">제품군 삭제</button>
+      </div>
+      <div style="overflow-x:auto;"><table style="border-collapse:collapse; font-size:12px;">
+        <thead><tr class="auto" style="font-size:11px;"><th style="text-align:left; padding:0 4px;">제품/품목</th><th>수량</th><th>개입</th><th>박스/PLT</th><th>소비기한</th><th>거래처</th><th>비고</th><th></th></tr></thead>
+        <tbody>${rows}</tbody></table></div>
+      <button class="btn ghost sm" data-schediadd="${gi}" style="margin-top:7px;">＋ 항목 추가</button>
+    </div>`;
+  }).join("") || `<div class="auto" style="padding:14px 4px; font-size:12.5px;">아직 제품군이 없습니다 — 상단 <b>＋ 제품군</b>으로 추가하세요. (예: 달광도넛◎ · The촉촉한 · 소보로E …)</div>`;
+  $("schedGroups").innerHTML = prodDl + cards;
+}
+function _schedFieldUpdate(e) {
+  const inp = e.target.closest("[data-f]"); if (!inp || !SCHED.data) return;
+  const g = SCHED.data.groups[+inp.dataset.g]; if (!g) return;
+  const f = inp.dataset.f;
+  if (inp.dataset.i != null && inp.dataset.i !== "") {
+    const it = g.items[+inp.dataset.i]; if (!it) return;
+    it[f] = (f === "qty" || f === "pack") ? inp.value.replace(/,/g, "") : inp.value;
+    if (f === "label") { const p = (M.product || []).find(x => x.name === inp.value); it.product_id = p ? p.id : null; }
+  } else { g[f] = inp.value; }
+  _schedDocLater();
+}
+function _schedClick(e) {
+  if (!SCHED.data) return;
+  const gd = e.target.closest("[data-schedgdel]");
+  if (gd) { const gi = +gd.dataset.schedgdel; if (confirm("이 제품군을 삭제할까요?")) { SCHED.data.groups.splice(gi, 1); renderSchedGroups(); renderSchedDoc(); } return; }
+  const ia = e.target.closest("[data-schediadd]");
+  if (ia) { SCHED.data.groups[+ia.dataset.schediadd].items.push(_schedBlankItem()); renderSchedGroups(); renderSchedDoc(); return; }
+  const idl = e.target.closest("[data-schedidel]");
+  if (idl) { const [gi, ii] = idl.dataset.schedidel.split(":").map(Number); SCHED.data.groups[gi].items.splice(ii, 1); renderSchedGroups(); renderSchedDoc(); return; }
+}
+function _schedBoxTxt(it) {
+  if (it.boxes) return esc(it.boxes);
+  const q = Number(String(it.qty).replace(/,/g, "")), p = Number(it.pack);
+  if (!isNaN(q) && !isNaN(p) && p > 0 && q) return Math.round(q / p).toLocaleString("ko-KR") + "박스";
+  return "";
+}
+function buildScheduleDoc(d, week) {
+  const NFq = v => { v = String(v == null ? "" : v).replace(/,/g, ""); if (v === "") return ""; const n = Number(v); return isNaN(n) ? esc(v) : n.toLocaleString("ko-KR"); };
+  const groups = d.groups || [];
+  const TD = "border:1px solid #444; padding:5px 8px; vertical-align:top;";
+  const HD = "border:1px solid #444; padding:5px 8px; background:#f2f1ee; font-weight:800; text-align:center;";
+  const ribbon = (d.shipDates || []).map(x => `<span style="display:inline-block; min-width:74px; text-align:center; border:1px solid #999; border-radius:5px; padding:1px 6px; margin:2px;">${_schedMD(x)}</span>`).join("");
+  const nameRow = groups.map(g => `<th style="${HD} font-size:14px;">${esc(g.name || "—")}</th>`).join("");
+  const shipRow = groups.map(g => `<td style="${TD} text-align:center; font-weight:700;">${g.shipDate ? _schedMD(g.shipDate) : "—"}</td>`).join("");
+  const orderRow = groups.map(g => {
+    const body = (g.items || []).map(it => {
+      const packHead = it.pack ? `<span style="color:#c26a1f; font-weight:700;">${NFq(it.pack)}개입</span> ` : "";
+      const bt = _schedBoxTxt(it);
+      return `<div style="margin-bottom:2px; white-space:nowrap;">${packHead}<b>${esc(it.label || "")}</b> ${NFq(it.qty)}${bt ? ` <span style="color:#555;">(${bt})</span>` : ""}${it.partner ? ` <span style="color:#3a4db0;">·${esc(it.partner)}</span>` : ""}${it.memo ? ` <span style="color:#999;">${esc(it.memo)}</span>` : ""}</div>`;
+    }).join("") || '<span style="color:#bbb;">—</span>';
+    return `<td style="${TD}">${body}</td>`;
+  }).join("");
+  const expRow = groups.map(g => {
+    const exps = [...new Set((g.items || []).map(it => it.expiry).filter(Boolean))];
+    return `<td style="${TD} text-align:center; white-space:nowrap;">${exps.length ? exps.map(esc).join("<br>") : "—"}</td>`;
+  }).join("");
+  const memoRow = groups.map(g => `<td style="${TD} text-align:center; color:#555;">${esc(g.memo || "")}</td>`).join("");
+  const empty = groups.length ? "" : `<div style="text-align:center; color:#bbb; padding:24px;">제품군을 추가하면 여기에 표가 나타납니다</div>`;
+  return `<div style="color:#111; font-family:inherit;">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
+      <div style="width:200px; font-size:11px; color:#555;">${week} ~ ${_schedAddDays(week, 5)}<br>작성자 : <b>${esc(d.author || "—")}</b></div>
+      <h1 style="text-align:center; letter-spacing:7px; font-size:23px; margin:0; flex:1;">${esc(d.title || "주간 생산·출고 스케줄")}</h1>
+      <div style="width:220px; font-size:10.5px; text-align:right; white-space:pre-wrap; color:#333;">${esc(d.legend || "")}</div>
+    </div>
+    <div style="text-align:center; color:#666; font-size:12px; margin:4px 0 8px;">${esc(d.note || "")}</div>
+    <div style="text-align:center; font-size:11.5px; margin-bottom:8px;"><b style="color:#555;">주간 출고일</b> ${ribbon || "—"}</div>
+    ${empty || `<table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+      <thead><tr><th style="${HD} width:64px;">제품</th>${nameRow}</tr></thead>
+      <tbody>
+        <tr><td style="${HD} width:64px;">출고일</td>${shipRow}</tr>
+        <tr><td style="${HD} width:64px;">발주량</td>${orderRow}</tr>
+        <tr><td style="${HD} width:64px;">소비기한</td>${expRow}</tr>
+        <tr><td style="${HD} width:64px;">비고</td>${memoRow}</tr>
+      </tbody></table>`}
+    ${d.refNote ? `<div style="margin-top:10px; border:1px solid #999; border-radius:6px; padding:8px 10px; font-size:11px; white-space:pre-wrap; color:#333;">${esc(d.refNote)}</div>` : ""}
+  </div>`;
+}
+function renderSchedDoc() { if ($("schedDoc") && SCHED.data) $("schedDoc").innerHTML = buildScheduleDoc(SCHED.data, SCHED.week); }
+async function saveSchedule() {
+  if (!SCHED.data) return;
+  try {
+    await api("/api/schedule", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ week_start: SCHED.week, data: SCHED.data }) });
+    toast("주간 스케줄이 저장되었습니다");
+    await loadSchedule(SCHED.week);
+  } catch (e) { /* api 토스트 */ }
+}
+function schedPrint() {
+  if (!SCHED.data) return;
+  $("poPrintArea").innerHTML = buildScheduleDoc(SCHED.data, SCHED.week);
+  const st = document.createElement("style"); st.id = "schedPageStyle";
+  st.textContent = "@page{size:A4 landscape; margin:7mm;} @media print{#poPrintArea{padding:0 !important;}}";
+  document.head.appendChild(st);
+  document.body.classList.add("po-print");
+  const done = () => { document.body.classList.remove("po-print"); st.remove(); window.removeEventListener("afterprint", done); };
+  window.addEventListener("afterprint", done);
+  window.print();
+  setTimeout(done, 1500);
+}
+function schedFullscreen() {
+  const w = window.open(location.pathname + "#schedfull=" + encodeURIComponent(SCHED.week), "_blank");
+  if (!w) toast("팝업이 차단되었습니다 — 브라우저에서 이 사이트의 팝업을 허용해주세요");
+}
+// 새 창(#schedfull=주)에서 부팅되면 앱 UI 위에 전체화면 표시 오버레이를 띄우고 10초마다 자동 새로고침
+async function schedEnterFullMode(week) {
+  document.title = "주간 스케줄 · 현장 표시";
+  let ov = $("schedFullOv");
+  if (!ov) { ov = document.createElement("div"); ov.id = "schedFullOv";
+    ov.style.cssText = "position:fixed; inset:0; background:#fff; z-index:99998; overflow:auto; padding:16px 22px;";
+    document.body.appendChild(ov); }
+  const load = async () => {
+    let d;
+    try { const r = await api("/api/schedule?week=" + week); d = _schedNorm((r.data && Object.keys(r.data).length) ? r.data : _schedBlank(week), week); }
+    catch (e) { d = _schedNorm(_schedBlank(week), week); }
+    const now = new Date().toLocaleTimeString("ko-KR");
+    ov.innerHTML = `<div style="display:flex; justify-content:flex-end; align-items:center; gap:8px; margin-bottom:10px;">
+        <span style="color:#999; font-size:12px;">🔄 10초마다 자동 새로고침 · ${now}</span>
+        <button id="schedFsBtn" style="border:1px solid #333; background:#111; color:#fff; border-radius:7px; padding:5px 12px; cursor:pointer;">⛶ 전체화면</button>
+        <button id="schedFsClose" style="border:1px solid #999; background:#fff; border-radius:7px; padding:5px 12px; cursor:pointer;">닫기</button>
+      </div>` + buildScheduleDoc(d, week);
+    $("schedFsBtn").onclick = () => { const el = document.documentElement;
+      (document.fullscreenElement ? document.exitFullscreen() : el.requestFullscreen()).catch(() => {}); };
+    $("schedFsClose").onclick = () => { if (window._schedFullT) clearInterval(window._schedFullT); location.hash = ""; try { window.close(); } catch (e) {} ov.remove(); };
+  };
+  await load();
+  if (window._schedFullT) clearInterval(window._schedFullT);
+  window._schedFullT = setInterval(load, 10000);
+}
+// 스케줄 화면 버튼 배선 (모듈 로드 시)
+(function wireSchedule() {
+  const on = (id, fn) => { const el = $(id); if (el) el.onclick = fn; };
+  on("schedPrev", () => loadSchedule(_schedAddDays(SCHED.week, -7)));
+  on("schedNext", () => loadSchedule(_schedAddDays(SCHED.week, 7)));
+  on("schedThis", () => loadSchedule(todayISO()));
+  on("schedAddGroup", () => { if (!SCHED.data) return; SCHED.data.groups.push({ name: "", shipDate: "", memo: "", items: [_schedBlankItem()] }); renderSchedGroups(); renderSchedDoc(); });
+  on("schedSave", saveSchedule);
+  on("schedPrintBtn", schedPrint);
+  on("schedPdf", () => { toast("인쇄 창에서 대상을 'PDF로 저장'으로 선택하세요"); setTimeout(schedPrint, 400); });
+  on("schedFull", schedFullscreen);
+  const dd = $("schedDate"); if (dd) dd.addEventListener("change", e => { if (e.target.value) loadSchedule(e.target.value); });
+  const gel = $("schedGroups");
+  if (gel) { gel.addEventListener("input", _schedFieldUpdate); gel.addEventListener("change", _schedFieldUpdate); gel.addEventListener("click", _schedClick); }
+})();
+window.addEventListener("load", () => {
+  const m = (location.hash || "").match(/#schedfull=([^&]+)/);
+  if (m) setTimeout(() => schedEnterFullMode(decodeURIComponent(m[1])), 700);
+});
 
 (async function boot() {
   const t = new Date();
