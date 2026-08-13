@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.81.3"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.81.4"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -2902,7 +2902,8 @@ def matstatus(request: Request, date: str = ""):
 def mat_history(mid: int, limit: int = 40):
     con = connect()
     try:
-        mat = con.execute("SELECT name, unit, kind FROM material WHERE id=?", (mid,)).fetchone()
+        mat = con.execute("""SELECT name, unit, kind, COALESCE(is_semi,0) is_semi,
+            COALESCE(batch_yield,0) batch_yield FROM material WHERE id=?""", (mid,)).fetchone()
         if not mat:
             raise HTTPException(404, "자재 없음")
         hist = rows(con.execute("""
@@ -2942,7 +2943,18 @@ def mat_history(mid: int, limit: int = 40):
                 GROUP_CONCAT(DISTINCT reason) reasons FROM material_disposal
                 WHERE material_id=? GROUP BY date""", (mid,)):
             disp[r["date"]] = {"qty": r["q"], "exps": r["exps"] or "", "reason": r["reasons"] or ""}
+        # 반제품(is_semi)이면 레시피(원재료 구성 1배합당)·생산 이력을 함께 실어 팝업에서 보여준다
+        recipe, semi_prod = [], []
+        if int(mat["is_semi"]):
+            recipe = rows(con.execute("""SELECT sb.material_id, sb.qty_per_unit, sb.unit,
+                    m.name, COALESCE(m.unit,'') mat_unit
+                FROM semi_bom sb LEFT JOIN material m ON m.id=sb.material_id
+                WHERE sb.semi_id=? ORDER BY sb.id""", (mid,)))
+            semi_prod = rows(con.execute("""SELECT date, batches, qty FROM semi_mat_prod
+                WHERE material_id=? ORDER BY date DESC LIMIT ?""", (mid, limit)))
         return {"name": mat["name"], "unit": mat["unit"], "kind": mat["kind"], "rows": hist,
+                "is_semi": int(mat["is_semi"]), "batch_yield": mat["batch_yield"],
+                "recipe": recipe, "semi_prod": semi_prod,
                 "in_expiry": in_expiry, "in_made": in_made, "in_po": in_po,
                 "man_expiry": man_expiry, "man_made": man_made, "disp": disp,
                 "start_date": start_date,

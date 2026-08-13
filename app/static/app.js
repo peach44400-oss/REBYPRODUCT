@@ -3694,10 +3694,10 @@ const MCOLS = {
     },
     hint: "재고일수 = 현재고 ÷ 최근 30일 일평균 사용량 · 생산가능수량 = 현재고 × 단위당 수량 · 횟수 = 수량 ÷ 1회 소요량 (환산계수는 7/7 실사 엑셀에서 갱신됨)" },
   semi: { label: "반제품", cols: ["반제품명", "규격", "단위", "1배합당 생산량", "안전재고", "현재고", "레시피", "상태"],
-    row: r => [B(r.name), esc(r.spec || "—"), esc(r.unit || "—"),
+    row: r => [`<button class="uselink" data-mhist="${r.id}">${esc(r.name)}</button>`, esc(r.spec || "—"), esc(r.unit || "—"),
       r.batch_yield ? NF(r.batch_yield) + (r.unit || "") : "미등록", NF(r.safety_stock), NF(r.stock),
       `<button class="btn ghost sm" data-semirecipe="${r.id}">🧪 레시피</button>`, chip(r.status)],
-    hint: "반제품 = 원재료로 직접 만드는 자재(발효종 등) · [🧪 레시피]로 원재료 구성(1배합당)과 1배합당 생산량을 등록 · 빵 배합비엔 이 반제품을 자재처럼 넣으면 됩니다 (원재료 부족은 발주, 반제품 부족은 생산)" },
+    hint: "반제품명 클릭 = 레시피·생산·소비 이력 팝업 · [🧪 레시피]로 원재료 구성(1배합당)과 1배합당 생산량을 등록 · 빵 배합비엔 이 반제품을 자재처럼 넣으면 됩니다 (원재료 부족은 발주, 반제품 부족은 생산)" },
   partner: { label: "거래처", cols: ["거래처명", "유형", "사업자번호", "대표자", "전화", "모바일", "이메일", "담당자", "상태"],
     row: r => [B(r.name), `<span class="chip cat">${esc(r.type)}</span>`, esc(r.biz_no || "—"), esc(r.ceo || "—"),
       esc(r.phone || "—"), esc(r.mobile || "—"), esc(r.email || "—"), esc(r.contact || "—"), chip(r.status)],
@@ -7653,7 +7653,7 @@ async function openMatHistory(mid) {
         <span class="auto" style="font-weight:500">— ${usedProds.length ? `${usedProds.length}개 제품에 들어 있습니다` : "배합비에 사용되지 않습니다"}</span></div>
       ${usedProds.length ? `<div style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:${ROLE === "admin" ? "10px" : "0"};">
         ${usedProds.map(p => `<span class="chip cat">${esc(p.name)}</span>`).join("")}</div>` : ""}
-      ${ROLE !== "guest" && usedProds.length ? `<div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+      ${ROLE !== "guest" && usedProds.length && !d.is_semi ? `<div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
         <span style="font-size:12px; font-weight:700;">이 자재를</span>
         <input class="mini-input" id="mhRepSel" list="mhRepDl" placeholder="🔍 자재 이름 검색"
           style="width:220px; text-align:left;" autocomplete="off">
@@ -7663,11 +7663,38 @@ async function openMatHistory(mid) {
         <button class="btn sm" id="mhRepBtn" style="color:var(--warn); border-color:var(--warn);">🔁 일괄 교체</button>
       </div>` : ""}
     </div>`;
+  // 🧫 반제품 전용 섹션 — 레시피(원재료 구성 1배합당)·생산 이력. 반제품은 매입 단가가 없어 단가 섹션은 숨긴다.
+  let semiSec = "";
+  if (d.is_semi) {
+    priceSec = "";
+    const recRows = (d.recipe || []).map(x => `<tr>
+        <td style="text-align:left; word-break:keep-all;">${esc(x.name || ("#" + x.material_id))}</td>
+        <td class="r" style="font-weight:700;">${NF(x.qty_per_unit)}</td>
+        <td class="auto" style="text-align:left;">${esc(x.unit || x.mat_unit || "")}</td></tr>`).join("")
+      || `<tr><td colspan="3" class="auto" style="text-align:left;">레시피가 없습니다 — [🧪 레시피]에서 원재료 구성을 등록하세요</td></tr>`;
+    const prodRows = (d.semi_prod || []).map(x => `<tr>
+        <td>${esc(x.date)}</td><td class="r">${NF(x.batches)}</td>
+        <td class="r" style="font-weight:700;">${NF(x.qty)}${esc(d.unit || "")}</td></tr>`).join("")
+      || `<tr><td colspan="3" class="auto">생산 기록이 없습니다</td></tr>`;
+    semiSec = `
+    <div style="border:1px solid var(--line-soft); border-radius:10px; padding:10px 12px; margin-bottom:12px;">
+      <div style="font-size:12.5px; font-weight:800; margin-bottom:6px;">🧫 반제품 레시피
+        <span class="auto" style="font-weight:500">— 1배합당 생산량 ${d.batch_yield ? NF(d.batch_yield) + esc(d.unit || "") : "미등록"}</span></div>
+      <table style="width:100%; font-size:11.5px; margin-bottom:10px;">
+        <thead><tr style="color:var(--muted);"><th style="text-align:left;">원재료</th><th class="r">1배합당</th><th style="text-align:left;">단위</th></tr></thead>
+        <tbody class="num">${recRows}</tbody></table>
+      <div style="font-size:12px; font-weight:800; margin:4px 0 4px;">🏭 생산 이력
+        <span class="auto" style="font-weight:500">— 배합수 × 1배합당 생산량</span></div>
+      <table style="width:100%; font-size:11.5px;">
+        <thead><tr style="color:var(--muted);"><th style="text-align:left;">날짜</th><th class="r">배합수</th><th class="r">생산량</th></tr></thead>
+        <tbody class="num">${prodRows}</tbody></table>
+    </div>`;
+  }
   $("anaPTitle").textContent = d.name;
   $("anaPHint").textContent =
-    `${d.kind === "raw" ? "원재료" : "부재료"} · 최근 ${d.rows.length}일` +
-    ` · 마지막 입고 ${d.last_in ? d.last_in.date + " (+" + NF(d.last_in.in_qty) + d.unit + ")" : "기록 없음"}` +
-    ` · 마지막 사용 ${d.last_use ? d.last_use.date + " (" + NF(d.last_use.used_qty) + d.unit + ")" : "기록 없음"}`;
+    `${d.is_semi ? "🧫 반제품" : d.kind === "raw" ? "원재료" : "부재료"} · 최근 ${d.rows.length}일` +
+    ` · 마지막 ${d.is_semi ? "생산" : "입고"} ${d.last_in ? d.last_in.date + " (+" + NF(d.last_in.in_qty) + d.unit + ")" : "기록 없음"}` +
+    ` · 마지막 ${d.is_semi ? "소비" : "사용"} ${d.last_use ? d.last_use.date + " (" + NF(d.last_use.used_qty) + d.unit + ")" : "기록 없음"}`;
   // 그 날짜에 직접 적힌 소비기한·제조일자 (입고분 우선, 없으면 입고 없는 재고 수동입력분)
   const rowExp = r => ((d.in_expiry && d.in_expiry[r.date]) || (d.man_expiry && d.man_expiry[r.date]) || "").split(",")[0].trim();
   const rowMade = r => ((d.in_made && d.in_made[r.date]) || (d.man_made && d.man_made[r.date]) || "").split(",")[0].trim();
@@ -7680,7 +7707,7 @@ async function openMatHistory(mid) {
   const modalEl = document.querySelector("#anaOverlay .modal");
   if (modalEl) modalEl.style.width = "min(1320px, 96vw)";   // 자재 이력: 2단(좌 정보 · 우 이력표)이라 넓게
   $("anaPBody").innerHTML = `<div style="display:flex; gap:16px; align-items:stretch; flex-wrap:wrap; max-height:76vh;">
-    <div style="flex:0 0 452px; min-width:300px; overflow-y:auto; overflow-x:hidden;">${bomSec}${priceSec}</div>
+    <div style="flex:0 0 452px; min-width:300px; overflow-y:auto; overflow-x:hidden;">${semiSec}${bomSec}${priceSec}</div>
     <div style="flex:1 1 auto; min-width:0; overflow:auto;"><div class="tbl-wrap"><table style="width:100%;">
     <thead><tr><th>날짜</th><th class="r">전일</th><th class="r">입고</th><th class="r">사용</th><th class="r">실재고</th><th>제조일자</th><th>소비기한</th><th>발주</th></tr></thead>
     <tbody class="num">${d.rows.map(r => `<tr ${r.in_qty > 0 ? 'style="background:var(--ok-soft)"' : ""}>
