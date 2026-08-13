@@ -2517,12 +2517,14 @@ function renderChecks() {
   const canWrite = typeof ROLE === "undefined" || ROLE !== "guest";
   const list = E.checks || [];
   el.innerHTML = list.length ? list.map(c => {
-    // 그날(E.date) 기준 완료 여부 — 완료일이 이 날짜 이후면 그날엔 아직 미완료(과거 이력 정확)
-    const doneHere = !!(c.done && c.done_date && c.done_date <= E.date);
-    const carried = !doneHere && c.created_date && c.created_date < E.date;
+    const doneGlobal = !!(c.done && c.done_date);           // 어느 날짜든 완료된 항목
+    const doneHere   = doneGlobal && c.done_date === E.date; // 바로 이 날짜에 완료
+    const doneOther  = doneGlobal && c.done_date !== E.date; // 다른 날(대개 이후)에 완료 → 이 날짜선 잠금
+    const carried    = !doneGlobal && c.created_date && c.created_date < E.date;
+    const locked     = !canWrite || doneOther;               // 다른 날 완료건은 이 날짜서 토글 불가
     return `<div style="display:flex; align-items:center; gap:8px; padding:5px 2px; border-bottom:1px solid var(--line-soft);">
-      <input type="checkbox" data-chk="${c.id}" ${doneHere ? "checked" : ""} ${canWrite ? "" : "disabled"} style="width:16px; height:16px; flex:none; cursor:pointer;">
-      <span style="flex:1; font-size:13px; ${doneHere ? "text-decoration:line-through; color:var(--muted);" : ""}">${esc(c.text)}${carried ? ` <span class="auto" style="font-size:11px;">(${esc(c.created_date.slice(5))}부터 이월)</span>` : ""}${doneHere ? ` <span class="auto" style="font-size:11px;">· ${esc(c.done_date.slice(5))} 완료</span>` : ""}</span>
+      <input type="checkbox" data-chk="${c.id}" ${doneGlobal ? "checked" : ""} ${locked ? "disabled" : ""} title="${doneOther ? esc(c.done_date) + " 완료 — 이 날짜에서는 변경할 수 없습니다" : ""}" style="width:16px; height:16px; flex:none; cursor:${locked ? "not-allowed" : "pointer"};">
+      <span style="flex:1; font-size:13px; ${doneGlobal ? "text-decoration:line-through; color:var(--muted);" : ""}">${esc(c.text)}${carried ? ` <span class="auto" style="font-size:11px;">(${esc(c.created_date.slice(5))}부터 이월)</span>` : ""}${doneGlobal ? ` <span class="auto" style="font-size:11px;">· ${esc(c.done_date.slice(5))} 완료${doneOther ? " (다른 날 완료)" : ""}</span>` : ""}</span>
       ${canWrite ? `<button class="btn ghost sm" data-chkdel="${c.id}" style="flex:none; padding:0 7px;">삭제</button>` : ""}</div>`;
   }).join("") : '<div class="auto" style="font-size:12px; padding:4px 0;">체크사항이 없습니다 — 다음날에도 챙길 일을 아래에 추가하세요 (완료 전까지 매일 이월)</div>';
 }

@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.81.2"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.81.3"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -5923,6 +5923,20 @@ def fin_ledger(request: Request, date: str = ""):
                 return pack_by_set[ps]
             return 0
 
+        # 포장 미지정 LOT 세그먼트의 개입수 상속용 — 같은 제품·생산일의 다른 세그먼트 포장을
+        #   우선 쓰고(pack_by_made), 없으면 그 제품의 가장 최근 포장(pack_by_prod)으로 보정.
+        pack_by_made, pack_by_prod = {}, {}
+        for r in con.execute("""SELECT product_id pid, made, pack_mid, pack_set FROM lot_plan
+            WHERE qty>0 AND (pack_mid IS NOT NULL OR COALESCE(pack_set,'')!='')
+            ORDER BY made, seq, id"""):
+            pk = lot_pack({"pack_mid": r["pack_mid"], "pack_set": r["pack_set"]})
+            if pk:
+                pack_by_made[(r["pid"], r["made"])] = pk
+                pack_by_prod[r["pid"]] = pk   # 최신 made가 마지막에 덮어써 기본값이 됨
+
+        def pack_fallback(pid, made):
+            return pack_by_made.get((pid, made or "")) or pack_by_prod.get(pid) or 0
+
         # 오늘 거래처별 생산 분배·출고 (분리표시 행의 금일생산·금일출고 원천)
         prodsplit_today = {}
         for r in con.execute("""SELECT product_id pid, partner_id sp, SUM(qty) q FROM prod_split
@@ -5933,8 +5947,11 @@ def fin_ledger(request: Request, date: str = ""):
             WHERE date=? AND partner_id IS NOT NULL GROUP BY product_id, partner_id""", (date,)):
             ship_by_pp[(r["pid"], r["sp"])] = float(r["q"] or 0)
 
-        def lot_out(l):
-            return {"made": l["made"], "qty": l["qty"], "expiry": l["expiry"], "pack": lot_pack(l)}
+        def lot_out(l, pid=None):
+            pk = lot_pack(l)
+            if not pk and pid is not None:   # 포장 미지정 세그먼트 — 같은 제품·생산일 포장으로 보정
+                pk = pack_fallback(pid, l.get("made"))
+            return {"made": l["made"], "qty": l["qty"], "expiry": l["expiry"], "pack": pk}
 
         # 생산 LOT별 개입수 — 출고분에도 재고 LOT과 동일한 개입수를 붙이기 위해 lot_plan 포장에서 유도
         pack_by_lot = {}
@@ -5970,7 +5987,8 @@ def fin_ledger(request: Request, date: str = ""):
                 key = (made, e)
                 agg[key] = agg.get(key, 0.0) + q
             return [{"made": k[0], "expiry": k[1], "qty": round(v, 3),
-                     "pack": pack_by_lot.get((pid, k[0], k[1])) or pack_by_lot.get((pid, k[0])) or 0}
+                     "pack": pack_by_lot.get((pid, k[0], k[1])) or pack_by_lot.get((pid, k[0]))
+                             or pack_fallback(pid, k[0])}
                     for k, v in sorted(agg.items())]
 
         tot_prev = tot_prod = tot_ship = tot_stock = 0.0   # 전체 합계
@@ -5989,7 +6007,7 @@ def fin_ledger(request: Request, date: str = ""):
             base = {"id": pid, "name": p["name"], "category": p["category"] or "",
                     "spec": p["spec"] or "", "prev": round(prev, 3), "prod": round(tp, 3),
                     "ship": round(ts, 3), "disp": round(td, 3), "stock": round(stock, 3),
-                    "lots": [lot_out(l) for l in raw_lots],
+                    "lots": [lot_out(l, pid) for l in raw_lots],
                     "ship_lots": ship_lots_for(pid, shelf), "moved": bool(tp or ts or td)}
 
             # 이 제품의 '거래처 분리 표시'가 켜져 있으면(fin_split=1) 배분된 모든 거래처를 '거래처명 제품명' 행으로 분리
@@ -6019,13 +6037,13 @@ def fin_ledger(request: Request, date: str = ""):
                 split_rows.append({"id": pid, "name": partners[sp]["name"] + " " + p["name"],
                     "category": p["category"] or "", "spec": p["spec"] or "",
                     "prev": prev_p, "prod": round(prod_p, 3), "ship": round(ship_p, 3), "disp": 0,
-                    "stock": round(stock_p, 3), "lots": [lot_out(l) for l in glots],
+                    "stock": round(stock_p, 3), "lots": [lot_out(l, pid) for l in glots],
                     "ship_lots": ship_lots_for(pid, shelf, want=sp),
                     "moved": bool(prod_p or ship_p or stock_p or prev_p), "partner": True})
             # 잔여(거래처 미지정분) — 합계가 제품 전체와 맞도록 차감해서 산출
             res_prev = round(prev - sum_prev, 3); res_prod = round(tp - sum_prod, 3)
             res_ship = round(ts - sum_ship, 3); res_stock = round(stock - sum_stock, 3)
-            res_lots = [lot_out(l) for l in raw_lots
+            res_lots = [lot_out(l, pid) for l in raw_lots
                         if not (l.get("partner_id") in show_ids)]
             res_ship_lots = ship_lots_for(pid, shelf, exclude=show_ids)
             out.extend(split_rows)
