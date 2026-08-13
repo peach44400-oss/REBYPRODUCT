@@ -7584,9 +7584,9 @@ async function openMatHistory(mid) {
   for (const rr of _ascRows) { const s = rowExp(rr); if (s) _lastExp = s; effExp[rr.date] = _lastExp; }
   const modalEl = document.querySelector("#anaOverlay .modal");
   if (modalEl) modalEl.style.width = "min(1180px, 96vw)";   // 자재 이력: 2단(좌 정보 · 우 이력표)이라 넓게
-  $("anaPBody").innerHTML = `<div style="display:flex; gap:18px; align-items:stretch; flex-wrap:wrap; max-height:76vh;">
-    <div style="flex:1 1 380px; min-width:270px; overflow:auto;">${bomSec}${priceSec}</div>
-    <div style="flex:1 1 480px; min-width:330px; overflow:auto;"><div class="tbl-wrap"><table>
+  $("anaPBody").innerHTML = `<div style="display:flex; gap:16px; align-items:stretch; flex-wrap:wrap; max-height:76vh;">
+    <div style="flex:0 0 336px; min-width:260px; overflow:auto;">${bomSec}${priceSec}</div>
+    <div style="flex:1 1 auto; min-width:0; overflow:auto;"><div class="tbl-wrap"><table style="width:100%;">
     <thead><tr><th>날짜</th><th class="r">전일</th><th class="r">입고</th><th class="r">사용</th><th class="r">실재고</th><th>제조일자</th><th>소비기한</th><th>발주</th></tr></thead>
     <tbody class="num">${d.rows.map(r => `<tr ${r.in_qty > 0 ? 'style="background:var(--ok-soft)"' : ""}>
       <td>${r.date}${r.src === "auto" ? ' <span class="chip cat">자동</span>' : ""}</td>
@@ -7596,12 +7596,12 @@ async function openMatHistory(mid) {
       <td class="r" style="font-weight:700">${NF(r.real_qty)}</td>
       <td class="auto" style="white-space:nowrap;">${
         (isExpEditable(r) && ROLE !== "guest")
-          ? `<input class="mini-input datepick" type="text" readonly data-mmade="${r.date}" value="${esc(rowMade(r))}" placeholder="📅 제조일자" title="${r.in_qty > 0 ? "이 입고분" : "이 재고"}의 제조일자 — 입력하면 저장됩니다 (수불부 반영)" style="font-size:11.5px; padding:3px 6px; width:124px; text-align:left;">`
+          ? `<input class="mini-input datepick" type="text" readonly data-mmade="${r.date}" value="${esc(rowMade(r))}" placeholder="📅 제조일자" title="${r.in_qty > 0 ? "이 입고분" : "이 재고"}의 제조일자 — 입력하면 저장됩니다 (수불부 반영)" style="font-size:11px; padding:3px 5px; width:92px; text-align:left;">`
           : (rowMade(r) ? `<span style="color:#aaa;">${esc(rowMade(r))}</span>` : "")
       }</td>
       <td class="auto" style="white-space:nowrap;">${
         (isExpEditable(r) && ROLE !== "guest")
-          ? `<input class="mini-input datepick" type="text" readonly data-mexp="${r.date}" value="${esc(rowExp(r))}" placeholder="📅 소비기한" title="${r.in_qty > 0 ? "이 입고분" : "최초 보유 재고"}의 소비기한 — 입력하면 저장되고 이후 날짜로 이어집니다 (수불부 반영)" style="font-size:11.5px; padding:3px 6px; width:124px; text-align:left;">`
+          ? `<input class="mini-input datepick" type="text" readonly data-mexp="${r.date}" value="${esc(rowExp(r))}" placeholder="📅 소비기한" title="${r.in_qty > 0 ? "이 입고분" : "최초 보유 재고"}의 소비기한 — 입력하면 저장되고 이후 날짜로 이어집니다 (수불부 반영)" style="font-size:11px; padding:3px 5px; width:92px; text-align:left;">`
           : (effExp[r.date] ? `<span style="color:#aaa;" title="위 입고/시작일 소비기한이 이어진 값">${esc(effExp[r.date])}</span>` : "")
       }</td>
       <td class="auto">${esc(r.order_date || "")}${r.order_qty ? " (" + NF(r.order_qty) + ")" : ""}
