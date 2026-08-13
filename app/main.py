@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.81.1"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.81.2"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -5106,9 +5106,10 @@ def day_get(date: str, request: Request):
                           if s.get("editing") and s["editing"]["date"] == date
                           and time.time() - s["editing"]["t"] < 180
                           and s["username"] != me.get("username")})
-        # 체크사항 — 이 날짜에 걸린 항목: 미완료(등록일<=날짜)는 이월 표시, 이 날 완료한 건은 취소선으로 함께 표시
+        # 체크사항 — 등록일부터 완료일(있으면)까지 매일 표시(그 사이 이월), 완료 다음날부터 제외.
+        #  그날 기준 완료 여부는 프론트가 done_date<=날짜로 판단(과거 이력 보존·정확).
         checks = rows(con.execute("""SELECT id, text, created_date, done, done_date, created_by, done_by
-            FROM daily_check WHERE created_date<=? AND (done=0 OR done_date=?)
+            FROM daily_check WHERE created_date<=? AND (done=0 OR done_date>=?)
             ORDER BY done, created_date, id""", (date, date)))
         return {"date": date, "exists": rec is not None,
                 "memo": rec["memo"] if rec else "",

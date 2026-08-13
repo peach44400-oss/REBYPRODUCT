@@ -2517,10 +2517,12 @@ function renderChecks() {
   const canWrite = typeof ROLE === "undefined" || ROLE !== "guest";
   const list = E.checks || [];
   el.innerHTML = list.length ? list.map(c => {
-    const carried = !c.done && c.created_date && c.created_date < E.date;
+    // 그날(E.date) 기준 완료 여부 — 완료일이 이 날짜 이후면 그날엔 아직 미완료(과거 이력 정확)
+    const doneHere = !!(c.done && c.done_date && c.done_date <= E.date);
+    const carried = !doneHere && c.created_date && c.created_date < E.date;
     return `<div style="display:flex; align-items:center; gap:8px; padding:5px 2px; border-bottom:1px solid var(--line-soft);">
-      <input type="checkbox" data-chk="${c.id}" ${c.done ? "checked" : ""} ${canWrite ? "" : "disabled"} style="width:16px; height:16px; flex:none; cursor:pointer;">
-      <span style="flex:1; font-size:13px; ${c.done ? "text-decoration:line-through; color:var(--muted);" : ""}">${esc(c.text)}${carried ? ` <span class="auto" style="font-size:11px;">(${esc(c.created_date.slice(5))}부터 이월)</span>` : ""}${c.done && c.done_date ? ` <span class="auto" style="font-size:11px;">· ${esc(c.done_date.slice(5))} 완료</span>` : ""}</span>
+      <input type="checkbox" data-chk="${c.id}" ${doneHere ? "checked" : ""} ${canWrite ? "" : "disabled"} style="width:16px; height:16px; flex:none; cursor:pointer;">
+      <span style="flex:1; font-size:13px; ${doneHere ? "text-decoration:line-through; color:var(--muted);" : ""}">${esc(c.text)}${carried ? ` <span class="auto" style="font-size:11px;">(${esc(c.created_date.slice(5))}부터 이월)</span>` : ""}${doneHere ? ` <span class="auto" style="font-size:11px;">· ${esc(c.done_date.slice(5))} 완료</span>` : ""}</span>
       ${canWrite ? `<button class="btn ghost sm" data-chkdel="${c.id}" style="flex:none; padding:0 7px;">삭제</button>` : ""}</div>`;
   }).join("") : '<div class="auto" style="font-size:12px; padding:4px 0;">체크사항이 없습니다 — 다음날에도 챙길 일을 아래에 추가하세요 (완료 전까지 매일 이월)</div>';
 }
