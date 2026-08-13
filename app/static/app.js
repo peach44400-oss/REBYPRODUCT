@@ -2466,13 +2466,26 @@ function shipLotSel(r) {
   if (!lots) { fetchShipLots(r.product_id); return '<span class="auto" style="font-size:12px">재고 확인 중…</span>'; }
   // 같은 (생산일,소비기한) LOT이 여럿이면 서버가 no(1,2,3…)를 부여 — 옵션 값에 포함해 구분·선택 가능하게
   const key = l => (l.made || "") + "|" + (l.expiry || "") + "|" + (l.no || 0);
+  const rowKey = row => (row.prod_date || "") + "|" + (row.lotExpiry || "") + "|" + (row.lotNo || 0);
   const cur = (r.prod_date || "") + "|" + (r.lotExpiry || "") + "|" + (r.lotNo || 0);
+  // 같은 제품의 다른 출고 행이 각 LOT에서 이미 뺀 수량 (이 행 제외, 특정 LOT을 고른 행만).
+  // 서버 재고는 편집일 출고를 제외한 값이라, 폼의 다른 행 출고분을 빼야 '남은 재고'가 된다 → 이중 출고 방지.
+  const used = {};
+  (E.ship || []).forEach(row => {
+    if (row === r || row.product_id !== r.product_id || !row.prod_date) return;
+    const k = rowKey(row);
+    used[k] = (used[k] || 0) + (Number(String(row.qty).replace(/,/g, "")) || 0);
+  });
+  const net = l => (Number(l.qty) || 0) - (used[key(l)] || 0);
   const known = !r.prod_date || lots.some(l => key(l) === cur);
   const pName = pid => { const pa = M.partner.find(x => x.id === pid); return pa ? pa.name : ""; };
-  const label = l => `${l.made || "생산일 미상 (이월)"}${l.no ? " #" + l.no : ""} · 재고 ${NF(l.qty)}${l.expiry ? " · ~" + l.expiry.slice(5) : ""}${l.partner_id ? " · " + pName(l.partner_id) : ""}`;
+  const label = (l, nq) => `${l.made || "생산일 미상 (이월)"}${l.no ? " #" + l.no : ""} · 재고 ${NF(nq)}${l.expiry ? " · ~" + l.expiry.slice(5) : ""}${l.partner_id ? " · " + pName(l.partner_id) : ""}`;
+  // 남은 재고가 있는 LOT만 (단, 이 행이 이미 고른 LOT은 다 나갔어도 유지 — 재선택·수정용)
+  const opts = lots.filter(l => net(l) > 0.0005 || key(l) === cur)
+    .map(l => `<option value="${key(l)}" ${key(l) === cur ? "selected" : ""}>${label(l, net(l))}</option>`).join("");
   return `<select class="mini-sel" data-f="prod_date" style="max-width:270px">
     <option value="||0">자동 — 이월분 → 소비기한 임박순 (FIFO)</option>
-    ${lots.map(l => `<option value="${key(l)}" ${key(l) === cur ? "selected" : ""}>${label(l)}</option>`).join("")}
+    ${opts}
     ${!known ? `<option value="${cur}" selected>⚠ 선택한 재고 LOT 없음</option>` : ""}</select>`;
 }
 async function fetchShipLots(pid) {
