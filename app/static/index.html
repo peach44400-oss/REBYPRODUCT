@@ -319,7 +319,7 @@
   tr[draggable="true"]{cursor:default;}
   #mQuickEdit.on{background:var(--ink); color:#fff; border-color:var(--ink);}
   /* 공용 날짜 선택 달력 */
-  input.datepick{cursor:pointer;}
+  input.datepick{cursor:pointer; user-select:none;}   /* 읽기전용 달력칸 클릭 시 글자 선택(하이라이트)로 안 보이는 것 방지 */
   input.datepick:hover{border-color:var(--ink);}
   .dp-pop{position:fixed; z-index:1400; display:none; width:304px; background:var(--surface);
     border:1px solid var(--line); border-radius:12px; box-shadow:0 14px 38px rgba(12,12,12,.22); padding:14px;}

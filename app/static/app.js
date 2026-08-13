@@ -2711,12 +2711,12 @@ function renderMatStatus() {
     <div style="font-size:12px; color:var(--muted);">${icon} ${label}</div>
     <div style="font-size:20px; font-weight:800; color:${n > 0 ? color : "var(--muted)"};">${NF(n)}<span style="font-size:12px; font-weight:500; color:var(--muted);"> 종</span></div></button>`;
   $("msSummary").innerHTML =
-    card("all", "📦", "전체 자재", (d.items || []).length, "var(--fg)") +
+    card("all", "📦", "전체 자재", (d.items || []).length, "#121212") +
     card("expired", "⚠", "유통기한 만료", s.expired, "#c0392b") +
     card("soon", "⏰", `임박 (${d.soon_days || 7}일)`, s.soon, "#B45309") +
     card("low", "📉", "재고 부족", s.low, "#B45309");
   const chip = (key, label) => `<button type="button" class="btn ghost sm" data-msfilter="${key}"
-    style="${MATSTAT.filter === key ? "background:var(--fg); color:var(--bg); border-color:var(--fg);" : ""}">${label}</button>`;
+    style="${MATSTAT.filter === key ? "background:var(--ink); color:var(--bg); border-color:var(--ink);" : ""}">${label}</button>`;
   const disposals = d.disposals || [];
   $("msFilters").innerHTML = chip("all", "전체") + chip("expired", "만료") + chip("soon", "임박") + chip("low", "부족")
     + chip("disp", `폐기 내역${disposals.length ? " " + disposals.length : ""}`)
