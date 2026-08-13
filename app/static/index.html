@@ -1041,8 +1041,16 @@
             </div>
           </div>
           <div class="card" data-esec="prod">
-            <h2>특이사항 / 비고</h2>
-            <textarea class="memo" id="eMemo" placeholder="설비 고장, 원료 이슈, 클레임 등"></textarea>
+            <h2>✅ 체크사항 <span class="sub">완료 전까지 다음날로 계속 이월 · 완료 체크하면 취소선</span></h2>
+            <div id="checkList"></div>
+            <div style="display:flex; gap:6px; margin-top:8px;">
+              <input id="checkInput" placeholder="예: 냉동고 온도 확인 · 반품 처리 확인 (다음날에도 챙길 것)" autocomplete="off" style="flex:1; box-sizing:border-box; padding:8px 10px; border:1px solid var(--line); border-radius:8px; font-size:13px;">
+              <button class="btn sm" id="checkAdd">＋ 추가</button>
+            </div>
+          </div>
+          <div class="card" data-esec="prod">
+            <h2>특이사항 / 비고 <span class="sub">";" 로 항목을 구분하면 특이사항 목록에서 줄이 나뉘어 보입니다</span></h2>
+            <textarea class="memo" id="eMemo" placeholder="설비 고장; 원료 이슈; 클레임 …  (; 로 구분)"></textarea>
             <!-- 저장은 고정 FAB(💾)로 통일 — 버튼은 FAB이 대신 눌러주므로 DOM엔 남기고 숨김 -->
             <div class="draft-foot" style="display:none;">
               <button class="btn primary" id="btnSaveDay">생산 입력 저장</button>

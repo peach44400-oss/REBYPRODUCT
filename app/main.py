@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.80.2"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.81.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -5106,17 +5106,75 @@ def day_get(date: str, request: Request):
                           if s.get("editing") and s["editing"]["date"] == date
                           and time.time() - s["editing"]["t"] < 180
                           and s["username"] != me.get("username")})
+        # 체크사항 — 이 날짜에 걸린 항목: 미완료(등록일<=날짜)는 이월 표시, 이 날 완료한 건은 취소선으로 함께 표시
+        checks = rows(con.execute("""SELECT id, text, created_date, done, done_date, created_by, done_by
+            FROM daily_check WHERE created_date<=? AND (done=0 OR done_date=?)
+            ORDER BY done, created_date, id""", (date, date)))
         return {"date": date, "exists": rec is not None,
                 "memo": rec["memo"] if rec else "",
                 "version": rec["updated_at"] if rec else None, "viewers": viewers,
                 "production": production, "shipment": shipment,
                 "materials": materials, "mat_in": mat_in, "pending_orders": pending_orders,
                 "staffing": staffing, "lots": lots, "usage": usage,
-                "mat_expiry": mat_expiry, "mat_disposal": mat_disposal,
+                "mat_expiry": mat_expiry, "mat_disposal": mat_disposal, "checks": checks,
                 "semi_prod": semi_prod, "semi_mat_prod": semi_mat_prod, "photos": photos,
                 "prev_stock": {r["material_id"]: r["real_qty"] for r in prev},
                 "prev_date": prev_date, "prev_materials": prev_materials,
                 "prev_prod_date": prev_prod_date}
+    finally:
+        con.close()
+
+
+# ── 체크사항(이월 할 일) ──
+def _require_writer(request: Request):
+    if request.state.user.get("role") == "guest":
+        raise HTTPException(403, "보기 전용 계정은 체크사항을 수정할 수 없습니다")
+
+
+@app.post("/api/check")
+def check_add(request: Request, body: dict):
+    _require_writer(request)
+    text = (body.get("text") or "").strip()
+    if not text:
+        raise HTTPException(400, "체크사항 내용을 입력하세요")
+    date = body.get("date") or dt.date.today().isoformat()
+    con = connect()
+    try:
+        cur = con.execute("INSERT INTO daily_check(text, created_date, created_by, created_at) "
+                          "VALUES(?,?,?,datetime('now','localtime'))",
+                          (text, date, request.state.user.get("username", "")))
+        con.commit()
+        return {"id": cur.lastrowid}
+    finally:
+        con.close()
+
+
+@app.post("/api/check/{cid}/done")
+def check_done(request: Request, cid: int, body: dict):
+    _require_writer(request)
+    done = 1 if body.get("done") else 0
+    date = body.get("date") or dt.date.today().isoformat()
+    con = connect()
+    try:
+        if done:
+            con.execute("UPDATE daily_check SET done=1, done_date=?, done_by=? WHERE id=?",
+                        (date, request.state.user.get("username", ""), cid))
+        else:
+            con.execute("UPDATE daily_check SET done=0, done_date='', done_by='' WHERE id=?", (cid,))
+        con.commit()
+        return {"ok": True}
+    finally:
+        con.close()
+
+
+@app.delete("/api/check/{cid}")
+def check_del(request: Request, cid: int):
+    _require_writer(request)
+    con = connect()
+    try:
+        con.execute("DELETE FROM daily_check WHERE id=?", (cid,))
+        con.commit()
+        return {"ok": True}
     finally:
         con.close()
 

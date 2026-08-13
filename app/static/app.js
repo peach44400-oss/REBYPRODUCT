@@ -817,7 +817,10 @@ async function loadMemos(page) {
     ? `<div class="auto" style="font-size:12px; margin-bottom:8px;">전체 ${NF(d.total)}건 · ${MEMOS.page}페이지</div>`
       + d.items.map(m => `<div style="display:flex; gap:12px; padding:9px 4px; border-bottom:1px solid var(--line-soft); align-items:flex-start;">
           <span class="num" style="flex:none; min-width:112px; font-weight:700; font-size:12.5px;">${esc(m.date)} <span class="auto" style="font-weight:400;">(${dow(m.date)})</span></span>
-          <span style="flex:1; white-space:pre-wrap; word-break:break-word; font-size:13px; line-height:1.55;">${esc(m.memo)}</span>
+          <span style="flex:1; white-space:pre-wrap; word-break:break-word; font-size:13px; line-height:1.55;">${(() => {
+            const segs = (m.memo || "").split(";").map(s => s.trim()).filter(Boolean);
+            return segs.length > 1 ? segs.map(s => `<div style="padding:1px 0;">• ${esc(s)}</div>`).join("") : esc(m.memo);
+          })()}</span>
         </div>`).join("")
     : '<div class="auto" style="padding:20px; text-align:center;">특이사항으로 적은 메모가 없습니다 — 일일 입력의 특이사항 칸에 적으면 여기 모입니다</div>';
   if (pager) pager.innerHTML = pagerHtml(d.total, MEMOS.page, MEMOS.per);
@@ -1273,6 +1276,7 @@ async function loadDay(date) {
   E.matDisposal = d.mat_disposal || [];  // 그날 확정 폐기 기록
   snapshotSaved();   // 이 날짜의 '저장된 값' 스냅샷 — 키패드가 이전 값을 보여주는 근거 (DB 추가 불필요)
   E.photos = d.photos || []; E.prevProdDate = d.prev_prod_date;
+  E.checks = d.checks || []; renderChecks();
   $("eMemo").value = d.memo || "";
   E.version = d.version ?? null;   // 동시 편집 충돌 감지용 (저장 시 서버가 비교)
   E.notifiedVer = d.version ?? null;   // 이 버전까지는 '갱신됨' 알림을 이미 반영한 상태
@@ -2500,6 +2504,53 @@ async function fetchShipLots(pid) {
     delete _lotFetching[pid];
     renderShip();
   }
+}
+/* ── 체크사항(이월 할 일) — 완료 전까지 다음날로 이월, 완료 시 취소선 ── */
+function renderChecks() {
+  const el = $("checkList"); if (!el) return;
+  const canWrite = typeof ROLE === "undefined" || ROLE !== "guest";
+  const list = E.checks || [];
+  el.innerHTML = list.length ? list.map(c => {
+    const carried = !c.done && c.created_date && c.created_date < E.date;
+    return `<div style="display:flex; align-items:center; gap:8px; padding:5px 2px; border-bottom:1px solid var(--line-soft);">
+      <input type="checkbox" data-chk="${c.id}" ${c.done ? "checked" : ""} ${canWrite ? "" : "disabled"} style="width:16px; height:16px; flex:none; cursor:pointer;">
+      <span style="flex:1; font-size:13px; ${c.done ? "text-decoration:line-through; color:var(--muted);" : ""}">${esc(c.text)}${carried ? ` <span class="auto" style="font-size:11px;">(${esc(c.created_date.slice(5))}부터 이월)</span>` : ""}${c.done && c.done_date ? ` <span class="auto" style="font-size:11px;">· ${esc(c.done_date.slice(5))} 완료</span>` : ""}</span>
+      ${canWrite ? `<button class="btn ghost sm" data-chkdel="${c.id}" style="flex:none; padding:0 7px;">삭제</button>` : ""}</div>`;
+  }).join("") : '<div class="auto" style="font-size:12px; padding:4px 0;">체크사항이 없습니다 — 다음날에도 챙길 일을 아래에 추가하세요 (완료 전까지 매일 이월)</div>';
+}
+async function addCheck() {
+  const inp = $("checkInput"); const text = (inp.value || "").trim();
+  if (!text) return;
+  try {
+    const res = await api("/api/check", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, date: E.date }) });
+    (E.checks = E.checks || []).push({ id: res.id, text, created_date: E.date, done: 0, done_date: "" });
+    inp.value = ""; renderChecks();
+  } catch (e) { /* api 토스트 */ }
+}
+if ($("checkAdd")) {
+  $("checkAdd").onclick = addCheck;
+  $("checkInput").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); addCheck(); } });
+  $("checkList").addEventListener("click", async e => {
+    const cb = e.target.closest("[data-chk]");
+    if (cb) {
+      try {
+        await api("/api/check/" + cb.dataset.chk + "/done", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ done: cb.checked, date: E.date }) });
+        const c = (E.checks || []).find(x => x.id === +cb.dataset.chk);
+        if (c) { c.done = cb.checked ? 1 : 0; c.done_date = cb.checked ? E.date : ""; }
+        renderChecks();
+      } catch (e2) { renderChecks(); }
+      return;
+    }
+    const del = e.target.closest("[data-chkdel]");
+    if (del) {
+      if (!confirm("이 체크사항을 삭제할까요?")) return;
+      try {
+        await api("/api/check/" + del.dataset.chkdel, { method: "DELETE" });
+        E.checks = (E.checks || []).filter(x => x.id !== +del.dataset.chkdel);
+        renderChecks();
+      } catch (e2) { /* api 토스트 */ }
+    }
+  });
 }
 /* 입고 카드 합계 — 실사 카드의 '입고'는 여기서 계산 (입고 카드에 그 자재가 없으면 과거 저장분 폴백) */
 function matInTotal(mid) {

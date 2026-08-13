@@ -240,6 +240,19 @@ CREATE TABLE IF NOT EXISTS material_expiry_ack (
   PRIMARY KEY(material_id, expiry)
 );
 
+-- 체크사항(이월 할 일) — 완료 체크 전까지 다음날로 계속 이월. 완료하면 그날 취소선으로 표시된다.
+CREATE TABLE IF NOT EXISTS daily_check (
+  id INTEGER PRIMARY KEY,
+  text TEXT NOT NULL,
+  created_date TEXT NOT NULL,       -- 처음 등록한 날 (이 날부터 이월 표시)
+  done INTEGER DEFAULT 0,
+  done_date TEXT DEFAULT '',        -- 완료 체크한 날
+  created_by TEXT DEFAULT '',
+  done_by TEXT DEFAULT '',
+  created_at TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_dailycheck ON daily_check(done, created_date);
+
 -- 반제품(semi) 레시피 — 반제품 1단위를 만드는 데 필요한 원재료 구성 (반제품 생산 시 원재료 차감 기준)
 CREATE TABLE IF NOT EXISTS semi_bom (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
