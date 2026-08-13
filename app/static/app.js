@@ -2691,11 +2691,11 @@ async function undoMatDispose(did) {
 /* ── 자재 현황 화면 — 전체 원부자재 재고·유통기한(FEFO)·부족을 한눈에 + 확정폐기·발주·이력 ── */
 const MATSTAT = { date: "", data: null, filter: "all", q: "" };
 async function loadMatStatus() {
-  MATSTAT.date = MATSTAT.date || todayISO();
+  MATSTAT.date = todayISO();   // 항상 현재 기준 (만료·임박·부족·폐기 내역을 전체 날짜로 표시)
   $("msDate").value = MATSTAT.date;
   try { MATSTAT.data = await api("/api/matstatus?date=" + encodeURIComponent(MATSTAT.date)); }
   catch (e) { return; }
-  $("msDateLbl").textContent = `기준일 ${MATSTAT.date} (${dowOf(MATSTAT.date)})`;
+  $("msDateLbl").textContent = `${MATSTAT.date} (${dowOf(MATSTAT.date)}) 현재 기준`;
   const s = MATSTAT.data.summary || {};
   const cnt = (s.expired || 0) + (s.low || 0);
   const nb = $("navMatCnt"); if (nb) { nb.textContent = cnt; nb.style.display = cnt > 0 ? "" : "none"; }
@@ -2740,12 +2740,70 @@ function renderMatStatus() {
     }).join("") : `<tr><td colspan="7" class="auto" style="padding:16px; text-align:center;">폐기 내역이 없습니다</td></tr>`;
     return;
   }
+  // 공통 헬퍼 (만료/임박/부족 리스트 — 날짜 열 + 최신 위로)
+  const th = cols => cols.map(c => `<th style="padding:6px 8px; border-bottom:2px solid var(--line); text-align:${c.a || "center"}; font-size:12px; color:var(--muted);">${c.h}</th>`).join("");
+  const kchip = it => `<span class="chip cat" style="font-size:10.5px;">${msKind(it)}</span>`;
+  const q = MATSTAT.q ? MATSTAT.q.toLowerCase() : "";
+  const nf = arr => q ? arr.filter(x => (x.name || "").toLowerCase().includes(q)) : arr;
+  // ── 만료: 아직 폐기 안 된 현재 만료 자재 — 만료일(유통기한+1) 열, 최신 위로 ──
+  if (MATSTAT.filter === "expired") {
+    let rows = nf(d.items.filter(x => x.expired > 0)).map(x => {
+      const exps = (x.exp_batches || []).map(b => b.exp).filter(Boolean).sort();
+      return { it: x, mdate: exps.length ? isoPlus(exps[0], 1) : "", exps };
+    });
+    rows.sort((a, b) => (a.mdate < b.mdate ? 1 : -1));   // 최신 만료일 위로
+    $("msHead").innerHTML = th([{ h: "만료일" }, { h: "자재명", a: "left" }, { h: "구분" }, { h: "만료수량", a: "right" }, { h: "유통기한" }, { h: "처리" }]);
+    $("msBody").innerHTML = rows.length ? rows.map(({ it, mdate, exps }) => {
+      const u = esc(it.unit || "");
+      return `<tr style="border-bottom:1px solid var(--line-soft);">
+        <td style="padding:6px 8px; text-align:center; font-weight:700; color:#c0392b;">${esc(mdate || "—")}</td>
+        <td style="padding:6px 8px;"><button class="uselink" data-mshist="${it.id}" style="font-weight:600; text-align:left;">${esc(it.name)}</button></td>
+        <td style="padding:6px 8px; text-align:center;">${kchip(it)}</td>
+        <td style="padding:6px 8px; text-align:right; font-weight:700; color:#c0392b;">${NF(it.expired)}${u}</td>
+        <td style="padding:6px 8px; text-align:center; color:var(--muted); font-size:11.5px;">${esc(exps.join(", ") || "—")} 지남</td>
+        <td style="padding:6px 8px; text-align:center;">${canStock ? `<button class="btn ghost sm" data-msdispose="${it.id}" style="color:#c0392b; border-color:#c0392b; padding:1px 8px;">확정 폐기</button>` : "—"}</td></tr>`;
+    }).join("") : `<tr><td colspan="6" class="auto" style="padding:16px; text-align:center;">아직 폐기 안 된 만료 재고가 없습니다 (유통기한 지난 재고는 자동 폐기 → 폐기 내역)</td></tr>`;
+    return;
+  }
+  // ── 임박: 앞으로 만료 예정(현재 보유) — 유통기한 열, 최신(늦은) 기한 위로 ──
+  if (MATSTAT.filter === "soon") {
+    let rows = nf(d.items.filter(x => x.soon));
+    rows.sort((a, b) => (a.exp < b.exp ? 1 : -1));
+    $("msHead").innerHTML = th([{ h: "유통기한" }, { h: "자재명", a: "left" }, { h: "구분" }, { h: "현재고", a: "right" }, { h: "D-day" }, { h: "처리" }]);
+    $("msBody").innerHTML = rows.length ? rows.map(it => {
+      const u = esc(it.unit || "");
+      return `<tr style="border-bottom:1px solid var(--line-soft);">
+        <td style="padding:6px 8px; text-align:center; font-weight:700; color:#B45309;">${esc(it.exp || "—")}</td>
+        <td style="padding:6px 8px;"><button class="uselink" data-mshist="${it.id}" style="font-weight:600; text-align:left;">${esc(it.name)}</button></td>
+        <td style="padding:6px 8px; text-align:center;">${kchip(it)}</td>
+        <td style="padding:6px 8px; text-align:right; font-weight:700;">${NF(it.onhand)}${u}</td>
+        <td style="padding:6px 8px; text-align:center; color:#B45309; font-weight:600;">D-${it.soon.days}</td>
+        <td style="padding:6px 8px; text-align:center;"><span class="auto">—</span></td></tr>`;
+    }).join("") : `<tr><td colspan="6" class="auto" style="padding:16px; text-align:center;">임박(${d.soon_days || 7}일 내 만료 예정) 자재가 없습니다</td></tr>`;
+    return;
+  }
+  // ── 부족: 안전재고 미달 — 부족량 큰 순 ──
+  if (MATSTAT.filter === "low") {
+    let rows = nf(d.items.filter(x => x.low));
+    rows.sort((a, b) => (b.shortage || 0) - (a.shortage || 0));
+    $("msHead").innerHTML = th([{ h: "자재명", a: "left" }, { h: "구분" }, { h: "현재고", a: "right" }, { h: "안전재고", a: "right" }, { h: "부족량", a: "right" }, { h: "최근입고" }, { h: "처리" }]);
+    $("msBody").innerHTML = rows.length ? rows.map(it => {
+      const u = esc(it.unit || "");
+      return `<tr style="border-bottom:1px solid var(--line-soft);">
+        <td style="padding:6px 8px;"><button class="uselink" data-mshist="${it.id}" style="font-weight:600; text-align:left;">${esc(it.name)}</button></td>
+        <td style="padding:6px 8px; text-align:center;">${kchip(it)}</td>
+        <td style="padding:6px 8px; text-align:right; font-weight:700; color:#B45309;">${NF(it.onhand)}${u}</td>
+        <td style="padding:6px 8px; text-align:right;">${NF(it.safety)}${u}</td>
+        <td style="padding:6px 8px; text-align:right; font-weight:700; color:#B45309;">${NF(it.shortage)}${u}</td>
+        <td style="padding:6px 8px; text-align:center; color:var(--muted); font-size:11.5px;">${esc(it.last_in || "—")}</td>
+        <td style="padding:6px 8px; text-align:center;">${canStock && !it.ordered ? `<button class="btn ghost sm" data-msorder="${it.id}" style="padding:1px 8px;">발주</button>` : (it.ordered ? '<span class="auto">발주됨</span>' : "—")}</td></tr>`;
+    }).join("") : `<tr><td colspan="7" class="auto" style="padding:16px; text-align:center;">부족 자재가 없습니다</td></tr>`;
+    return;
+  }
+  // ── 전체: 전체 자재 현황 표 ──
   $("msHead").innerHTML = ["자재명", "구분", "현재고", "유통기한", "안전재고", "최근입고", "처리"].map((h, i) =>
     `<th style="padding:6px 8px; border-bottom:2px solid var(--line); text-align:${i === 0 || i === 3 ? "left" : (i === 2 || i === 4 ? "right" : "center")}; font-size:12px; color:var(--muted);">${h}</th>`).join("");
   let items = d.items.slice();
-  if (MATSTAT.filter === "expired") items = items.filter(x => x.expired > 0);
-  else if (MATSTAT.filter === "soon") items = items.filter(x => x.soon);
-  else if (MATSTAT.filter === "low") items = items.filter(x => x.low);
   if (MATSTAT.q) items = items.filter(x => x.name.toLowerCase().includes(MATSTAT.q.toLowerCase()));
   const rowHtml = it => {
     const u = esc(it.unit || "");
