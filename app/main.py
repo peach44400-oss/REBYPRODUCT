@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.78.1"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.79.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -283,6 +283,70 @@ def material_expiry_alerts(con, today, horizon=14):
                            "onhand_expired": 0, "consumed": True})
     alerts.sort(key=lambda x: (x["consumed"], x["expiry"]))
     return alerts
+
+
+def _iso_plus(iso, n):
+    try:
+        return (dt.date.fromisoformat(iso) + dt.timedelta(days=n)).isoformat()
+    except (ValueError, TypeError):
+        return ""
+
+
+def auto_dispose_expired(con, today=None):
+    """유통기한 지난 재고를 자동으로 폐기 처리 — 만료 시작일(유통기한+1)에 폐기로 기록하고 재고에서 차감.
+    폐기 내역에서 사용자가 취소(undo)하면 그 (자재,기한)은 material_expiry_ack로 남아 다시 자동폐기되지 않는다.
+    이미 폐기된/확인된 기한은 건너뛴다. 자재당 1건(그 자재의 만료 배치 합계)으로 기록."""
+    today = today or dt.date.today().isoformat()
+    acked = {(r["material_id"], (r["expiry"] or "").strip())
+             for r in con.execute("SELECT material_id, expiry FROM material_expiry_ack")}
+    done = set()
+    for r in con.execute("SELECT material_id, expiry FROM material_disposal WHERE COALESCE(expiry,'')!=''"):
+        for e in (r["expiry"] or "").split(","):
+            e = e.strip()
+            if e:
+                done.add((r["material_id"], e))
+    n = 0
+    for m in con.execute("""SELECT id, COALESCE(shelf_days,0) sd FROM material
+            WHERE kind IN ('raw','sub') AND COALESCE(status,'') NOT IN ('단종','중지')"""):
+        mid, sd = m["id"], m["sd"]
+        _, expired, batches = material_stock_expiry(con, mid, today, sd)
+        if expired <= 1e-6:
+            continue
+        exp_b = [b for b in batches if b["expired"] and b["exp"] and b["qty"] > 1e-6
+                 and (mid, b["exp"]) not in acked and (mid, b["exp"]) not in done]
+        if not exp_b:
+            continue
+        earliest = min(b["exp"] for b in exp_b)
+        disp_date = _iso_plus(earliest, 1) or today
+        if disp_date > today:          # 만료 시작일이 미래면(당일까지 사용) 아직 폐기 안 함
+            continue
+        oh = material_stock_expiry(con, mid, disp_date, sd)[0]
+        qty = min(sum(b["qty"] for b in exp_b), oh)
+        if qty <= 1e-6:
+            continue
+        exps = ", ".join(sorted({b["exp"] for b in exp_b}))
+        con.execute("""INSERT INTO material_disposal(date, material_id, qty, expiry, reason, note, created_at, created_by)
+            VALUES(?,?,?,?,?,?,datetime('now','localtime'),?)""",
+                    (disp_date, mid, qty, exps, "유통기한 만료 자동폐기", "auto", "system"))
+        _recompute_material_day(con, mid, disp_date)
+        for b in exp_b:
+            done.add((mid, b["exp"]))
+        n += 1
+    if n:
+        con.commit()
+    return n
+
+
+def auto_dispose_daily(con):
+    """하루 한 번만 자동폐기 실행 (대시보드/자재현황 로드 시 호출)."""
+    today = dt.date.today().isoformat()
+    row = con.execute("SELECT value FROM app_setting WHERE key='autodispose_day'").fetchone()
+    if row and row["value"] == today:
+        return 0
+    n = auto_dispose_expired(con, today)
+    con.execute("INSERT OR REPLACE INTO app_setting(key, value) VALUES('autodispose_day',?)", (today,))
+    con.commit()
+    return n
 
 
 # ── 인증/권한 (admin=전체 / op=시급 제외 / guest=보기 전용) ──
@@ -2703,6 +2767,13 @@ def matdisposal_delete(request: Request, did: int):
             raise HTTPException(404, "폐기 기록 없음")
         con.execute("DELETE FROM material_disposal WHERE id=?", (did,))
         _recompute_material_day(con, row["material_id"], row["date"], manual_delta=float(row["qty"] or 0))
+        # 취소한 기한은 확인(ack) 처리 — 자동폐기가 다시 만들지 않도록 (사용자가 '유지' 선택한 것)
+        for e in (row["expiry"] or "").split(","):
+            e = e.strip()
+            if e:
+                con.execute("INSERT OR REPLACE INTO material_expiry_ack(material_id, expiry, acked_at, acked_by) "
+                            "VALUES(?,?,datetime('now','localtime'),?)",
+                            (row["material_id"], e, request.state.user.get("username", "")))
         audit(con, "mat_disposal_undo", f"{row['date']} {row['name']} {float(row['qty'] or 0):g}{row['unit']}")
         bump_masters()
         con.commit()
@@ -2742,6 +2813,10 @@ def matstatus(request: Request, date: str = ""):
     date = date or dt.date.today().isoformat()
     con = connect()
     try:
+        try:
+            auto_dispose_daily(con)   # 유통기한 지난 재고 자동 폐기 (하루 1회)
+        except Exception:
+            pass
         onhand = {r["material_id"]: float(r["real_qty"] or 0) for r in con.execute(
             """SELECT md.material_id, md.real_qty FROM material_daily md
                JOIN (SELECT material_id, MAX(date) mx FROM material_daily WHERE date<=? GROUP BY material_id) x
@@ -2793,7 +2868,16 @@ def matstatus(request: Request, date: str = ""):
                           "ordered": ordered.get(m["id"]),
                           "price": (m["unit_price"] if admin else None),
                           "partner_id": m["partner_id"]})
-        return {"date": date, "items": items, "summary": summ, "soon_days": MATSTATUS_SOON_DAYS}
+        # 폐기 내역 (자동/수동) — 최근순, 전체 날짜. 프론트에서 날짜 필터.
+        disposals = rows(con.execute("""
+            SELECT d.id, d.date, d.material_id, d.qty, d.expiry, d.reason, d.note, d.created_by,
+                   m.name, m.unit, m.kind FROM material_disposal d
+            JOIN material m ON m.id=d.material_id
+            ORDER BY d.date DESC, d.id DESC LIMIT 300"""))
+        for r in disposals:
+            r["auto"] = (r.get("note") == "auto")
+        return {"date": date, "items": items, "summary": summ, "soon_days": MATSTATUS_SOON_DAYS,
+                "disposals": disposals}
     finally:
         con.close()
 
@@ -4014,6 +4098,10 @@ def master_delete(mtype: str, mid: int):
 def dashboard(request: Request):
     con = connect()
     try:
+        try:
+            auto_dispose_daily(con)   # 유통기한 지난 재고 자동 폐기 (하루 1회)
+        except Exception:
+            pass
         last = con.execute("SELECT MAX(date) d FROM production").fetchone()["d"]
         # 최근 14 기록일 추이
         trend = rows(con.execute("""

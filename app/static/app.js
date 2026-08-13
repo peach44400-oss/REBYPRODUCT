@@ -373,12 +373,8 @@ $("matExpList").addEventListener("click", async e => {
   if (dz) {
     const r = (DASH_MAT_ALERTS || []).find(x => x.id === +dz.dataset.medispose);
     if (!r || !(r.onhand_expired > 0)) return;
-    if (!confirm(`'${r.name}' 유통기한 만료 재고 ${NF(r.onhand_expired)}${r.unit} (유통기한 ${r.expiry} 지남)를 확정 폐기할까요?\n\n폐기하면 실재고에서 차감됩니다.`)) return;
-    try {
-      await api("/api/matdisposal", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ date: todayISO(), material_id: r.id, qty: r.onhand_expired, reason: "유통기한 만료", expiry: r.expiry }) });
-      toast(`${r.name} 폐기 처리되었습니다`); loadDash();
-    } catch (e) { /* api 토스트 */ }
+    openDisposeModal({ mid: r.id, name: r.name, unit: r.unit || "", expired: r.onhand_expired,
+      expiry: r.expiry || "", onReload: () => loadDash() });
     return;
   }
   const ak = e.target.closest("[data-meack]");
@@ -2631,22 +2627,57 @@ $("eMat").addEventListener("click", e => {
   const u = e.target.closest("[data-use]");        // 자동 반영 행의 사용량 클릭 → 사용처 분석
   if (u) openUse(+u.dataset.use, E.date);
 });
-// 유통기한 만료분 확정 폐기 — 실재고에서 차감(더 이상 사용 불가), 취소 시 재고 복구
+// 유통기한 만료분 확정 폐기 — 폐기 수량·폐기일(기본=만료 시작일=유통기한+1)·사유를 골라 실재고에서 차감
+function isoPlus(iso, n) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return "";
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(y, m - 1, d + n), p = x => String(x).padStart(2, "0");
+  return `${dt.getFullYear()}-${p(dt.getMonth() + 1)}-${p(dt.getDate())}`;
+}
+const MDISP = {};
+function openDisposeModal(o) {
+  Object.assign(MDISP, o);
+  const firstExpired = o.expiry ? isoPlus(o.expiry, 1) : "";   // 만료 시작일 = 유통기한 + 1일(당일까지 사용)
+  $("matDispInfo").innerHTML = `<b>${esc(o.name)}</b> · 만료 재고 <b style="color:#c0392b;">${NF(o.expired)}${esc(o.unit || "")}</b>`
+    + (o.expiry ? ` <span class="auto">(유통기한 ${esc(o.expiry)} · ${esc(firstExpired)}부터 만료)</span>` : "");
+  $("matDispQty").value = o.expired;
+  $("matDispReason").value = "유통기한 만료";
+  $("matDispDate").value = firstExpired || todayISO();
+  const expBtn = $("matDispExpiry");
+  if (firstExpired) { expBtn.style.display = ""; expBtn.textContent = `만료일 (${firstExpired})`; expBtn.dataset.d = firstExpired; }
+  else expBtn.style.display = "none";
+  updateDispWarn();
+  $("matDispOverlay").classList.add("on");
+}
+function updateDispWarn() {
+  const d = $("matDispDate").value;
+  $("matDispWarn").style.display = (/^\d{4}-\d{2}-\d{2}$/.test(d) && d < todayISO()) ? "" : "none";
+}
+$("matDispDate").addEventListener("change", updateDispWarn);
+$("matDispToday").onclick = () => { $("matDispDate").value = todayISO(); updateDispWarn(); };
+$("matDispExpiry").onclick = () => { $("matDispDate").value = $("matDispExpiry").dataset.d || todayISO(); updateDispWarn(); };
+$("matDispCancel").onclick = () => $("matDispOverlay").classList.remove("on");
+$("matDispOk").onclick = async () => {
+  const qty = Number(String($("matDispQty").value).replace(/,/g, "")) || 0;
+  const date = $("matDispDate").value;
+  const reason = $("matDispReason").value.trim() || "유통기한 만료";
+  if (!(qty > 0)) return toast("폐기 수량을 입력하세요");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return toast("폐기일을 선택하세요");
+  try {
+    await api("/api/matdisposal", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ date, material_id: MDISP.mid, qty, reason, expiry: MDISP.expiry || "" }) });
+    $("matDispOverlay").classList.remove("on");
+    toast(`${MDISP.name} ${NF(qty)}${MDISP.unit || ""} · ${date} 폐기 처리되었습니다`);
+    if (MDISP.onReload) MDISP.onReload();
+  } catch (e) { /* api 토스트 */ }
+};
 async function openMatDispose(mid) {
   const m = materialById(mid) || {};
   const ex = (E.matExpiry || {})[mid];
   if (!ex || !(ex.expired > 0)) return;
-  const exps = (ex.batches || []).map(b => b.exp).filter(Boolean);
-  const msg = `'${m.name}' 유통기한 만료 재고 ${NF(ex.expired)}${m.unit || ""}를 확정 폐기할까요?\n`
-    + (exps.length ? `(유통기한 ${exps.join(", ")} 지남)\n` : "")
-    + `\n폐기하면 실재고에서 차감되어 더 이상 사용되지 않습니다. (취소로 되돌릴 수 있습니다)`;
-  if (!confirm(msg)) return;
-  try {
-    await api("/api/matdisposal", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ date: E.date, material_id: mid, qty: ex.expired, reason: "유통기한 만료", expiry: exps.join(", ") }) });
-    toast(`${m.name} ${NF(ex.expired)}${m.unit || ""} 폐기 처리되었습니다`);
-    await loadDay(E.date);
-  } catch (e) { /* api 토스트 */ }
+  const exps = (ex.batches || []).map(b => b.exp).filter(Boolean).sort();
+  openDisposeModal({ mid, name: m.name, unit: m.unit || "", expired: ex.expired,
+    expiry: exps[0] || "", onReload: () => loadDay(E.date) });
 }
 async function undoMatDispose(did) {
   if (!confirm("이 폐기 기록을 취소할까요? — 재고가 복구됩니다")) return;
@@ -2686,8 +2717,29 @@ function renderMatStatus() {
     card("low", "📉", "재고 부족", s.low, "#B45309");
   const chip = (key, label) => `<button type="button" class="btn ghost sm" data-msfilter="${key}"
     style="${MATSTAT.filter === key ? "background:var(--fg); color:var(--bg); border-color:var(--fg);" : ""}">${label}</button>`;
+  const disposals = d.disposals || [];
   $("msFilters").innerHTML = chip("all", "전체") + chip("expired", "만료") + chip("soon", "임박") + chip("low", "부족")
-    + (canStock && s.low ? `<button type="button" class="btn sm" id="msBulkOrder" style="margin-left:6px;">부족 ${s.low}종 → 발주서</button>` : "");
+    + chip("disp", `폐기 내역${disposals.length ? " " + disposals.length : ""}`)
+    + (canStock && s.low && MATSTAT.filter !== "disp" ? `<button type="button" class="btn sm" id="msBulkOrder" style="margin-left:6px;">부족 ${s.low}종 → 발주서</button>` : "");
+  // ── 폐기 내역 뷰 (전체 날짜) — 자동/수동 폐기를 폐기일과 함께, [취소]로 되돌림 ──
+  if (MATSTAT.filter === "disp") {
+    $("msHead").innerHTML = ["폐기일", "자재명", "구분", "폐기수량", "유통기한", "사유", "처리"].map((h, i) =>
+      `<th style="padding:6px 8px; border-bottom:2px solid var(--line); text-align:${i === 1 ? "left" : (i === 3 ? "right" : "center")}; font-size:12px; color:var(--muted);">${h}</th>`).join("");
+    let dl = disposals.slice();
+    if (MATSTAT.q) dl = dl.filter(x => (x.name || "").toLowerCase().includes(MATSTAT.q.toLowerCase()));
+    $("msBody").innerHTML = dl.length ? dl.map(x => {
+      const u = esc(x.unit || "");
+      return `<tr style="border-bottom:1px solid var(--line-soft);">
+        <td style="padding:6px 8px; text-align:center; font-weight:700;">${esc(x.date)}</td>
+        <td style="padding:6px 8px;"><button class="uselink" data-mshist="${x.material_id}" style="font-weight:600; text-align:left;">${esc(x.name)}</button></td>
+        <td style="padding:6px 8px; text-align:center;"><span class="chip cat" style="font-size:10.5px;">${x.kind === "sub" ? "부재료" : "원재료"}</span></td>
+        <td style="padding:6px 8px; text-align:right; font-weight:700; color:#c0392b;">${NF(x.qty)}${u}</td>
+        <td style="padding:6px 8px; text-align:center; color:var(--muted); font-size:11.5px;">${esc(x.expiry || "—")}</td>
+        <td style="padding:6px 8px; text-align:center; font-size:11.5px;">${esc(x.reason || "")} ${x.auto ? '<span class="chip" style="background:#eef0f2; font-size:10px;">자동</span>' : '<span class="chip cat" style="font-size:10px;">수동</span>'}</td>
+        <td style="padding:6px 8px; text-align:center;">${canStock ? `<button class="btn ghost sm" data-mdundo="${x.id}" style="padding:1px 8px;">취소</button>` : "—"}</td></tr>`;
+    }).join("") : `<tr><td colspan="7" class="auto" style="padding:16px; text-align:center;">폐기 내역이 없습니다</td></tr>`;
+    return;
+  }
   $("msHead").innerHTML = ["자재명", "구분", "현재고", "유통기한", "안전재고", "최근입고", "처리"].map((h, i) =>
     `<th style="padding:6px 8px; border-bottom:2px solid var(--line); text-align:${i === 0 || i === 3 ? "left" : (i === 2 || i === 4 ? "right" : "center")}; font-size:12px; color:var(--muted);">${h}</th>`).join("");
   let items = d.items.slice();
@@ -2724,19 +2776,12 @@ function renderMatStatus() {
   $("msBody").innerHTML = items.length ? items.map(rowHtml).join("")
     : `<tr><td colspan="7" class="auto" style="padding:16px; text-align:center;">해당하는 자재가 없습니다</td></tr>`;
 }
-async function msDispose(mid) {
+function msDispose(mid) {
   const it = (MATSTAT.data.items || []).find(x => x.id === mid);
   if (!it || !(it.expired > 0)) return;
-  const exps = (it.exp_batches || []).map(b => b.exp).filter(Boolean);
-  if (!confirm(`'${it.name}' 유통기한 만료 재고 ${NF(it.expired)}${it.unit || ""}를 확정 폐기할까요?\n`
-    + (exps.length ? `(유통기한 ${exps.join(", ")} 지남)\n` : "")
-    + `\n폐기하면 실재고에서 차감됩니다. (되돌리려면 일일 입력의 ${MATSTAT.date} 재고 실사에서 취소)`)) return;
-  try {
-    await api("/api/matdisposal", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ date: MATSTAT.date, material_id: mid, qty: it.expired, reason: "유통기한 만료", expiry: exps.join(", ") }) });
-    toast(`${it.name} ${NF(it.expired)}${it.unit || ""} 폐기 처리되었습니다`);
-    loadMatStatus();
-  } catch (e) { /* api 토스트 */ }
+  const exps = (it.exp_batches || []).map(b => b.exp).filter(Boolean).sort();
+  openDisposeModal({ mid, name: it.name, unit: it.unit || "", expired: it.expired,
+    expiry: exps[0] || "", onReload: () => loadMatStatus() });
 }
 function msOrderItems(list) {
   const items = list.filter(x => x.low && !x.ordered).map(x => ({ material_id: x.id, name: x.name, unit: x.unit, qty: Math.ceil((x.shortage || 0) * 100) / 100 }));
@@ -2755,9 +2800,20 @@ $("msFilters").addEventListener("click", e => {
   if (b) { MATSTAT.filter = b.dataset.msfilter; renderMatStatus(); return; }
   if (e.target.closest("#msBulkOrder")) msOrderItems(MATSTAT.data.items || []);
 });
-$("msBody").addEventListener("click", e => {
+$("msBody").addEventListener("click", async e => {
   const dz = e.target.closest("[data-msdispose]"); if (dz) { msDispose(+dz.dataset.msdispose); return; }
   const od = e.target.closest("[data-msorder]"); if (od) { const it = (MATSTAT.data.items || []).find(x => x.id === +od.dataset.msorder); if (it) msOrderItems([it]); return; }
+  const un = e.target.closest("[data-mdundo]");
+  if (un) {
+    const x = (MATSTAT.data.disposals || []).find(v => v.id === +un.dataset.mdundo);
+    if (!confirm(`${x ? x.name + " " : ""}폐기(${x ? x.date : ""})를 취소할까요?\n재고가 복구되고, 이 유통기한은 다시 자동 폐기되지 않습니다.`)) return;
+    try {
+      await api("/api/matdisposal/" + un.dataset.mdundo, { method: "DELETE" });
+      toast("폐기가 취소되었습니다 — 재고 복구");
+      loadMatStatus();
+    } catch (e) { /* api 토스트 */ }
+    return;
+  }
   const h = e.target.closest("[data-mshist]"); if (h) openMatHistory(+h.dataset.mshist);
 });
 function staffRate(r) {   // 가동률 = 실가동 ÷ 목표가동(그날 입력, 없으면 라인 정상가동시간)
@@ -7257,6 +7313,8 @@ $("anaRotation").addEventListener("click", e => {
 
 /* 제품 상세 모달 */
 function openAnaP(pid) {
+  const _m = document.querySelector("#anaOverlay .modal");
+  if (_m) _m.style.width = "780px";   // 제품 상세는 기본 폭 (자재 이력이 넓혔던 것 되돌림)
   const p = ANA.raw.products.find(x => x.id === pid);
   const [i0, i1] = anaRange();
   let tp = 0, ts = 0;
@@ -7318,6 +7376,8 @@ window.closeAnaP = () => $("anaOverlay").classList.remove("on");
 
 /* 제품 이력 팝업 (기준정보 제품명 클릭): 생산일자별 현재고 LOT + 최근 생산/출고 */
 async function openProdHistory(pid) {
+  const _m = document.querySelector("#anaOverlay .modal");
+  if (_m) _m.style.width = "780px";   // 기본 폭 (자재 이력이 넓혔던 것 되돌림)
   const d = await api("/api/prodhistory/" + pid);
   $("anaPTitle").textContent = d.name;
   $("anaPHint").textContent =
@@ -7522,7 +7582,11 @@ async function openMatHistory(mid) {
   const _ascRows = [...d.rows].sort((a, b) => (a.date < b.date ? -1 : 1));
   const effExp = {}; let _lastExp = "";
   for (const rr of _ascRows) { const s = rowExp(rr); if (s) _lastExp = s; effExp[rr.date] = _lastExp; }
-  $("anaPBody").innerHTML = bomSec + priceSec + `<div class="tbl-wrap"><table>
+  const modalEl = document.querySelector("#anaOverlay .modal");
+  if (modalEl) modalEl.style.width = "min(1180px, 96vw)";   // 자재 이력: 2단(좌 정보 · 우 이력표)이라 넓게
+  $("anaPBody").innerHTML = `<div style="display:flex; gap:18px; align-items:flex-start; flex-wrap:wrap;">
+    <div style="flex:1 1 380px; min-width:270px;">${bomSec}${priceSec}</div>
+    <div style="flex:1 1 480px; min-width:330px;"><div class="tbl-wrap" style="max-height:74vh; overflow:auto;"><table>
     <thead><tr><th>날짜</th><th class="r">전일</th><th class="r">입고</th><th class="r">사용</th><th class="r">실재고</th><th>제조일자</th><th>소비기한</th><th>발주</th></tr></thead>
     <tbody class="num">${d.rows.map(r => `<tr ${r.in_qty > 0 ? 'style="background:var(--ok-soft)"' : ""}>
       <td>${r.date}${r.src === "auto" ? ' <span class="chip cat">자동</span>' : ""}</td>
@@ -7549,7 +7613,7 @@ async function openMatHistory(mid) {
         <td class="r" style="font-weight:700;">−${NF(d.disp[r.date].qty)}</td>
         <td class="r auto">·</td>
         <td colspan="3" class="auto" style="color:#c0392b; text-align:left; white-space:nowrap;">${esc(d.disp[r.date].reason || "유통기한 만료")} 폐기${d.disp[r.date].exps ? " · 기한 " + esc(d.disp[r.date].exps) : ""} (실재고에서 차감됨)</td></tr>` : ""}`).join("")
-      || '<tr><td colspan="8" class="auto">기록 없음</td></tr>'}</tbody></table></div>`;
+      || '<tr><td colspan="8" class="auto">기록 없음</td></tr>'}</tbody></table></div></div></div>`;
   // 단가 추이 차트 — 기준 단가(회색 점선)와 함께. 이전 차트는 파기 후 재생성
   if (window.MHCHART) { try { window.MHCHART.destroy(); } catch (e) { } window.MHCHART = null; }
   if (pts.length) {

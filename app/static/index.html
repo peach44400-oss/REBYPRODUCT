@@ -2270,6 +2270,30 @@
     <div class="modal-foot"><button class="btn" id="matPriceClose">닫기</button></div>
   </div>
 </div>
+<!-- 유통기한 만료 확정 폐기 — 폐기 수량·폐기일(과거 지정 가능)·사유 선택 -->
+<div class="overlay" id="matDispOverlay">
+  <div class="modal" style="width:min(460px, 96vw);">
+    <h3>🗑 유통기한 만료 확정 폐기</h3>
+    <div id="matDispInfo" class="hint" style="margin:0 0 12px;"></div>
+    <div style="display:flex; flex-direction:column; gap:10px;">
+      <label style="font-size:12.5px; font-weight:700;">폐기 수량
+        <input id="matDispQty" class="mini-input num" inputmode="decimal" style="width:100%; box-sizing:border-box; margin-top:3px;"></label>
+      <label style="font-size:12.5px; font-weight:700;">폐기일 <span class="auto" style="font-weight:400;">— 이 날짜에 폐기로 기록됩니다</span>
+        <div style="display:flex; gap:6px; align-items:center; margin-top:3px;">
+          <input id="matDispDate" class="mini-input datepick" type="text" readonly placeholder="📅 폐기일" style="flex:1; box-sizing:border-box;">
+          <button type="button" class="btn ghost sm" id="matDispToday">오늘</button>
+          <button type="button" class="btn ghost sm" id="matDispExpiry" style="display:none;"></button>
+        </div></label>
+      <label style="font-size:12.5px; font-weight:700;">사유
+        <input id="matDispReason" class="mini-input" style="width:100%; box-sizing:border-box; text-align:left; margin-top:3px;" value="유통기한 만료"></label>
+      <p class="hint" id="matDispWarn" style="margin:0; color:#B45309; display:none;">⚠ 폐기일을 과거로 지정하면 그 날짜부터 재고가 소급 조정됩니다. 그 사이 사용(생산) 기록이 있으면 이후 실재고가 바뀔 수 있습니다.</p>
+    </div>
+    <div class="modal-foot" style="display:flex; gap:8px; justify-content:flex-end; margin-top:14px;">
+      <button class="btn" id="matDispCancel">취소</button>
+      <button class="btn primary" id="matDispOk" style="background:#c0392b; border-color:#c0392b;">폐기</button>
+    </div>
+  </div>
+</div>
 <!-- 사진 크게 보기 (라이트박스) — 사진 클릭 시 전체화면으로 확대, 아무 곳이나 클릭하면 닫힘 -->
 <div class="overlay" id="imgLightbox" style="cursor:zoom-out; z-index:1600; background:rgba(12,12,12,.82);">
   <img id="imgLightboxImg" alt="사진 크게 보기" style="max-width:94vw; max-height:92vh; border-radius:8px; box-shadow:0 12px 44px rgba(0,0,0,.55);">
