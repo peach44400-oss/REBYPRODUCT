@@ -7584,9 +7584,9 @@ async function openMatHistory(mid) {
   for (const rr of _ascRows) { const s = rowExp(rr); if (s) _lastExp = s; effExp[rr.date] = _lastExp; }
   const modalEl = document.querySelector("#anaOverlay .modal");
   if (modalEl) modalEl.style.width = "min(1180px, 96vw)";   // 자재 이력: 2단(좌 정보 · 우 이력표)이라 넓게
-  $("anaPBody").innerHTML = `<div style="display:flex; gap:18px; align-items:flex-start; flex-wrap:wrap;">
-    <div style="flex:1 1 380px; min-width:270px;">${bomSec}${priceSec}</div>
-    <div style="flex:1 1 480px; min-width:330px;"><div class="tbl-wrap" style="max-height:74vh; overflow:auto;"><table>
+  $("anaPBody").innerHTML = `<div style="display:flex; gap:18px; align-items:stretch; flex-wrap:wrap; max-height:76vh;">
+    <div style="flex:1 1 380px; min-width:270px; overflow:auto;">${bomSec}${priceSec}</div>
+    <div style="flex:1 1 480px; min-width:330px; overflow:auto;"><div class="tbl-wrap"><table>
     <thead><tr><th>날짜</th><th class="r">전일</th><th class="r">입고</th><th class="r">사용</th><th class="r">실재고</th><th>제조일자</th><th>소비기한</th><th>발주</th></tr></thead>
     <tbody class="num">${d.rows.map(r => `<tr ${r.in_qty > 0 ? 'style="background:var(--ok-soft)"' : ""}>
       <td>${r.date}${r.src === "auto" ? ' <span class="chip cat">자동</span>' : ""}</td>
