@@ -2778,10 +2778,8 @@ function renderMatStatus() {
     return;
   }
   // ── 이벤트 로그 (전체 기간) — 만료·임박·부족을 발생일과 함께 한 줄씩, 최신 위로 ──
+  // (폐기 처리된 만료는 '폐기 내역'에만 표시하고 여기선 제외 — 아직 처리 안 된 것만)
   const events = [];
-  disposals.forEach(x => events.push({ date: x.date, type: "만료", material_id: x.material_id, name: x.name, unit: x.unit, kind: x.kind,
-    content: `${NF(x.qty)}${x.unit || ""} 폐기${x.expiry ? ` (유통기한 ${x.expiry})` : ""}`, color: "#c0392b",
-    act: canStock ? `<button class="btn ghost sm" data-mdundo="${x.id}" style="padding:1px 8px;">취소</button>` : "" }));
   items.filter(x => x.expired > 0).forEach(x => {
     const exps = (x.exp_batches || []).map(b => b.exp).filter(Boolean).sort();
     events.push({ date: exps.length ? isoPlus(exps[0], 1) : "", type: "만료", material_id: x.id, name: x.name, unit: x.unit, kind: x.kind,

@@ -1,5 +1,5 @@
 {
-  "version": "1.80.1",
+  "version": "1.80.2",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· 완제품 출고에서 재고 LOT 선택 목록이 같은 날 이미 출고한 수량을 반영합니다 — 다른 출고 행에서 이미 뺀 LOT은 '남은 재고'로 표시되고, 다 나간 LOT은 목록에서 사라져 이중 출고를 막습니다. (자기 행이 이미 고른 LOT은 수정할 수 있게 그대로 유지)"
+  "notes": "· 자재 현황의 만료(및 전체 이벤트) 목록에서 이미 폐기 처리된 건은 빼고, 아직 폐기되지 않은 만료만 보여줍니다 — 폐기된 건은 '폐기 내역'에서 확인·취소하세요."
 }
