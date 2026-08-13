@@ -2711,28 +2711,29 @@ function renderMatStatus() {
     <div style="font-size:12px; color:var(--muted);">${icon} ${label}</div>
     <div style="font-size:20px; font-weight:800; color:${n > 0 ? color : "var(--muted)"};">${NF(n)}<span style="font-size:12px; font-weight:500; color:var(--muted);"> 종</span></div></button>`;
   $("msSummary").innerHTML =
-    card("all", "📦", "전체 자재", (d.items || []).length, "#121212") +
+    card("stock", "📦", "전체 자재", (d.items || []).length, "#121212") +
     card("expired", "⚠", "유통기한 만료", s.expired, "#c0392b") +
     card("soon", "⏰", `임박 (${d.soon_days || 7}일)`, s.soon, "#B45309") +
     card("low", "📉", "재고 부족", s.low, "#B45309");
   const chip = (key, label) => `<button type="button" class="btn ghost sm" data-msfilter="${key}"
     style="${MATSTAT.filter === key ? "background:var(--ink); color:var(--bg); border-color:var(--ink);" : ""}">${label}</button>`;
-  const disposals = d.disposals || [];
+  const disposals = d.disposals || [], lowEvents = d.low_events || [], items = d.items || [];
   $("msFilters").innerHTML = chip("all", "전체") + chip("expired", "만료") + chip("soon", "임박") + chip("low", "부족")
-    + chip("disp", `폐기 내역${disposals.length ? " " + disposals.length : ""}`)
-    + (canStock && s.low && MATSTAT.filter !== "disp" ? `<button type="button" class="btn sm" id="msBulkOrder" style="margin-left:6px;">부족 ${s.low}종 → 발주서</button>` : "");
-  // ── 폐기 내역 뷰 (전체 날짜) — 자동/수동 폐기를 폐기일과 함께, [취소]로 되돌림 ──
+    + chip("disp", `폐기 내역${disposals.length ? " " + disposals.length : ""}`) + chip("stock", "재고 목록")
+    + (canStock && s.low && MATSTAT.filter === "low" ? `<button type="button" class="btn sm" id="msBulkOrder" style="margin-left:6px;">부족 ${s.low}종 → 발주서</button>` : "");
+  const q = MATSTAT.q ? MATSTAT.q.toLowerCase() : "";
+  const kindTxt = k => k === "sub" ? "부재료" : "원재료";
+  // ── 폐기 내역 뷰 — 자동/수동 폐기를 폐기일과 함께, [취소]로 되돌림 ──
   if (MATSTAT.filter === "disp") {
     $("msHead").innerHTML = ["폐기일", "자재명", "구분", "폐기수량", "유통기한", "사유", "처리"].map((h, i) =>
       `<th style="padding:6px 8px; border-bottom:2px solid var(--line); text-align:${i === 1 ? "left" : (i === 3 ? "right" : "center")}; font-size:12px; color:var(--muted);">${h}</th>`).join("");
-    let dl = disposals.slice();
-    if (MATSTAT.q) dl = dl.filter(x => (x.name || "").toLowerCase().includes(MATSTAT.q.toLowerCase()));
+    let dl = q ? disposals.filter(x => (x.name || "").toLowerCase().includes(q)) : disposals.slice();
     $("msBody").innerHTML = dl.length ? dl.map(x => {
       const u = esc(x.unit || "");
       return `<tr style="border-bottom:1px solid var(--line-soft);">
         <td style="padding:6px 8px; text-align:center; font-weight:700;">${esc(x.date)}</td>
         <td style="padding:6px 8px;"><button class="uselink" data-mshist="${x.material_id}" style="font-weight:600; text-align:left;">${esc(x.name)}</button></td>
-        <td style="padding:6px 8px; text-align:center;"><span class="chip cat" style="font-size:10.5px;">${x.kind === "sub" ? "부재료" : "원재료"}</span></td>
+        <td style="padding:6px 8px; text-align:center;"><span class="chip cat" style="font-size:10.5px;">${kindTxt(x.kind)}</span></td>
         <td style="padding:6px 8px; text-align:right; font-weight:700; color:#c0392b;">${NF(x.qty)}${u}</td>
         <td style="padding:6px 8px; text-align:center; color:var(--muted); font-size:11.5px;">${esc(x.expiry || "—")}</td>
         <td style="padding:6px 8px; text-align:center; font-size:11.5px;">${esc(x.reason || "")} ${x.auto ? '<span class="chip" style="background:#eef0f2; font-size:10px;">자동</span>' : '<span class="chip cat" style="font-size:10px;">수동</span>'}</td>
@@ -2740,99 +2741,63 @@ function renderMatStatus() {
     }).join("") : `<tr><td colspan="7" class="auto" style="padding:16px; text-align:center;">폐기 내역이 없습니다</td></tr>`;
     return;
   }
-  // 공통 헬퍼 (만료/임박/부족 리스트 — 날짜 열 + 최신 위로)
-  const th = cols => cols.map(c => `<th style="padding:6px 8px; border-bottom:2px solid var(--line); text-align:${c.a || "center"}; font-size:12px; color:var(--muted);">${c.h}</th>`).join("");
-  const kchip = it => `<span class="chip cat" style="font-size:10.5px;">${msKind(it)}</span>`;
-  const q = MATSTAT.q ? MATSTAT.q.toLowerCase() : "";
-  const nf = arr => q ? arr.filter(x => (x.name || "").toLowerCase().includes(q)) : arr;
-  // ── 만료: 아직 폐기 안 된 현재 만료 자재 — 만료일(유통기한+1) 열, 최신 위로 ──
-  if (MATSTAT.filter === "expired") {
-    let rows = nf(d.items.filter(x => x.expired > 0)).map(x => {
-      const exps = (x.exp_batches || []).map(b => b.exp).filter(Boolean).sort();
-      return { it: x, mdate: exps.length ? isoPlus(exps[0], 1) : "", exps };
-    });
-    rows.sort((a, b) => (a.mdate < b.mdate ? 1 : -1));   // 최신 만료일 위로
-    $("msHead").innerHTML = th([{ h: "만료일" }, { h: "자재명", a: "left" }, { h: "구분" }, { h: "만료수량", a: "right" }, { h: "유통기한" }, { h: "처리" }]);
-    $("msBody").innerHTML = rows.length ? rows.map(({ it, mdate, exps }) => {
+  // ── 재고 목록 — 전체 자재 현재 상태 표 ──
+  if (MATSTAT.filter === "stock") {
+    $("msHead").innerHTML = ["자재명", "구분", "현재고", "유통기한", "안전재고", "최근입고", "처리"].map((h, i) =>
+      `<th style="padding:6px 8px; border-bottom:2px solid var(--line); text-align:${i === 0 || i === 3 ? "left" : (i === 2 || i === 4 ? "right" : "center")}; font-size:12px; color:var(--muted);">${h}</th>`).join("");
+    let list = q ? items.filter(x => (x.name || "").toLowerCase().includes(q)) : items.slice();
+    $("msBody").innerHTML = list.length ? list.map(it => {
       const u = esc(it.unit || "");
-      return `<tr style="border-bottom:1px solid var(--line-soft);">
-        <td style="padding:6px 8px; text-align:center; font-weight:700; color:#c0392b;">${esc(mdate || "—")}</td>
-        <td style="padding:6px 8px;"><button class="uselink" data-mshist="${it.id}" style="font-weight:600; text-align:left;">${esc(it.name)}</button></td>
-        <td style="padding:6px 8px; text-align:center;">${kchip(it)}</td>
-        <td style="padding:6px 8px; text-align:right; font-weight:700; color:#c0392b;">${NF(it.expired)}${u}</td>
-        <td style="padding:6px 8px; text-align:center; color:var(--muted); font-size:11.5px;">${esc(exps.join(", ") || "—")} 지남</td>
-        <td style="padding:6px 8px; text-align:center;">${canStock ? `<button class="btn ghost sm" data-msdispose="${it.id}" style="color:#c0392b; border-color:#c0392b; padding:1px 8px;">확정 폐기</button>` : "—"}</td></tr>`;
-    }).join("") : `<tr><td colspan="6" class="auto" style="padding:16px; text-align:center;">아직 폐기 안 된 만료 재고가 없습니다 (유통기한 지난 재고는 자동 폐기 → 폐기 내역)</td></tr>`;
-    return;
-  }
-  // ── 임박: 앞으로 만료 예정(현재 보유) — 유통기한 열, 최신(늦은) 기한 위로 ──
-  if (MATSTAT.filter === "soon") {
-    let rows = nf(d.items.filter(x => x.soon));
-    rows.sort((a, b) => (a.exp < b.exp ? 1 : -1));
-    $("msHead").innerHTML = th([{ h: "유통기한" }, { h: "자재명", a: "left" }, { h: "구분" }, { h: "현재고", a: "right" }, { h: "D-day" }, { h: "처리" }]);
-    $("msBody").innerHTML = rows.length ? rows.map(it => {
-      const u = esc(it.unit || "");
-      return `<tr style="border-bottom:1px solid var(--line-soft);">
-        <td style="padding:6px 8px; text-align:center; font-weight:700; color:#B45309;">${esc(it.exp || "—")}</td>
-        <td style="padding:6px 8px;"><button class="uselink" data-mshist="${it.id}" style="font-weight:600; text-align:left;">${esc(it.name)}</button></td>
-        <td style="padding:6px 8px; text-align:center;">${kchip(it)}</td>
-        <td style="padding:6px 8px; text-align:right; font-weight:700;">${NF(it.onhand)}${u}</td>
-        <td style="padding:6px 8px; text-align:center; color:#B45309; font-weight:600;">D-${it.soon.days}</td>
-        <td style="padding:6px 8px; text-align:center;"><span class="auto">—</span></td></tr>`;
-    }).join("") : `<tr><td colspan="6" class="auto" style="padding:16px; text-align:center;">임박(${d.soon_days || 7}일 내 만료 예정) 자재가 없습니다</td></tr>`;
-    return;
-  }
-  // ── 부족: 안전재고 미달 — 부족량 큰 순 ──
-  if (MATSTAT.filter === "low") {
-    let rows = nf(d.items.filter(x => x.low));
-    rows.sort((a, b) => (b.shortage || 0) - (a.shortage || 0));
-    $("msHead").innerHTML = th([{ h: "자재명", a: "left" }, { h: "구분" }, { h: "현재고", a: "right" }, { h: "안전재고", a: "right" }, { h: "부족량", a: "right" }, { h: "최근입고" }, { h: "처리" }]);
-    $("msBody").innerHTML = rows.length ? rows.map(it => {
-      const u = esc(it.unit || "");
+      let exp = '<span class="auto">—</span>';
+      if (it.expired > 0) exp = `<span style="color:#c0392b; font-weight:700;">⚠ 만료 ${NF(it.expired)}${u}</span>`;
+      else if (it.exp) { const dd = it.exp_days; exp = (dd != null && dd <= (d.soon_days || 7)) ? `<span style="color:#B45309; font-weight:600;">⏰ ${esc(it.exp)}</span> <span class="auto" style="font-size:11px;">D-${dd}</span>` : `${esc(it.exp)}${dd != null ? ` <span class="auto" style="font-size:11px;">D-${dd}</span>` : ""}`; }
+      let saf = it.safety > 0 ? `${NF(it.safety)}${u}` : '<span class="auto">—</span>';
+      if (it.low) saf = `<span style="color:#B45309; font-weight:700;">${NF(it.safety)}${u}</span><div class="auto" style="font-size:11px; color:#B45309;">부족 ${NF(it.shortage)}${u}</div>`;
       return `<tr style="border-bottom:1px solid var(--line-soft);">
         <td style="padding:6px 8px;"><button class="uselink" data-mshist="${it.id}" style="font-weight:600; text-align:left;">${esc(it.name)}</button></td>
-        <td style="padding:6px 8px; text-align:center;">${kchip(it)}</td>
-        <td style="padding:6px 8px; text-align:right; font-weight:700; color:#B45309;">${NF(it.onhand)}${u}</td>
-        <td style="padding:6px 8px; text-align:right;">${NF(it.safety)}${u}</td>
-        <td style="padding:6px 8px; text-align:right; font-weight:700; color:#B45309;">${NF(it.shortage)}${u}</td>
-        <td style="padding:6px 8px; text-align:center; color:var(--muted); font-size:11.5px;">${esc(it.last_in || "—")}</td>
-        <td style="padding:6px 8px; text-align:center;">${canStock && !it.ordered ? `<button class="btn ghost sm" data-msorder="${it.id}" style="padding:1px 8px;">발주</button>` : (it.ordered ? '<span class="auto">발주됨</span>' : "—")}</td></tr>`;
-    }).join("") : `<tr><td colspan="7" class="auto" style="padding:16px; text-align:center;">부족 자재가 없습니다</td></tr>`;
+        <td style="padding:6px 8px; text-align:center;"><span class="chip cat" style="font-size:10.5px;">${msKind(it)}</span></td>
+        <td style="padding:6px 8px; text-align:right; font-weight:700; ${it.onhand < 0 ? "color:var(--crit);" : ""}">${NF(it.onhand)}${u}</td>
+        <td style="padding:6px 8px;">${exp}</td>
+        <td style="padding:6px 8px; text-align:right;">${saf}</td>
+        <td style="padding:6px 8px; text-align:center; font-size:11.5px; color:var(--muted);">${esc(it.last_in || "—")}</td>
+        <td style="padding:6px 8px; text-align:center;">${canStock && it.low && !it.ordered ? `<button class="btn ghost sm" data-msorder="${it.id}" style="padding:1px 8px;">발주</button>` : "—"}</td></tr>`;
+    }).join("") : `<tr><td colspan="7" class="auto" style="padding:16px; text-align:center;">해당하는 자재가 없습니다</td></tr>`;
     return;
   }
-  // ── 전체: 전체 자재 현황 표 ──
-  $("msHead").innerHTML = ["자재명", "구분", "현재고", "유통기한", "안전재고", "최근입고", "처리"].map((h, i) =>
-    `<th style="padding:6px 8px; border-bottom:2px solid var(--line); text-align:${i === 0 || i === 3 ? "left" : (i === 2 || i === 4 ? "right" : "center")}; font-size:12px; color:var(--muted);">${h}</th>`).join("");
-  let items = d.items.slice();
-  if (MATSTAT.q) items = items.filter(x => x.name.toLowerCase().includes(MATSTAT.q.toLowerCase()));
-  const rowHtml = it => {
-    const u = esc(it.unit || "");
-    // 유통기한은 만료/임박이 아니어도 항상 현재 소비기한(날짜+D-day)을 표시 — 기준일 이동 없이 지났는지 바로 확인
-    let exp = '<span class="auto" title="입고 유통기한·보관일수(소비기한)가 없는 자재">—</span>';
-    if (it.expired > 0) {
-      const exps = (it.exp_batches || []).map(b => b.exp).filter(Boolean);
-      exp = `<span style="color:#c0392b; font-weight:700;">⚠ 만료 ${NF(it.expired)}${u}</span>${exps.length ? ` <span class="auto" style="font-size:11px;">${esc(exps.join(", "))} 지남</span>` : ""}`;
-    } else if (it.exp) {
-      const dd = it.exp_days;
-      if (dd != null && dd <= (d.soon_days || 7)) exp = `<span style="color:#B45309; font-weight:600;">⏰ ${esc(it.exp)}</span> <span class="auto" style="font-size:11px;">D-${dd}</span>`;
-      else exp = `<span>${esc(it.exp)}</span>${dd != null ? ` <span class="auto" style="font-size:11px;">D-${dd}</span>` : ""}`;
-    }
-    let saf = it.safety > 0 ? `${NF(it.safety)}${u}` : '<span class="auto">—</span>';
-    if (it.low) saf = `<span style="color:#B45309; font-weight:700;">${NF(it.safety)}${u}</span><div class="auto" style="font-size:11px; color:#B45309;">부족 ${NF(it.shortage)}${u}${it.ordered ? " · 발주됨" : ""}</div>`;
-    let act = "";
-    if (canStock && it.expired > 0) act += `<button class="btn ghost sm" data-msdispose="${it.id}" style="color:#c0392b; border-color:#c0392b; padding:1px 8px;">확정 폐기</button> `;
-    if (canStock && it.low && !it.ordered) act += `<button class="btn ghost sm" data-msorder="${it.id}" style="padding:1px 8px;">발주</button>`;
-    return `<tr style="border-bottom:1px solid var(--line-soft);">
-      <td style="padding:6px 8px;"><button class="uselink" data-mshist="${it.id}" style="font-weight:600; text-align:left;" title="단가·재고 이력 보기">${esc(it.name)}</button></td>
-      <td style="padding:6px 8px; text-align:center;"><span class="chip cat" style="font-size:10.5px;">${msKind(it)}</span></td>
-      <td style="padding:6px 8px; text-align:right; font-weight:700; ${it.onhand < 0 ? "color:var(--crit);" : ""}">${NF(it.onhand)}${u}</td>
-      <td style="padding:6px 8px;">${exp}</td>
-      <td style="padding:6px 8px; text-align:right;">${saf}</td>
-      <td style="padding:6px 8px; text-align:center; font-size:11.5px; color:var(--muted);">${esc(it.last_in || "—")}</td>
-      <td style="padding:6px 8px; white-space:nowrap;">${act || '<span class="auto">—</span>'}</td></tr>`;
-  };
-  $("msBody").innerHTML = items.length ? items.map(rowHtml).join("")
-    : `<tr><td colspan="7" class="auto" style="padding:16px; text-align:center;">해당하는 자재가 없습니다</td></tr>`;
+  // ── 이벤트 로그 (전체 기간) — 만료·임박·부족을 발생일과 함께 한 줄씩, 최신 위로 ──
+  const events = [];
+  disposals.forEach(x => events.push({ date: x.date, type: "만료", material_id: x.material_id, name: x.name, unit: x.unit, kind: x.kind,
+    content: `${NF(x.qty)}${x.unit || ""} 폐기${x.expiry ? ` (유통기한 ${x.expiry})` : ""}`, color: "#c0392b",
+    act: canStock ? `<button class="btn ghost sm" data-mdundo="${x.id}" style="padding:1px 8px;">취소</button>` : "" }));
+  items.filter(x => x.expired > 0).forEach(x => {
+    const exps = (x.exp_batches || []).map(b => b.exp).filter(Boolean).sort();
+    events.push({ date: exps.length ? isoPlus(exps[0], 1) : "", type: "만료", material_id: x.id, name: x.name, unit: x.unit, kind: x.kind,
+      content: `${NF(x.expired)}${x.unit || ""} 만료 · 미처리${exps.length ? ` (유통기한 ${exps.join(", ")})` : ""}`, color: "#c0392b",
+      act: canStock ? `<button class="btn ghost sm" data-msdispose="${x.id}" style="color:#c0392b; border-color:#c0392b; padding:1px 8px;">확정 폐기</button>` : "" });
+  });
+  items.filter(x => x.soon).forEach(x => events.push({ date: isoPlus(x.exp, -(d.soon_days || 7)) || x.exp, type: "임박", material_id: x.id, name: x.name, unit: x.unit, kind: x.kind,
+    content: `유통기한 ${esc(x.exp)} (D-${x.soon.days}) · 현재고 ${NF(x.onhand)}${x.unit || ""}`, color: "#B45309", act: "" }));
+  lowEvents.forEach(x => events.push({ date: x.date, type: "부족", material_id: x.material_id, name: x.name, unit: x.unit, kind: x.kind,
+    content: `${NF(x.shortage)}${x.unit || ""} 부족 (그날 재고 ${NF(x.onhand)}${x.unit || ""} / 안전 ${NF(x.safety)}${x.unit || ""})`, color: "#B45309",
+    act: canStock ? `<button class="btn ghost sm" data-msorder="${x.material_id}" style="padding:1px 8px;">발주</button>` : "" }));
+  let evs = events;
+  if (MATSTAT.filter === "expired") evs = events.filter(e => e.type === "만료");
+  else if (MATSTAT.filter === "soon") evs = events.filter(e => e.type === "임박");
+  else if (MATSTAT.filter === "low") evs = events.filter(e => e.type === "부족");
+  if (q) evs = evs.filter(e => (e.name || "").toLowerCase().includes(q));
+  evs.sort((a, b) => (a.date < b.date ? 1 : (a.date > b.date ? -1 : 0)));   // 최신 발생일 위로
+  const stChip = t => t === "만료" ? '<span class="chip" style="background:#fdecea; color:#c0392b; font-size:10px;">만료</span>'
+    : '<span class="chip" style="background:#fdf0e2; color:#B45309; font-size:10px;">' + t + '</span>';
+  $("msHead").innerHTML = ["발생일", "자재명", "구분", "상태", "내용", "처리"].map((h, i) =>
+    `<th style="padding:6px 8px; border-bottom:2px solid var(--line); text-align:${i === 1 || i === 4 ? "left" : "center"}; font-size:12px; color:var(--muted);">${h}</th>`).join("");
+  $("msBody").innerHTML = evs.length ? evs.map(e => `<tr style="border-bottom:1px solid var(--line-soft);">
+    <td style="padding:6px 8px; text-align:center; font-weight:700;">${esc(e.date || "—")}</td>
+    <td style="padding:6px 8px;"><button class="uselink" data-mshist="${e.material_id}" style="font-weight:600; text-align:left;">${esc(e.name)}</button></td>
+    <td style="padding:6px 8px; text-align:center;"><span class="chip cat" style="font-size:10.5px;">${kindTxt(e.kind)}</span></td>
+    <td style="padding:6px 8px; text-align:center;">${stChip(e.type)}</td>
+    <td style="padding:6px 8px; text-align:left; font-size:11.5px; color:${e.color};">${e.content}</td>
+    <td style="padding:6px 8px; text-align:center;">${e.act || '<span class="auto">—</span>'}</td></tr>`).join("")
+    : `<tr><td colspan="6" class="auto" style="padding:16px; text-align:center;">해당 이벤트가 없습니다</td></tr>`;
 }
 function msDispose(mid) {
   const it = (MATSTAT.data.items || []).find(x => x.id === mid);

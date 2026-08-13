@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.79.5"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.80.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -2876,8 +2876,23 @@ def matstatus(request: Request, date: str = ""):
             ORDER BY d.date DESC, d.id DESC LIMIT 300"""))
         for r in disposals:
             r["auto"] = (r.get("note") == "auto")
+        # 부족 '시작' 이벤트 — 재고가 안전재고 아래로 떨어진 날(전체 기간). 회복 후 다시 떨어지면 또 1건.
+        low_events = []
+        for m in con.execute("""SELECT id, name, unit, kind, COALESCE(safety_stock,0) sf
+                FROM material WHERE kind IN ('raw','sub') AND COALESCE(status,'') NOT IN ('단종','중지')
+                  AND COALESCE(safety_stock,0)>0"""):
+            sf, prev_below = float(m["sf"]), None
+            for r in con.execute("SELECT date, real_qty FROM material_daily WHERE material_id=? ORDER BY date", (m["id"],)):
+                rq = float(r["real_qty"] or 0)
+                below = rq < sf - 1e-6
+                if below and prev_below is not True:   # 부족으로 '진입'한 날
+                    low_events.append({"date": r["date"], "material_id": m["id"], "name": m["name"],
+                                       "unit": m["unit"], "kind": m["kind"], "onhand": round(rq, 3),
+                                       "safety": sf, "shortage": round(sf - rq, 3)})
+                prev_below = below
+        low_events.sort(key=lambda x: x["date"], reverse=True)
         return {"date": date, "items": items, "summary": summ, "soon_days": MATSTATUS_SOON_DAYS,
-                "disposals": disposals}
+                "disposals": disposals, "low_events": low_events}
     finally:
         con.close()
 
