@@ -819,7 +819,13 @@ async function loadMemos(page) {
           <span class="num" style="flex:none; min-width:112px; font-weight:700; font-size:12.5px;">${esc(m.date)} <span class="auto" style="font-weight:400;">(${dow(m.date)})</span></span>
           <span style="flex:1; white-space:pre-wrap; word-break:break-word; font-size:13px; line-height:1.55;">${(() => {
             const segs = (m.memo || "").split(";").map(s => s.trim()).filter(Boolean);
-            return segs.length > 1 ? segs.map(s => `<div style="padding:1px 0;">• ${esc(s)}</div>`).join("") : esc(m.memo);
+            const memoHtml = m.memo ? (segs.length > 1 ? segs.map(s => `<div style="padding:1px 0;">• ${esc(s)}</div>`).join("") : esc(m.memo)) : "";
+            const chk = (m.checks || []);
+            const chkHtml = chk.length ? `<div style="margin-top:${m.memo ? "6px" : "0"};">
+              <span class="auto" style="font-size:11px; font-weight:700;">✅ 체크사항</span>
+              ${chk.map(c => `<div style="font-size:12.5px; padding:1px 0; ${c.done ? "color:var(--muted);" : ""}">${c.done ? "✔" : "☐"} <span style="${c.done ? "text-decoration:line-through;" : ""}">${esc(c.text)}</span> <span class="auto" style="font-size:11px;">${c.done && c.done_date ? "(" + esc(c.done_date.slice(5)) + " 완료)" : "(미완료)"}</span></div>`).join("")}
+            </div>` : "";
+            return memoHtml + chkHtml || '<span class="auto">—</span>';
           })()}</span>
         </div>`).join("")
     : '<div class="auto" style="padding:20px; text-align:center;">특이사항으로 적은 메모가 없습니다 — 일일 입력의 특이사항 칸에 적으면 여기 모입니다</div>';

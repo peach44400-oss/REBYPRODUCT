@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.81.0"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.81.1"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -6052,16 +6052,27 @@ def fin_ledger(request: Request, date: str = ""):
 # ── 특이사항(일일 메모) 목록 ─────────────────────────────
 @app.get("/api/memos")
 def memos_list(request: Request, page: int = 1, per: int = 100):
-    """일일 입력에 적은 특이사항(메모)을 날짜별로 모아 최신순으로 — 페이지네이션."""
+    """일일 입력의 특이사항(메모) + 체크사항을 날짜별로 모아 최신순으로 — 페이지네이션.
+    체크사항은 등록한 날 기준으로 묶고, 완료 여부·완료일을 함께 준다."""
     con = connect()
     try:
         per = max(1, min(500, int(per or 100)))
         page = max(1, int(page or 1))
-        total = con.execute(
-            "SELECT COUNT(*) c FROM day_record WHERE TRIM(COALESCE(memo,''))!=''").fetchone()["c"]
-        items = rows(con.execute(
-            "SELECT date, memo FROM day_record WHERE TRIM(COALESCE(memo,''))!='' "
-            "ORDER BY date DESC LIMIT ? OFFSET ?", (per, (page - 1) * per)))
+        union = ("SELECT date FROM day_record WHERE TRIM(COALESCE(memo,''))!='' "
+                 "UNION SELECT created_date date FROM daily_check")
+        total = con.execute(f"SELECT COUNT(*) c FROM ({union})").fetchone()["c"]
+        drows = rows(con.execute(f"SELECT date FROM ({union}) ORDER BY date DESC LIMIT ? OFFSET ?",
+                                 (per, (page - 1) * per)))
+        dates = [r["date"] for r in drows]
+        memo_map, checks_map = {}, {}
+        if dates:
+            ph = ",".join("?" * len(dates))
+            for r in con.execute(f"SELECT date, memo FROM day_record WHERE date IN ({ph}) AND TRIM(COALESCE(memo,''))!=''", dates):
+                memo_map[r["date"]] = r["memo"]
+            for r in con.execute(f"SELECT id, text, created_date, done, done_date FROM daily_check "
+                                 f"WHERE created_date IN ({ph}) ORDER BY done, id", dates):
+                checks_map.setdefault(r["created_date"], []).append(dict(r))
+        items = [{"date": d, "memo": memo_map.get(d, ""), "checks": checks_map.get(d, [])} for d in dates]
         return {"items": items, "total": total, "page": page, "per": per}
     finally:
         con.close()
