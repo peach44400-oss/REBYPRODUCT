@@ -9977,7 +9977,11 @@ function buildScheduleDoc(d, week) {
   const LB = `border:1px solid #333; padding:8px 4px; background:#f2f1ec; font-weight:800; text-align:center; font-size:${labelFs}px; word-break:keep-all; line-height:1.15; color:#111;`;
   const labelW = labelFs * 4 + 16;   // '소비기한'(4자)이 배율과 무관하게 항상 들어가도록 라벨 폭 확보
   const colgroup = `<colgroup><col style="width:${labelW}px;">${groups.map(() => "<col>").join("")}</colgroup>`;
-  const ribbon = (d.shipDates || []).map(x => `<span style="display:inline-block; min-width:84px; text-align:center; border:1px solid #999; border-radius:5px; padding:2px 9px; margin:2px; font-size:${S(13)}px;">${_schedMD(x)}</span>`).join("");
+  // 주간 출고일 리본: 각 날짜에 출고되는 물품(항목) 개수 — 제품군 출고일 기준, 없으면 0개
+  const _shipCnt = iso => (groups || []).reduce((s, g) => s + (g.shipDate === iso ? (g.items || []).length : 0), 0);
+  const ribbon = (d.shipDates || []).map(x => { const c = _shipCnt(x);
+    return `<span style="display:inline-block; min-width:84px; text-align:center; border:1px solid #999; border-radius:5px; padding:2px 9px; margin:2px; font-size:${S(13)}px; line-height:1.25;">${_schedMD(x)}<br><b style="color:${c ? "#0a7a2f" : "#bbb"};">${c}개</b></span>`;
+  }).join("");
   const nameRow = groups.map(g => `<th style="${TD} text-align:center; font-weight:800; font-size:${nameFs}px; background:#e7e4dd;">${esc(g.name || "—")}</th>`).join("");
   const shipRow = groups.map(g => `<td style="${TD} text-align:center; font-weight:800; font-size:${dateSize}px; color:${ec("date", "inherit")};">${g.shipDate ? _schedMD(g.shipDate) : "—"}</td>`).join("");
   // 발주량: 항목마다 [제품명 / 수량(크게) / 개입·박스 / 비고]를 세로로 쌓고 항목 사이 점선으로 구분
