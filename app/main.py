@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.82.12"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.82.13"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -2960,6 +2960,34 @@ def mat_history(mid: int, limit: int = 40):
                 "start_date": start_date,
                 "last_in": dict(last_in) if last_in else None,
                 "last_use": dict(last_use) if last_use else None}
+    finally:
+        con.close()
+
+
+@app.get("/api/partnerhistory/{pid}")
+def partner_history(pid: int, limit: int = 400):
+    """거래처(판매처)로 나간 출고 이력 — 제품별 합계 + 날짜별 내역."""
+    con = connect()
+    try:
+        pa = con.execute("SELECT name, type FROM partner WHERE id=?", (pid,)).fetchone()
+        if not pa:
+            raise HTTPException(404, "거래처 없음")
+        detail = rows(con.execute("""
+            SELECT s.date, s.qty, COALESCE(p.name, '(삭제된 제품)') product,
+                   COALESCE(s.prod_date,'') made, COALESCE(s.expiry,'') expiry
+            FROM shipment s LEFT JOIN product p ON p.id=s.product_id
+            WHERE s.partner_id=? AND s.qty>0
+            ORDER BY s.date DESC, product LIMIT ?""", (pid, limit)))
+        by_product = rows(con.execute("""
+            SELECT COALESCE(p.name,'(삭제된 제품)') product, SUM(s.qty) total,
+                   COUNT(*) cnt, MAX(s.date) last
+            FROM shipment s LEFT JOIN product p ON p.id=s.product_id
+            WHERE s.partner_id=? AND s.qty>0 GROUP BY s.product_id ORDER BY total DESC""", (pid,)))
+        tot = con.execute("""SELECT COALESCE(SUM(qty),0) t, MIN(date) f, MAX(date) l, COUNT(*) c
+            FROM shipment WHERE partner_id=? AND qty>0""", (pid,)).fetchone()
+        return {"name": pa["name"], "type": pa["type"] or "", "rows": detail,
+                "by_product": by_product, "total": tot["t"], "count": tot["c"],
+                "first": tot["f"], "last": tot["l"]}
     finally:
         con.close()
 

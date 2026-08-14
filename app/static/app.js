@@ -3699,9 +3699,9 @@ const MCOLS = {
       `<button class="btn ghost sm" data-semirecipe="${r.id}">🧪 레시피</button>`, chip(r.status)],
     hint: "반제품명 클릭 = 레시피·생산·소비 이력 팝업 · [🧪 레시피]로 원재료 구성(1배합당)과 1배합당 생산량을 등록 · 빵 배합비엔 이 반제품을 자재처럼 넣으면 됩니다 (원재료 부족은 발주, 반제품 부족은 생산)" },
   partner: { label: "거래처", cols: ["거래처명", "유형", "사업자번호", "대표자", "전화", "모바일", "이메일", "담당자", "상태"],
-    row: r => [B(r.name), `<span class="chip cat">${esc(r.type)}</span>`, esc(r.biz_no || "—"), esc(r.ceo || "—"),
+    row: r => [`<button class="uselink" data-partnerhist="${r.id}">${esc(r.name)}</button>`, `<span class="chip cat">${esc(r.type)}</span>`, esc(r.biz_no || "—"), esc(r.ceo || "—"),
       esc(r.phone || "—"), esc(r.mobile || "—"), esc(r.email || "—"), esc(r.contact || "—"), chip(r.status)],
-    hint: "중지 상태 거래처는 일일 입력 드롭다운에서 숨겨집니다 · [ERP 가져오기]로 거래처등록(ESA001M) 엑셀을 그대로 올릴 수 있습니다" },
+    hint: "거래처명 클릭 = 그 거래처로 나간 출고 이력(제품별 합계·날짜별 내역) · 중지 상태는 일일 입력 드롭다운에서 숨겨짐 · [ERP 가져오기]로 거래처등록(ESA001M) 엑셀 업로드" },
   staff: { label: "인원", cols: ["이름", "구분", "직책", "담당 공정", "시급(원)", "입사일", "상태"],
     row: r => [B(r.name), esc(r.kind), esc(r.position || "—"), esc(r.process || "—"), r.wage == null ? "—" : NF(r.wage), esc(r.join_date || "—"), chip(r.status)],
     hint: "일일 입력의 투입 인원 선택 목록 · 노무비 계산 기준" },
@@ -4811,6 +4811,8 @@ $("mBody").addEventListener("click", e => {
   if (mh) { openMatHistory(+mh.dataset.mhist); return; }
   const ph = e.target.closest("[data-phist]");
   if (ph) { openProdHistory(+ph.dataset.phist); return; }
+  const pah = e.target.closest("[data-partnerhist]");
+  if (pah) { openPartnerHistory(+pah.dataset.partnerhist); return; }
   // 라인 행의 [＋ 공정] — 소속이 미리 선택된 등록 폼 (공정 이름만 입력하면 됨)
   const ap = e.target.closest("[data-addproc]");
   if (ap) {
@@ -7472,7 +7474,7 @@ window.closeAnaP = () => $("anaOverlay").classList.remove("on");
 /* 제품 이력 팝업 (기준정보 제품명 클릭): 생산일자별 현재고 LOT + 최근 생산/출고 */
 async function openProdHistory(pid) {
   const _m = document.querySelector("#anaOverlay .modal");
-  if (_m) _m.style.width = "780px";   // 기본 폭 (자재 이력이 넓혔던 것 되돌림)
+  if (_m) _m.style.width = "min(1180px, 96vw)";   // 2단(좌 최근 생산·출고 · 우 LOT)
   const d = await api("/api/prodhistory/" + pid);
   $("anaPTitle").textContent = d.name;
   $("anaPHint").textContent =
@@ -7514,23 +7516,27 @@ async function openProdHistory(pid) {
       <span class="auto" style="font-size:11px; max-width:150px; line-height:1.5;">png·jpg·webp·gif (8MB↓)<br>Image 폴더에 제품명으로 저장</span>
     </div>` : ""}
   </div>`;
-  $("anaPBody").innerHTML = imgBlock + `
+  const recentSec = `
+    <h3 style="font-size:12.5px; margin:2px 0 6px;">🏭 최근 생산·출고 (${d.recent.length}일)</h3>
+    <div class="tbl-wrap"><table style="width:100%;">
+      <thead><tr><th>날짜</th><th class="r">생산</th><th class="r">출고</th><th>출고처</th></tr></thead>
+      <tbody class="num">${d.recent.map(r => `<tr ${r.prod > 0 ? 'style="background:var(--ok-soft)"' : ""}>
+        <td style="white-space:nowrap;">${r.date}</td>
+        <td class="r" ${r.prod > 0 ? 'style="color:var(--ok); font-weight:700"' : ""}>${r.prod ? "+" + NF(r.prod) : "·"}</td>
+        <td class="r">${r.ship ? NF(r.ship) : "·"}</td>
+        <td class="auto" style="font-size:11.5px; white-space:normal; word-break:keep-all;">${r.ship ? esc(r.partners || "거래처 미상") : ""}</td></tr>`).join("")
+        || '<tr><td colspan="4" class="auto">기록 없음</td></tr>'}</tbody></table></div>`;
+  const lotSec = `
     <h3 style="font-size:12.5px; margin:2px 0 6px;">📦 생산일자별 현재고 (LOT)</h3>
-    <div class="tbl-wrap"><table>
+    <div class="tbl-wrap"><table style="width:100%;">
       <thead><tr><th>생산일자</th><th class="r">수량</th><th class="r">보관일수</th><th>소비기한</th></tr></thead>
       <tbody class="num">${lotRows}${totalRow}</tbody></table></div>
     <p class="hint" style="margin:4px 0 12px;">${d.lot_base
       ? `수불부 LOT 스냅샷(${d.lot_base}) 기준 + 이후 생산·출고 반영 추정`
-      : "생산·출고 기록 기반 추정"}${canLot ? " · 소비기한은 LOT(생산일)마다 개별 지정 — 비우면 " : " · "}${d.shelf_days ? `소비일 ${d.shelf_days}일 자동 계산` : "소비일 미등록 (제품 수정에서 입력하면 자동 계산)"}</p>
-    <h3 style="font-size:12.5px; margin:2px 0 6px;">🏭 최근 생산·출고 (${d.recent.length}일)</h3>
-    <div class="tbl-wrap"><table>
-      <thead><tr><th>날짜</th><th class="r">생산</th><th class="r">출고</th><th>출고처</th></tr></thead>
-      <tbody class="num">${d.recent.map(r => `<tr ${r.prod > 0 ? 'style="background:var(--ok-soft)"' : ""}>
-        <td>${r.date}</td>
-        <td class="r" ${r.prod > 0 ? 'style="color:var(--ok); font-weight:700"' : ""}>${r.prod ? "+" + NF(r.prod) : "·"}</td>
-        <td class="r">${r.ship ? NF(r.ship) : "·"}</td>
-        <td class="auto" style="font-size:11.5px">${r.ship ? esc(r.partners || "거래처 미상") : ""}</td></tr>`).join("")
-        || '<tr><td colspan="4" class="auto">기록 없음</td></tr>'}</tbody></table></div>`;
+      : "생산·출고 기록 기반 추정"}${canLot ? " · 소비기한은 LOT(생산일)마다 개별 지정 — 비우면 " : " · "}${d.shelf_days ? `소비일 ${d.shelf_days}일 자동 계산` : "소비일 미등록 (제품 수정에서 입력하면 자동 계산)"}</p>`;
+  $("anaPBody").innerHTML = `<div style="display:flex; gap:16px; align-items:stretch; flex-wrap:wrap; max-height:76vh;">
+    <div style="flex:0 0 430px; min-width:300px; overflow-y:auto; overflow-x:hidden;">${imgBlock}${recentSec}</div>
+    <div style="flex:1 1 auto; min-width:0; overflow:auto;">${lotSec}</div></div>`;
   // 이미지 버튼 연결
   prodImgPid = pid;
   const bImg = $("prodImgBtn");
@@ -7544,6 +7550,41 @@ async function openProdHistory(pid) {
     openProdHistory(pid);
     if (mTab === "product" && document.querySelector("#scr-items.on")) renderMasters();
   };
+  $("anaOverlay").classList.add("on");
+}
+/* 거래처(판매처)명 클릭 → 그 거래처로 나간 출고 이력 팝업 (제품별 합계 + 날짜별 내역) */
+async function openPartnerHistory(pid) {
+  const d = await api("/api/partnerhistory/" + pid);
+  const _m = document.querySelector("#anaOverlay .modal");
+  if (_m) _m.style.width = "min(1080px, 96vw)";
+  $("anaPTitle").textContent = d.name;
+  $("anaPHint").textContent = `${d.type || "거래처"} · 총 출고 ${NF(Math.round(d.total))} · 출고 ${d.count}건`
+    + (d.first ? ` · 기간 ${d.first} ~ ${d.last}` : " · 출고 기록 없음");
+  const byProd = (d.by_product || []).map(p => `<tr>
+      <td style="text-align:left; white-space:normal; word-break:keep-all;">${esc(p.product)}</td>
+      <td class="r" style="font-weight:700;">${NF(Math.round(p.total))}</td>
+      <td class="r auto">${p.cnt}건</td>
+      <td class="auto" style="white-space:nowrap;">${esc(p.last || "")}</td></tr>`).join("")
+    || '<tr><td colspan="4" class="auto">출고 기록 없음</td></tr>';
+  const detail = (d.rows || []).map(r => `<tr>
+      <td style="white-space:nowrap;">${esc(r.date)}</td>
+      <td style="text-align:left; white-space:normal; word-break:keep-all;">${esc(r.product)}</td>
+      <td class="r" style="font-weight:700;">${NF(Math.round(r.qty))}</td>
+      <td class="auto" style="white-space:nowrap;">${r.made ? esc(r.made) : ""}${r.expiry ? ` <span style="color:#888;">→${esc(r.expiry)}</span>` : ""}</td></tr>`).join("")
+    || '<tr><td colspan="4" class="auto">출고 기록 없음</td></tr>';
+  $("anaPBody").innerHTML = `<div style="display:flex; gap:16px; align-items:stretch; flex-wrap:wrap; max-height:76vh;">
+    <div style="flex:0 0 400px; min-width:280px; overflow-y:auto; overflow-x:hidden;">
+      <h3 style="font-size:12.5px; margin:2px 0 6px;">📦 제품별 출고 합계</h3>
+      <div class="tbl-wrap"><table style="width:100%;">
+        <thead><tr><th style="text-align:left;">제품</th><th class="r">총 출고</th><th class="r">건수</th><th>최근</th></tr></thead>
+        <tbody class="num">${byProd}</tbody></table></div>
+    </div>
+    <div style="flex:1 1 auto; min-width:0; overflow:auto;">
+      <h3 style="font-size:12.5px; margin:2px 0 6px;">📋 날짜별 출고 내역 (${(d.rows || []).length}건)</h3>
+      <div class="tbl-wrap"><table style="width:100%;">
+        <thead><tr><th>날짜</th><th style="text-align:left;">제품</th><th class="r">수량</th><th>생산일 → 소비기한</th></tr></thead>
+        <tbody class="num">${detail}</tbody></table></div>
+    </div></div>`;
   $("anaOverlay").classList.add("on");
 }
 // 파일 선택 → base64로 업로드 (제품 이미지)
