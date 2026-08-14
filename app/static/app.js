@@ -10050,7 +10050,8 @@ function _fitSchedPage(doc) {
     doc.querySelectorAll(".sched-main").forEach(t => t.style.height = "100%");
     doc.querySelectorAll(".sched-main tr:not(.order-row)").forEach(tr => tr.style.height = "0");
   } else {
-    doc.style.transformOrigin = "top left";
+    // 한 장보다 길면 세로에 맞춰 축소 — 가로 가운데 정렬(좌우 여백 균등)
+    doc.style.transformOrigin = "top center";
     doc.style.transform = `scale(${(SCHED_A4.h / natural).toFixed(4)})`;
   }
 }
@@ -10080,17 +10081,18 @@ function schedPrint(dataArg, weekArg) {
   const data = (dataArg && dataArg.groups) ? dataArg : SCHED.data;
   const week = (typeof weekArg === "string" && weekArg) ? weekArg : SCHED.week;
   if (!data) return;
-  // 오프스크린에서 A4 1장 박스에 맞춘 뒤 그대로 인쇄 영역으로 옮긴다(미리보기와 동일 모양·1장).
+  // 미리보기와 '완전히 같은' A4 용지(1122×793, 여백 30px=8mm 포함)를 그대로 인쇄한다.
+  // @page margin:0 이라 용지 전체가 한 페이지에 1:1 매핑 → 좌우/상하 꽉 참, 미리보기=인쇄.
   const box = document.createElement("div");
-  box.style.cssText = `position:fixed; left:-10000px; top:0; width:${SCHED_A4.w}px; height:${SCHED_A4.h}px; overflow:hidden; background:#fff; box-sizing:border-box;`;
-  box.innerHTML = buildScheduleDoc(data, week);
+  box.style.cssText = `position:fixed; left:-10000px; top:0;`;
+  box.innerHTML = _schedSheetHtml(data, week);
   document.body.appendChild(box);
   _fitSchedPage(box.querySelector(".sched-doc"));
   box.style.left = ""; box.style.top = ""; box.style.position = "";   // 인쇄 영역에선 일반 배치
   $("poPrintArea").innerHTML = "";
   $("poPrintArea").appendChild(box);
   const st = document.createElement("style"); st.id = "schedPageStyle";
-  st.textContent = `@page{size:A4 landscape; margin:8mm;} @media print{ #poPrintArea{padding:0 !important;} }`;
+  st.textContent = `@page{size:A4 landscape; margin:0;} @media print{ #poPrintArea{padding:0 !important;} }`;
   document.head.appendChild(st);
   document.body.classList.add("po-print");
   const done = () => { document.body.classList.remove("po-print"); st.remove(); window.removeEventListener("afterprint", done); };
