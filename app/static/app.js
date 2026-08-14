@@ -10036,24 +10036,48 @@ function _schedSheetHtml(data, week) {
   return `<div style="width:${SCHED_A4_SHEET.w}px; height:${SCHED_A4_SHEET.h}px; background:#fff; box-sizing:border-box; padding:${SCHED_A4_PAD}px; overflow:hidden;">
     <div style="width:${SCHED_A4.w}px; height:${SCHED_A4.h}px; overflow:hidden;">${buildScheduleDoc(data, week)}</div></div>`;
 }
-// .sched-doc 를 A4 가로 1장에 맞춤: 짧으면 '발주량' 행이 남는 높이를 흡수해 채우고, 넘치면 축소.
+// .sched-doc 를 A4 가로 1장에 '가로·세로 모두 꽉 차게' 맞춘다(잘림 없음).
+//  - 짧으면 '발주량' 행이 남는 높이를 흡수해 채움.
+//  - 넘치면 문서 폭을 넓혀(줄바꿈 감소로 높이↓) A4 비율(높이/폭)에 맞춘 뒤,
+//    그 폭을 다시 A4 폭으로 되돌리는 배율로 축소 → 가로도 꽉 참.
 function _fitSchedPage(doc) {
   if (!doc) return;
-  doc.style.transform = "none";
-  doc.style.width = SCHED_A4.w + "px";
-  doc.style.minHeight = "";
-  doc.querySelectorAll(".sched-main").forEach(t => t.style.height = "");
-  doc.querySelectorAll(".sched-main tr:not(.order-row)").forEach(tr => tr.style.height = "");
-  const natural = doc.scrollHeight;
-  if (natural <= SCHED_A4.h + 1) {
-    doc.style.minHeight = SCHED_A4.h + "px";
+  const W0 = SCHED_A4.w, H0 = SCHED_A4.h, TARGET = H0 / W0;
+  const clearFill = () => {
+    doc.querySelectorAll(".sched-main").forEach(t => t.style.height = "");
+    doc.querySelectorAll(".sched-main tr:not(.order-row)").forEach(tr => tr.style.height = "");
+  };
+  doc.style.transform = "none"; doc.style.transformOrigin = "top left";
+  doc.style.minHeight = ""; doc.style.width = W0 + "px"; clearFill();
+  let h = doc.scrollHeight;
+  if (h <= H0) {
+    // 짧음 → 세로 채움(가로는 이미 꽉 참)
+    doc.style.minHeight = H0 + "px";
     doc.querySelectorAll(".sched-main").forEach(t => t.style.height = "100%");
     doc.querySelectorAll(".sched-main tr:not(.order-row)").forEach(tr => tr.style.height = "0");
-  } else {
-    // 한 장보다 길면 세로에 맞춰 축소 — 가로 가운데 정렬(좌우 여백 균등)
-    doc.style.transformOrigin = "top center";
-    doc.style.transform = `scale(${(SCHED_A4.h / natural).toFixed(4)})`;
+    if (doc.scrollHeight > H0 + 1) {   // 경계에서 넘치면 살짝 축소해 잘림 방지
+      doc.style.minHeight = ""; clearFill();
+      doc.style.transform = `scale(${(H0 / doc.scrollHeight * 0.996).toFixed(4)})`;
+    }
+    return;
   }
+  // 넘침 → (높이/폭) 비율을 A4에 맞추도록 폭 조절
+  let W = W0;
+  for (let k = 0; k < 7; k++) {
+    doc.style.width = Math.round(W) + "px";
+    h = doc.scrollHeight;
+    const ratio = h / W;
+    if (Math.abs(ratio - TARGET) <= 0.008) break;
+    W = Math.max(W0, Math.min(W0 * 4, W * (ratio / TARGET)));
+  }
+  doc.style.width = Math.round(W) + "px";   // 최종 폭 확정(스케일과 일치)
+  // 세로도 A4 비율만큼 '발주량' 행으로 채워 아래 여백 제거(내용이 더 길면 그대로)
+  doc.style.minHeight = Math.round(W * TARGET) + "px";
+  doc.querySelectorAll(".sched-main").forEach(t => t.style.height = "100%");
+  doc.querySelectorAll(".sched-main tr:not(.order-row)").forEach(tr => tr.style.height = "0");
+  h = doc.scrollHeight;
+  const s = Math.min(1, W0 / W, H0 / h) * 0.998;   // 가로·세로 어느 쪽도 넘지 않게
+  doc.style.transform = `scale(${s.toFixed(4)})`;   // 폭=W×s≈W0(가로 꽉), 높이 한 장(잘림 없음)
 }
 function renderSchedDoc() {
   const host = $("schedDoc"); if (!host || !SCHED.data) return;
