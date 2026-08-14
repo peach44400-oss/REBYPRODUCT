@@ -9716,7 +9716,7 @@ function _schedMD(iso) {
   const d = new Date(iso + "T00:00:00"); if (isNaN(d)) return esc(iso);
   return `${d.getMonth() + 1}/${d.getDate()}(${_SCHED_DOW[d.getDay()]})`;
 }
-function _schedBlankItem() { return { product_id: null, label: "", qty: "", pack: "", boxes: "", expiry: "", expiry2: "", partner: "", memo: "" }; }
+function _schedBlankItem() { return { product_id: null, label: "", qty: "", pack: "", boxes: "", boxesAuto: true, expiry: "", expiry2: "", partner: "", memo: "" }; }
 function _schedBlank(week) {
   const dates = []; for (let i = 0; i < 6; i++) dates.push(_schedAddDays(week, i));
   return { title: "주간 생산·출고 스케줄", note: "※ 스케줄은 현장 상황에 맞게 변경될 수 있음",
@@ -9729,13 +9729,17 @@ function _schedNorm(d, week) {
   if (d.note == null) d.note = "※ 스케줄은 현장 상황에 맞게 변경될 수 있음";
   d.author = d.author || ""; d.legend = d.legend || ""; d.refNote = d.refNote || "";
   if (!(d.fontScale > 0)) d.fontScale = 1; d.fontFamily = d.fontFamily || ""; d.textColor = d.textColor || "";
+  if (!d.elem || typeof d.elem !== "object") d.elem = {};
+  for (const k of ["label", "qty", "sub", "date"]) { d.elem[k] = d.elem[k] || {}; if (!(d.elem[k].s > 0)) d.elem[k].s = 100; d.elem[k].c = d.elem[k].c || ""; }
   if (!Array.isArray(d.shipDates) || !d.shipDates.length) { d.shipDates = []; for (let i = 0; i < 6; i++) d.shipDates.push(_schedAddDays(week, i)); }
   if (!Array.isArray(d.groups)) d.groups = [];
   d.groups.forEach(g => {
     g.name = g.name || ""; g.shipDate = g.shipDate || ""; g.memo = g.memo || "";
     if (!Array.isArray(g.items)) g.items = [];
     g.items.forEach(it => { for (const k of ["label", "boxes", "expiry", "expiry2", "partner", "memo"]) it[k] = it[k] || "";
-      if (it.qty == null) it.qty = ""; if (it.pack == null) it.pack = ""; });
+      if (it.qty == null) it.qty = ""; if (it.pack == null) it.pack = "";
+      // 박스 자동계산 여부: 명시적으로 false면 수동, 그 외엔 박스가 비었거나 숫자면 자동
+      it.boxesAuto = it.boxesAuto === false ? false : !/[^0-9,\s]/.test(String(it.boxes || "")); });
   });
   return d;
 }
@@ -9793,7 +9797,16 @@ function renderSchedStyle() {
       </select></span>
     <span style="display:flex; align-items:center; gap:6px; font-size:12px;">글자 색
       <input type="color" id="schedColor" value="${esc(d.textColor || "#111111")}" style="width:36px; height:26px; padding:0; border:1px solid var(--line); border-radius:5px; cursor:pointer;">
-      <button class="btn ghost sm" id="schedColorReset" style="padding:0 9px;">기본색</button></span>`;
+      <button class="btn ghost sm" id="schedColorReset" style="padding:0 9px;">기본색</button></span>
+    <span style="flex-basis:100%; height:0;"></span>
+    <span style="font-size:12px; font-weight:800;">요소별</span>
+    ${[["label", "제품명"], ["qty", "수량"], ["sub", "개입/박스"], ["date", "날짜"]].map(([k, nm]) => {
+      const s = (d.elem[k] && d.elem[k].s) || 100, c = (d.elem[k] && d.elem[k].c) || "";
+      return `<span style="display:flex; align-items:center; gap:4px; font-size:12px; border:1px solid var(--line); border-radius:6px; padding:2px 7px;">${nm}
+        <input type="number" data-elsz="${k}" value="${s}" min="40" max="300" step="5" style="width:52px; font-size:12px; padding:2px 4px; border:1px solid var(--line); border-radius:5px; text-align:right;">%
+        <input type="color" data-elcl="${k}" value="${esc(c || "#111111")}" title="색 지정 — 우클릭/기본 버튼으로 해제" style="width:28px; height:22px; padding:0; border:1px solid var(--line); border-radius:4px; cursor:pointer;">
+        <button class="btn ghost sm" data-elclr="${k}" title="색 기본값" style="padding:0 5px;">×</button></span>`;
+    }).join("")}`;
   const setScale = v => { d.fontScale = Math.max(0.8, Math.min(1.8, Math.round(v * 20) / 20)); $("schedFsRange").value = d.fontScale; $("schedFsPct").textContent = Math.round(d.fontScale * 100) + "%"; renderSchedDoc(); };
   $("schedFsRange").oninput = e => setScale(parseFloat(e.target.value));
   $("schedFsMinus").onclick = () => setScale((d.fontScale || 1) - 0.05);
@@ -9801,20 +9814,24 @@ function renderSchedStyle() {
   $("schedFamSel").onchange = e => { d.fontFamily = e.target.value; renderSchedDoc(); };
   $("schedColor").oninput = e => { d.textColor = e.target.value; renderSchedDoc(); };
   $("schedColorReset").onclick = () => { d.textColor = ""; $("schedColor").value = "#111111"; renderSchedDoc(); };
+  el.querySelectorAll("[data-elsz]").forEach(inp => inp.oninput = e => { d.elem[e.target.dataset.elsz].s = Math.max(40, Math.min(300, +e.target.value || 100)); renderSchedDoc(); });
+  el.querySelectorAll("[data-elcl]").forEach(inp => inp.oninput = e => { d.elem[e.target.dataset.elcl].c = e.target.value; renderSchedDoc(); });
+  el.querySelectorAll("[data-elclr]").forEach(btn => btn.onclick = e => { const k = e.target.dataset.elclr; d.elem[k].c = ""; const ci = el.querySelector(`[data-elcl="${k}"]`); if (ci) ci.value = "#111111"; renderSchedDoc(); });
 }
 function renderSchedGroups() {
   const d = SCHED.data; if (!d) return;
-  const prodDl = `<datalist id="schedProdDl">${(M.product || []).map(p => `<option value="${esc(p.name)}">`).join("")}</datalist>`;
+  const prodDl = `<datalist id="schedProdDl">${(M.product || []).map(p => `<option value="${esc(p.name)}">`).join("")}</datalist>`
+    + `<datalist id="schedPartnerDl">${(M.partner || []).filter(p => p.status !== "중지").map(p => `<option value="${esc(p.name)}">`).join("")}</datalist>`;
   const IN = "font-size:12px; padding:4px 6px; border:1px solid var(--line); border-radius:6px;";
   const cards = d.groups.map((g, gi) => {
     const rows = g.items.map((it, ii) => `<tr>
         <td><input data-g="${gi}" data-i="${ii}" data-f="label" list="schedProdDl" value="${esc(it.label)}" placeholder="제품/품목" style="${IN} width:148px;"></td>
-        <td><input data-g="${gi}" data-i="${ii}" data-f="qty" value="${esc(it.qty)}" inputmode="numeric" placeholder="수량" style="${IN} width:82px; text-align:right;"></td>
+        <td style="white-space:nowrap;"><input data-g="${gi}" data-i="${ii}" data-f="qty" value="${esc(it.qty)}" inputmode="numeric" placeholder="수량" style="${IN} width:78px; text-align:right;"><span class="auto" style="font-size:11px;"> 개</span></td>
         <td><input data-g="${gi}" data-i="${ii}" data-f="pack" value="${esc(it.pack)}" inputmode="numeric" placeholder="개입" style="${IN} width:56px; text-align:right;"></td>
-        <td><input data-g="${gi}" data-i="${ii}" data-f="boxes" value="${esc(it.boxes)}" inputmode="numeric" placeholder="박스" style="${IN} width:70px; text-align:right;"></td>
+        <td><input data-g="${gi}" data-i="${ii}" data-f="boxes" value="${esc(it.boxes)}" inputmode="numeric" placeholder="자동" title="비워두면 수량÷개입으로 자동 계산됩니다" style="${IN} width:70px; text-align:right;${it.boxesAuto ? " color:var(--muted);" : ""}"></td>
         <td><input data-g="${gi}" data-i="${ii}" data-f="expiry" class="datepick" readonly value="${esc(it.expiry)}" placeholder="📅 소비기한" style="${IN} width:104px;"></td>
         <td><input data-g="${gi}" data-i="${ii}" data-f="expiry2" class="datepick" readonly value="${esc(it.expiry2)}" placeholder="📅 예정" style="${IN} width:104px;"></td>
-        <td><input data-g="${gi}" data-i="${ii}" data-f="partner" value="${esc(it.partner)}" placeholder="거래처" style="${IN} width:88px;"></td>
+        <td><input data-g="${gi}" data-i="${ii}" data-f="partner" list="schedPartnerDl" value="${esc(it.partner)}" placeholder="거래처 검색" style="${IN} width:96px;"></td>
         <td><input data-g="${gi}" data-i="${ii}" data-f="memo" value="${esc(it.memo)}" placeholder="비고" style="${IN} width:96px;"></td>
         <td style="white-space:nowrap;">
           <button class="btn ghost sm" data-schedimove="${gi}:${ii}:-1" title="위로" style="padding:0 5px;"${ii === 0 ? " disabled" : ""}>▲</button>
@@ -9825,6 +9842,8 @@ function renderSchedGroups() {
         <input data-g="${gi}" data-f="name" value="${esc(g.name)}" placeholder="제품군명 (예: 달광도넛◎)" style="${IN} flex:2 1 200px; font-weight:800;">
         <input data-g="${gi}" data-f="shipDate" class="datepick" readonly value="${esc(g.shipDate)}" placeholder="📅 출고일" style="${IN} width:130px;">
         <input data-g="${gi}" data-f="memo" value="${esc(g.memo)}" placeholder="제품군 비고" style="${IN} flex:1 1 140px;">
+        <button class="btn ghost sm" data-schedgmove="${gi}:-1" title="왼쪽으로(앞 열)" ${gi === 0 ? "disabled" : ""} style="padding:0 8px;">◀</button>
+        <button class="btn ghost sm" data-schedgmove="${gi}:1" title="오른쪽으로(뒷 열)" ${gi === d.groups.length - 1 ? "disabled" : ""} style="padding:0 8px;">▶</button>
         <button class="btn ghost sm" data-schedgdel="${gi}" style="color:var(--crit);">제품군 삭제</button>
       </div>
       <div style="overflow-x:auto;"><table style="border-collapse:collapse; font-size:12px;">
@@ -9843,11 +9862,26 @@ function _schedFieldUpdate(e) {
     const it = g.items[+inp.dataset.i]; if (!it) return;
     it[f] = (f === "qty" || f === "pack") ? inp.value.replace(/,/g, "") : inp.value;
     if (f === "label") { const p = (M.product || []).find(x => x.name === inp.value); it.product_id = p ? p.id : null; }
+    if (f === "boxes") it.boxesAuto = false;   // 박스를 직접 입력하면 자동계산 해제
+    if ((f === "qty" || f === "pack") && it.boxesAuto !== false) {
+      // 자동 박스: 수량 ÷ 개입 (올림 아님, 반올림) — 예: 450 ÷ 45 = 10
+      const q = Number(String(it.qty).replace(/,/g, "")), p = Number(String(it.pack).replace(/,/g, ""));
+      it.boxes = (q > 0 && p > 0) ? String(Math.round(q / p)) : "";
+      const bi = document.querySelector(`#schedGroups [data-g="${inp.dataset.g}"][data-i="${inp.dataset.i}"][data-f="boxes"]`);
+      if (bi && bi.value !== it.boxes) bi.value = it.boxes;   // 재렌더 없이 값만 갱신(포커스 유지)
+    }
   } else { g[f] = inp.value; }
   _schedDocLater();
 }
 function _schedClick(e) {
   if (!SCHED.data) return;
+  const gm = e.target.closest("[data-schedgmove]");
+  if (gm) {
+    const [gi, dir] = gm.dataset.schedgmove.split(":").map(Number);
+    const a = SCHED.data.groups, j = gi + dir;
+    if (j >= 0 && j < a.length) { const t = a[gi]; a[gi] = a[j]; a[j] = t; renderSchedGroups(); renderSchedDoc(); }
+    return;
+  }
   const gd = e.target.closest("[data-schedgdel]");
   if (gd) { const gi = +gd.dataset.schedgdel; if (confirm("이 제품군을 삭제할까요?")) { SCHED.data.groups.splice(gi, 1); renderSchedGroups(); renderSchedDoc(); } return; }
   const ia = e.target.closest("[data-schediadd]");
@@ -9894,6 +9928,11 @@ function buildScheduleDoc(d, week) {
   // 열 수에 맞춰 기본 글자 크기 자동(적을수록 크게) × 사용자 배율. table-layout:fixed + 줄바꿈으로 오른쪽 잘림 방지.
   const baseFs = n <= 3 ? 20 : n <= 4 ? 18 : n <= 5 ? 17 : n <= 6 ? 16 : n <= 7 ? 15 : 14;
   const fs = S(baseFs), nameFs = S(baseFs + 3), titleFs = S(30), labelFs = S(baseFs + 1), qtyFs = S(baseFs + 8);
+  // 요소별(제품명·수량·개입박스·날짜) 크기(%)·색 — 표시 설정에서 조절
+  const EL = d.elem || {};
+  const em = (k, base) => Math.max(8, Math.round(base * ((EL[k] && EL[k].s > 0 ? EL[k].s : 100) / 100)));
+  const ec = (k, def) => (EL[k] && EL[k].c) ? EL[k].c : def;
+  const labelSize = em("label", fs), qtySize = em("qty", qtyFs), subSize = em("sub", S(baseFs - 1)), dateSize = em("date", fs);
   // white-space:normal 로 앱 전역 td{white-space:nowrap} 를 눌러 줄바꿈 허용 → 오른쪽 잘림 방지
   const TD = `border:1px solid #333; padding:7px 8px; vertical-align:top; font-size:${fs}px; line-height:1.4; white-space:normal; word-break:break-word; overflow-wrap:anywhere;`;
   const LB = `border:1px solid #333; padding:8px 4px; background:#f2f1ec; font-weight:800; text-align:center; font-size:${labelFs}px; word-break:keep-all; line-height:1.15; color:#111;`;
@@ -9901,7 +9940,7 @@ function buildScheduleDoc(d, week) {
   const colgroup = `<colgroup><col style="width:${labelW}px;">${groups.map(() => "<col>").join("")}</colgroup>`;
   const ribbon = (d.shipDates || []).map(x => `<span style="display:inline-block; min-width:84px; text-align:center; border:1px solid #999; border-radius:5px; padding:2px 9px; margin:2px; font-size:${S(13)}px;">${_schedMD(x)}</span>`).join("");
   const nameRow = groups.map(g => `<th style="${TD} text-align:center; font-weight:800; font-size:${nameFs}px; background:#e7e4dd;">${esc(g.name || "—")}</th>`).join("");
-  const shipRow = groups.map(g => `<td style="${TD} text-align:center; font-weight:800;">${g.shipDate ? _schedMD(g.shipDate) : "—"}</td>`).join("");
+  const shipRow = groups.map(g => `<td style="${TD} text-align:center; font-weight:800; font-size:${dateSize}px; color:${ec("date", "inherit")};">${g.shipDate ? _schedMD(g.shipDate) : "—"}</td>`).join("");
   // 발주량: 항목마다 [제품명 / 수량(크게) / 개입·박스 / 비고]를 세로로 쌓고 항목 사이 점선으로 구분
   const orderRow = groups.map(g => {
     const its = g.items || [];
@@ -9909,21 +9948,21 @@ function buildScheduleDoc(d, week) {
       const pb = _schedPackBox(it);
       const sep = idx < its.length - 1 ? "border-bottom:1px dashed #b9b9b9; padding-bottom:6px; margin-bottom:6px;" : "";
       return `<div style="${sep}">
-        <div style="font-weight:700;">${esc(it.label || "") || "&nbsp;"}</div>
-        <div style="font-size:${qtyFs}px; font-weight:900; line-height:1.05; margin:1px 0;">${NFq(it.qty) || "&nbsp;"}</div>
-        ${(pb || it.partner) ? `<div style="font-size:${S(baseFs - 1)}px;"><span style="color:#c26a1f; font-weight:700;">${esc(pb)}</span>${it.partner ? ` <span style="color:#2f3fa0;">· ${esc(it.partner)}</span>` : ""}</div>` : ""}
-        ${it.memo ? `<div style="color:#888; font-size:${S(baseFs - 1)}px;">${esc(it.memo)}</div>` : ""}
+        <div style="font-weight:700; font-size:${labelSize}px; color:${ec("label", "inherit")};">${esc(it.label || "") || "&nbsp;"}</div>
+        <div style="font-size:${qtySize}px; font-weight:900; line-height:1.05; margin:1px 0; color:${ec("qty", "inherit")};">${NFq(it.qty) ? NFq(it.qty) + '<span style="font-size:' + Math.round(qtySize * 0.6) + 'px; font-weight:700;">개</span>' : "&nbsp;"}</div>
+        ${(pb || it.partner) ? `<div style="font-size:${subSize}px;"><span style="color:${ec("sub", "#c26a1f")}; font-weight:700;">${esc(pb)}</span>${it.partner ? ` <span style="color:#2f3fa0;">· ${esc(it.partner)}</span>` : ""}</div>` : ""}
+        ${it.memo ? `<div style="color:#888; font-size:${subSize}px;">${esc(it.memo)}</div>` : ""}
       </div>`;
     }).join("") || '<span style="color:#bbb;">—</span>';
     return `<td style="${TD}">${body}</td>`;
   }).join("");
   const expRow = groups.map(g => {
     const exps = [...new Set((g.items || []).map(it => it.expiry).filter(Boolean))];
-    return `<td style="${TD} text-align:center; font-weight:700;">${exps.length ? exps.map(esc).join("<br>") : "—"}</td>`;
+    return `<td style="${TD} text-align:center; font-weight:700; font-size:${dateSize}px; color:${ec("date", "inherit")};">${exps.length ? exps.map(esc).join("<br>") : "—"}</td>`;
   }).join("");
   const exp2Row = groups.map(g => {
     const exps = [...new Set((g.items || []).map(it => it.expiry2).filter(Boolean))];
-    return `<td style="${TD} text-align:center; color:#666;">${exps.length ? exps.map(esc).join("<br>") : "—"}</td>`;
+    return `<td style="${TD} text-align:center; font-size:${dateSize}px; color:${ec("date", "#666")};">${exps.length ? exps.map(esc).join("<br>") : "—"}</td>`;
   }).join("");
   const memoRow = groups.map(g => `<td style="${TD} text-align:center; color:#444;">${esc(g.memo || "")}</td>`).join("");
   const empty = groups.length ? "" : `<div style="text-align:center; color:#bbb; padding:40px; font-size:${S(15)}px;">제품군을 추가하면 여기에 표가 나타납니다</div>`;
