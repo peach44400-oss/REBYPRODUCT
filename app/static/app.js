@@ -9774,8 +9774,16 @@ function _applySchedStyle(d, st) {
 }
 let _schedDocT = null;
 function _schedDocLater() { clearTimeout(_schedDocT); _schedDocT = setTimeout(renderSchedDoc, 220); }
+// 고정 헤더의 top을 앱 상단바(.topbar) 높이에 맞춰, 상단바에 가려지지 않게 한다
+function _schedPositionSticky() {
+  const hdr = $("schedStickyHdr"); if (!hdr) return;
+  const tb = document.querySelector(".topbar");
+  hdr.style.top = ((tb ? tb.offsetHeight : 0) - 1) + "px";
+}
+window.addEventListener("resize", _schedPositionSticky);
 function renderSchedule() {
   const d = SCHED.data; if (!d) return;
+  _schedPositionSticky();
   const end = _schedAddDays(SCHED.week, 5);
   if ($("schedWeekLabel")) $("schedWeekLabel").textContent = `${SCHED.week} ~ ${end}`;
   if ($("schedSaved")) $("schedSaved").textContent = SCHED.saved || "";
@@ -10060,7 +10068,9 @@ async function saveSchedule() {
   } catch (e) { /* api 토스트 */ }
 }
 function schedPrint(dataArg, weekArg) {
-  const data = dataArg || SCHED.data, week = weekArg || SCHED.week;
+  // dataArg가 스케줄 객체(groups 보유)일 때만 사용 — 버튼 onclick의 이벤트 객체가 들어와도 무시
+  const data = (dataArg && dataArg.groups) ? dataArg : SCHED.data;
+  const week = (typeof weekArg === "string" && weekArg) ? weekArg : SCHED.week;
   if (!data) return;
   // 오프스크린에서 A4 1장 박스에 맞춘 뒤 그대로 인쇄 영역으로 옮긴다(미리보기와 동일 모양·1장).
   const box = document.createElement("div");
@@ -10194,7 +10204,7 @@ function _schedUnlockPrompt() {
     renderSchedGroups(); renderSchedDoc();
   });
   on("schedSave", saveSchedule);
-  on("schedPrintBtn", schedPrint);
+  on("schedPrintBtn", () => schedPrint());
   on("schedPdf", () => { toast("인쇄 창에서 대상을 'PDF로 저장'으로 선택하세요"); setTimeout(schedPrint, 400); });
   on("schedFull", schedFullscreen);
   const dd = $("schedDate"); if (dd) dd.addEventListener("change", e => { if (e.target.value) loadSchedule(e.target.value); });
