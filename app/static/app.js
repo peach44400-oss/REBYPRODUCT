@@ -10026,8 +10026,16 @@ function buildScheduleDoc(d, week) {
     ${d.refNote ? `<div style="margin-top:10px; border:1px solid #999; border-radius:6px; padding:9px 11px; font-size:${S(12)}px; white-space:pre-wrap; color:#333; flex:0 0 auto;">${esc(d.refNote)}</div>` : ""}
   </div>`;
 }
-// A4 가로 1장의 인쇄 가능 영역(96dpi · 8mm 여백) — 미리보기·인쇄가 항상 이 한 장에 맞춰진다
+// A4 가로 1장의 인쇄 가능 영역(96dpi · 8mm 여백) — 인쇄 콘텐츠는 항상 이 크기에 맞춰진다
 const SCHED_A4 = { w: 1062, h: 733 };
+// A4 가로 전체 용지(297×210mm @96dpi) + 여백(8mm≈30px) — 미리보기/전체화면을 실제 용지 비율로 보여준다
+const SCHED_A4_SHEET = { w: 1122, h: 793 };
+const SCHED_A4_PAD = 30;
+// 콘텐츠(sched-doc)를 A4 흰 용지 안에 여백 두고 넣은 '한 장' HTML
+function _schedSheetHtml(data, week) {
+  return `<div style="width:${SCHED_A4_SHEET.w}px; height:${SCHED_A4_SHEET.h}px; background:#fff; box-sizing:border-box; padding:${SCHED_A4_PAD}px; overflow:hidden;">
+    <div style="width:${SCHED_A4.w}px; height:${SCHED_A4.h}px; overflow:hidden;">${buildScheduleDoc(data, week)}</div></div>`;
+}
 // .sched-doc 를 A4 가로 1장에 맞춤: 짧으면 '발주량' 행이 남는 높이를 흡수해 채우고, 넘치면 축소.
 function _fitSchedPage(doc) {
   if (!doc) return;
@@ -10048,14 +10056,14 @@ function _fitSchedPage(doc) {
 }
 function renderSchedDoc() {
   const host = $("schedDoc"); if (!host || !SCHED.data) return;
+  const SH = SCHED_A4_SHEET;
   const avail = Math.max(320, host.clientWidth - 22);
-  const outer = Math.min(1, avail / SCHED_A4.w);   // 미리보기를 패널 폭에 맞춰 축소(비율 유지, 인쇄와 동일 모양)
+  const outer = Math.min(1, avail / SH.w);   // A4 용지 전체를 패널 폭에 맞춰 축소(비율 = 실제 A4 가로)
   host.style.overflow = "hidden";
-  host.innerHTML = `<div style="width:${Math.round(SCHED_A4.w * outer)}px; height:${Math.round(SCHED_A4.h * outer)}px; margin:0 auto; overflow:hidden;">
-    <div style="width:${SCHED_A4.w}px; height:${SCHED_A4.h}px; transform-origin:top left; transform:scale(${outer.toFixed(4)});">
-      <div style="width:${SCHED_A4.w}px; height:${SCHED_A4.h}px; background:#fff; box-shadow:0 0 0 1px #bbb; overflow:hidden; box-sizing:border-box; padding:3px;">
-        ${buildScheduleDoc(SCHED.data, SCHED.week)}</div></div></div>`;
-  host.style.height = Math.round(SCHED_A4.h * outer + 8) + "px";
+  host.innerHTML = `<div style="width:${Math.round(SH.w * outer)}px; height:${Math.round(SH.h * outer)}px; margin:0 auto; overflow:hidden; box-shadow:0 1px 6px rgba(0,0,0,.15);">
+    <div style="width:${SH.w}px; height:${SH.h}px; transform-origin:top left; transform:scale(${outer.toFixed(4)});">
+      ${_schedSheetHtml(SCHED.data, SCHED.week)}</div></div>`;
+  host.style.height = Math.round(SH.h * outer + 8) + "px";
   _fitSchedPage(host.querySelector(".sched-doc"));
 }
 async function saveSchedule() {
@@ -10109,8 +10117,9 @@ async function schedEnterFullMode(week) {
     catch (e) { d = _schedNorm(_schedBlank(week), week); }
     window._schedFullData = d;
     const barH = _schedLocked ? 4 : 56;
+    const SH = SCHED_A4_SHEET;
     const availW = Math.max(320, ov.clientWidth - 24), availH = Math.max(240, ov.clientHeight - barH);
-    const sc = Math.min(availW / SCHED_A4.w, availH / SCHED_A4.h);
+    const sc = Math.min(availW / SH.w, availH / SH.h);
     const now = new Date().toLocaleTimeString("ko-KR");
     const bar = _schedLocked
       ? `<div style="position:fixed; top:6px; right:10px; z-index:5;"><button id="schedUnlock" title="잠금 해제(비밀번호)" style="border:1px solid #555; background:rgba(0,0,0,.35); color:#fff; border-radius:8px; padding:5px 10px; cursor:pointer; font-size:13px;">🔒</button></div>`
@@ -10121,9 +10130,9 @@ async function schedEnterFullMode(week) {
           <button id="schedFsLock" title="화면 잠금 — 해제하려면 비밀번호가 필요합니다" style="border:1px solid #b8860b; background:#fff8e1; border-radius:7px; padding:5px 12px; cursor:pointer;">🔒 잠금</button>
           <button id="schedFsClose" style="border:1px solid #888; background:#fff; border-radius:7px; padding:5px 12px; cursor:pointer;">닫기</button>
         </div>`;
-    ov.innerHTML = bar + `<div style="width:${Math.round(SCHED_A4.w * sc)}px; height:${Math.round(SCHED_A4.h * sc)}px; margin:0 auto; overflow:hidden;">
-        <div style="width:${SCHED_A4.w}px; height:${SCHED_A4.h}px; transform-origin:top left; transform:scale(${sc.toFixed(4)}); background:#fff; box-shadow:0 6px 24px rgba(0,0,0,.5); overflow:hidden; box-sizing:border-box; padding:3px;">
-          ${buildScheduleDoc(d, week)}</div></div>`;
+    ov.innerHTML = bar + `<div style="width:${Math.round(SH.w * sc)}px; height:${Math.round(SH.h * sc)}px; margin:0 auto; overflow:hidden; box-shadow:0 6px 24px rgba(0,0,0,.5);">
+        <div style="width:${SH.w}px; height:${SH.h}px; transform-origin:top left; transform:scale(${sc.toFixed(4)});">
+          ${_schedSheetHtml(d, week)}</div></div>`;
     _fitSchedPage(ov.querySelector(".sched-doc"));
     if (_schedLocked) {
       $("schedUnlock").onclick = ev => { ev.stopPropagation(); _schedUnlockPrompt(); };
