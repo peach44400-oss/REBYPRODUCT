@@ -9828,42 +9828,50 @@ function _schedBoxTxt(it) {
 function buildScheduleDoc(d, week) {
   const NFq = v => { v = String(v == null ? "" : v).replace(/,/g, ""); if (v === "") return ""; const n = Number(v); return isNaN(n) ? esc(v) : n.toLocaleString("ko-KR"); };
   const groups = d.groups || [];
-  const TD = "border:1px solid #444; padding:5px 8px; vertical-align:top;";
-  const HD = "border:1px solid #444; padding:5px 8px; background:#f2f1ee; font-weight:800; text-align:center;";
-  const ribbon = (d.shipDates || []).map(x => `<span style="display:inline-block; min-width:74px; text-align:center; border:1px solid #999; border-radius:5px; padding:1px 6px; margin:2px;">${_schedMD(x)}</span>`).join("");
-  const nameRow = groups.map(g => `<th style="${HD} font-size:14px;">${esc(g.name || "—")}</th>`).join("");
-  const shipRow = groups.map(g => `<td style="${TD} text-align:center; font-weight:700;">${g.shipDate ? _schedMD(g.shipDate) : "—"}</td>`).join("");
+  const n = groups.length || 1;
+  // 열 수에 맞춰 글자 크기 자동 — 적을수록 크게(작업자 가독성). table-layout:fixed + 줄바꿈으로 오른쪽 잘림 방지.
+  const fs = n <= 3 ? 20 : n <= 4 ? 18 : n <= 5 ? 17 : n <= 6 ? 16 : n <= 7 ? 15 : 14;
+  const nameFs = fs + 3, titleFs = 30, labelFs = fs + 1;
+  // white-space:normal 로 앱 전역 td{white-space:nowrap} 를 눌러 줄바꿈 허용 → 오른쪽 잘림 방지
+  const TD = `border:1px solid #333; padding:8px 9px; vertical-align:top; font-size:${fs}px; line-height:1.5; white-space:normal; word-break:break-word; overflow-wrap:anywhere;`;
+  const LB = `border:1px solid #333; padding:8px 5px; background:#f2f1ec; font-weight:800; text-align:center; font-size:${labelFs}px; white-space:nowrap;`;
+  const labelW = n >= 7 ? 56 : 76;
+  const colgroup = `<colgroup><col style="width:${labelW}px;">${groups.map(() => "<col>").join("")}</colgroup>`;
+  const ribbon = (d.shipDates || []).map(x => `<span style="display:inline-block; min-width:84px; text-align:center; border:1px solid #999; border-radius:5px; padding:2px 9px; margin:2px; font-size:${fs - 1}px;">${_schedMD(x)}</span>`).join("");
+  const nameRow = groups.map(g => `<th style="${TD} text-align:center; font-weight:800; font-size:${nameFs}px; background:#e7e4dd;">${esc(g.name || "—")}</th>`).join("");
+  const shipRow = groups.map(g => `<td style="${TD} text-align:center; font-weight:800;">${g.shipDate ? _schedMD(g.shipDate) : "—"}</td>`).join("");
   const orderRow = groups.map(g => {
     const body = (g.items || []).map(it => {
-      const packHead = it.pack ? `<span style="color:#c26a1f; font-weight:700;">${NFq(it.pack)}개입</span> ` : "";
+      const packHead = it.pack ? `<span style="color:#c26a1f; font-weight:800;">${NFq(it.pack)}개입</span> ` : "";
       const bt = _schedBoxTxt(it);
-      return `<div style="margin-bottom:2px; white-space:nowrap;">${packHead}<b>${esc(it.label || "")}</b> ${NFq(it.qty)}${bt ? ` <span style="color:#555;">(${bt})</span>` : ""}${it.partner ? ` <span style="color:#3a4db0;">·${esc(it.partner)}</span>` : ""}${it.memo ? ` <span style="color:#999;">${esc(it.memo)}</span>` : ""}</div>`;
+      return `<div style="margin-bottom:6px;">${packHead}<b>${esc(it.label || "")}</b> ${NFq(it.qty)}${bt ? ` <span style="color:#444;">(${bt})</span>` : ""}${it.partner ? ` <span style="color:#2f3fa0;">·${esc(it.partner)}</span>` : ""}${it.memo ? ` <span style="color:#888;">${esc(it.memo)}</span>` : ""}</div>`;
     }).join("") || '<span style="color:#bbb;">—</span>';
     return `<td style="${TD}">${body}</td>`;
   }).join("");
   const expRow = groups.map(g => {
     const exps = [...new Set((g.items || []).map(it => it.expiry).filter(Boolean))];
-    return `<td style="${TD} text-align:center; white-space:nowrap;">${exps.length ? exps.map(esc).join("<br>") : "—"}</td>`;
+    return `<td style="${TD} text-align:center; font-weight:700;">${exps.length ? exps.map(esc).join("<br>") : "—"}</td>`;
   }).join("");
-  const memoRow = groups.map(g => `<td style="${TD} text-align:center; color:#555;">${esc(g.memo || "")}</td>`).join("");
-  const empty = groups.length ? "" : `<div style="text-align:center; color:#bbb; padding:24px;">제품군을 추가하면 여기에 표가 나타납니다</div>`;
-  return `<div style="color:#111; font-family:inherit;">
-    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
-      <div style="width:200px; font-size:11px; color:#555;">${week} ~ ${_schedAddDays(week, 5)}<br>작성자 : <b>${esc(d.author || "—")}</b></div>
-      <h1 style="text-align:center; letter-spacing:7px; font-size:23px; margin:0; flex:1;">${esc(d.title || "주간 생산·출고 스케줄")}</h1>
-      <div style="width:220px; font-size:10.5px; text-align:right; white-space:pre-wrap; color:#333;">${esc(d.legend || "")}</div>
+  const memoRow = groups.map(g => `<td style="${TD} text-align:center; color:#444;">${esc(g.memo || "")}</td>`).join("");
+  const empty = groups.length ? "" : `<div style="text-align:center; color:#bbb; padding:40px; font-size:15px;">제품군을 추가하면 여기에 표가 나타납니다</div>`;
+  return `<div class="sched-doc" style="color:#111; font-family:inherit; display:flex; flex-direction:column;">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:2px;">
+      <div style="width:210px; font-size:12px; color:#555;">${week} ~ ${_schedAddDays(week, 5)}<br>작성자 : <b>${esc(d.author || "—")}</b></div>
+      <h1 style="text-align:center; letter-spacing:8px; font-size:${titleFs}px; margin:0; flex:1 1 0; min-width:0; word-break:keep-all;">${esc(d.title || "주간 생산·출고 스케줄")}</h1>
+      <div style="width:230px; font-size:12px; text-align:right; white-space:pre-wrap; color:#333;">${esc(d.legend || "")}</div>
     </div>
-    <div style="text-align:center; color:#666; font-size:12px; margin:4px 0 8px;">${esc(d.note || "")}</div>
-    <div style="text-align:center; font-size:11.5px; margin-bottom:8px;"><b style="color:#555;">주간 출고일</b> ${ribbon || "—"}</div>
-    ${empty || `<table style="width:100%; border-collapse:collapse; font-size:12.5px;">
-      <thead><tr><th style="${HD} width:64px;">제품</th>${nameRow}</tr></thead>
+    <div style="text-align:center; color:#666; font-size:13px; margin:2px 0 8px;">${esc(d.note || "")}</div>
+    <div style="text-align:center; margin-bottom:8px;"><b style="color:#555; font-size:13px;">주간 출고일</b> ${ribbon || "—"}</div>
+    ${empty || `<div class="sched-tblwrap" style="flex:1 1 auto;"><table class="sched-main" style="width:100%; height:100%; border-collapse:collapse; table-layout:fixed;">
+      ${colgroup}
+      <thead><tr><th style="${LB}">제품</th>${nameRow}</tr></thead>
       <tbody>
-        <tr><td style="${HD} width:64px;">출고일</td>${shipRow}</tr>
-        <tr><td style="${HD} width:64px;">발주량</td>${orderRow}</tr>
-        <tr><td style="${HD} width:64px;">소비기한</td>${expRow}</tr>
-        <tr><td style="${HD} width:64px;">비고</td>${memoRow}</tr>
-      </tbody></table>`}
-    ${d.refNote ? `<div style="margin-top:10px; border:1px solid #999; border-radius:6px; padding:8px 10px; font-size:11px; white-space:pre-wrap; color:#333;">${esc(d.refNote)}</div>` : ""}
+        <tr><td style="${LB}">출고일</td>${shipRow}</tr>
+        <tr class="order-row"><td style="${LB}">발주량</td>${orderRow}</tr>
+        <tr><td style="${LB}">소비기한</td>${expRow}</tr>
+        <tr><td style="${LB}">비고</td>${memoRow}</tr>
+      </tbody></table></div>`}
+    ${d.refNote ? `<div style="margin-top:10px; border:1px solid #999; border-radius:6px; padding:9px 11px; font-size:12px; white-space:pre-wrap; color:#333; flex:0 0 auto;">${esc(d.refNote)}</div>` : ""}
   </div>`;
 }
 function renderSchedDoc() { if ($("schedDoc") && SCHED.data) $("schedDoc").innerHTML = buildScheduleDoc(SCHED.data, SCHED.week); }
@@ -9880,7 +9888,14 @@ function schedPrint() {
   if (!SCHED.data) return;
   $("poPrintArea").innerHTML = buildScheduleDoc(SCHED.data, SCHED.week);
   const st = document.createElement("style"); st.id = "schedPageStyle";
-  st.textContent = "@page{size:A4 landscape; margin:7mm;} @media print{#poPrintArea{padding:0 !important;}}";
+  // A4 가로 한 장을 가득 채우도록: 문서를 세로 flex로 늘리고, '발주량' 행이 남는 높이를 흡수.
+  st.textContent = `@page{size:A4 landscape; margin:8mm;}
+    @media print{
+      #poPrintArea{padding:0 !important;}
+      #poPrintArea .sched-doc{min-height:187mm;}
+      #poPrintArea .sched-main{height:100%;}
+      #poPrintArea .sched-main tr:not(.order-row){height:0;}
+    }`;
   document.head.appendChild(st);
   document.body.classList.add("po-print");
   const done = () => { document.body.classList.remove("po-print"); st.remove(); window.removeEventListener("afterprint", done); };
