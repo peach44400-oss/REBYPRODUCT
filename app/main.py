@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.82.14"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.82.15"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -5905,10 +5905,15 @@ def ledger(request: Request, date: str = ""):
             base_date[r["material_id"]] = r["made_date"] or r["date"]
             last_in[r["material_id"]] = (r["date"], r["made_date"] or "")
         # 최근 입고 비고 (carry-forward, 수불부 비고 열 표시용)
+        #  단, 자동 생성된 '발주 #…' 비고는 이월하지 않고 그 입고 '당일'에만 표시한다.
+        #  (예전 테스트 발주 비고가 이후 모든 날짜에 계속 남는 문제 방지 — 사용자가 직접 적은 비고만 이월)
         note_cf = {}
-        for r in con.execute("SELECT material_id, note FROM material_in"
+        for r in con.execute("SELECT material_id, date, note FROM material_in"
                              " WHERE date<=? AND COALESCE(note,'')!='' ORDER BY date", (date,)):
-            note_cf[r["material_id"]] = r["note"]   # date 오름차순 → 최신 비고가 최종적으로 남음
+            n = r["note"]
+            if n.startswith("발주 #") and r["date"] != date:
+                continue
+            note_cf[r["material_id"]] = n   # date 오름차순 → 최신 비고가 최종적으로 남음
         # 입고 없는 재고에 수동 입력한 제조일자 (carry-forward) — 입고 제조일이 없을 때 폴백
         man_made_cf = {}
         for r in con.execute("SELECT material_id, date, made FROM material_expiry"
