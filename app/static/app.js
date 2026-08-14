@@ -9852,7 +9852,7 @@ async function saveSchedStyleDefault() {
 function renderSchedGroups() {
   const d = SCHED.data; if (!d) return;
   const prodDl = `<datalist id="schedProdDl">${(M.product || []).map(p => `<option value="${esc(p.name)}">`).join("")}</datalist>`
-    + `<datalist id="schedPartnerDl">${(M.partner || []).filter(p => p.status !== "중지").map(p => `<option value="${esc(p.name)}">`).join("")}</datalist>`;
+    + `<datalist id="schedPartnerDl">${(M.partner || []).filter(p => p.status !== "중지" && (p.type || "").includes("판매")).map(p => `<option value="${esc(p.name)}">`).join("")}</datalist>`;
   const IN = "font-size:12px; padding:4px 6px; border:1px solid var(--line); border-radius:6px;";
   const cards = d.groups.map((g, gi) => {
     const rows = g.items.map((it, ii) => `<tr>
@@ -10018,7 +10018,38 @@ function buildScheduleDoc(d, week) {
     ${d.refNote ? `<div style="margin-top:10px; border:1px solid #999; border-radius:6px; padding:9px 11px; font-size:${S(12)}px; white-space:pre-wrap; color:#333; flex:0 0 auto;">${esc(d.refNote)}</div>` : ""}
   </div>`;
 }
-function renderSchedDoc() { if ($("schedDoc") && SCHED.data) $("schedDoc").innerHTML = buildScheduleDoc(SCHED.data, SCHED.week); }
+// A4 가로 1장의 인쇄 가능 영역(96dpi · 8mm 여백) — 미리보기·인쇄가 항상 이 한 장에 맞춰진다
+const SCHED_A4 = { w: 1062, h: 733 };
+// .sched-doc 를 A4 가로 1장에 맞춤: 짧으면 '발주량' 행이 남는 높이를 흡수해 채우고, 넘치면 축소.
+function _fitSchedPage(doc) {
+  if (!doc) return;
+  doc.style.transform = "none";
+  doc.style.width = SCHED_A4.w + "px";
+  doc.style.minHeight = "";
+  doc.querySelectorAll(".sched-main").forEach(t => t.style.height = "");
+  doc.querySelectorAll(".sched-main tr:not(.order-row)").forEach(tr => tr.style.height = "");
+  const natural = doc.scrollHeight;
+  if (natural <= SCHED_A4.h + 1) {
+    doc.style.minHeight = SCHED_A4.h + "px";
+    doc.querySelectorAll(".sched-main").forEach(t => t.style.height = "100%");
+    doc.querySelectorAll(".sched-main tr:not(.order-row)").forEach(tr => tr.style.height = "0");
+  } else {
+    doc.style.transformOrigin = "top left";
+    doc.style.transform = `scale(${(SCHED_A4.h / natural).toFixed(4)})`;
+  }
+}
+function renderSchedDoc() {
+  const host = $("schedDoc"); if (!host || !SCHED.data) return;
+  const avail = Math.max(320, host.clientWidth - 22);
+  const outer = Math.min(1, avail / SCHED_A4.w);   // 미리보기를 패널 폭에 맞춰 축소(비율 유지, 인쇄와 동일 모양)
+  host.style.overflow = "hidden";
+  host.innerHTML = `<div style="width:${Math.round(SCHED_A4.w * outer)}px; height:${Math.round(SCHED_A4.h * outer)}px; margin:0 auto; overflow:hidden;">
+    <div style="width:${SCHED_A4.w}px; height:${SCHED_A4.h}px; transform-origin:top left; transform:scale(${outer.toFixed(4)});">
+      <div style="width:${SCHED_A4.w}px; height:${SCHED_A4.h}px; background:#fff; box-shadow:0 0 0 1px #bbb; overflow:hidden; box-sizing:border-box; padding:3px;">
+        ${buildScheduleDoc(SCHED.data, SCHED.week)}</div></div></div>`;
+  host.style.height = Math.round(SCHED_A4.h * outer + 8) + "px";
+  _fitSchedPage(host.querySelector(".sched-doc"));
+}
 async function saveSchedule() {
   if (!SCHED.data) return;
   try {
@@ -10028,18 +10059,20 @@ async function saveSchedule() {
     await loadSchedule(SCHED.week);
   } catch (e) { /* api 토스트 */ }
 }
-function schedPrint() {
-  if (!SCHED.data) return;
-  $("poPrintArea").innerHTML = buildScheduleDoc(SCHED.data, SCHED.week);
+function schedPrint(dataArg, weekArg) {
+  const data = dataArg || SCHED.data, week = weekArg || SCHED.week;
+  if (!data) return;
+  // 오프스크린에서 A4 1장 박스에 맞춘 뒤 그대로 인쇄 영역으로 옮긴다(미리보기와 동일 모양·1장).
+  const box = document.createElement("div");
+  box.style.cssText = `position:fixed; left:-10000px; top:0; width:${SCHED_A4.w}px; height:${SCHED_A4.h}px; overflow:hidden; background:#fff; box-sizing:border-box;`;
+  box.innerHTML = buildScheduleDoc(data, week);
+  document.body.appendChild(box);
+  _fitSchedPage(box.querySelector(".sched-doc"));
+  box.style.left = ""; box.style.top = ""; box.style.position = "";   // 인쇄 영역에선 일반 배치
+  $("poPrintArea").innerHTML = "";
+  $("poPrintArea").appendChild(box);
   const st = document.createElement("style"); st.id = "schedPageStyle";
-  // A4 가로 한 장을 가득 채우도록: 문서를 세로 flex로 늘리고, '발주량' 행이 남는 높이를 흡수.
-  st.textContent = `@page{size:A4 landscape; margin:8mm;}
-    @media print{
-      #poPrintArea{padding:0 !important;}
-      #poPrintArea .sched-doc{min-height:187mm;}
-      #poPrintArea .sched-main{height:100%;}
-      #poPrintArea .sched-main tr:not(.order-row){height:0;}
-    }`;
+  st.textContent = `@page{size:A4 landscape; margin:8mm;} @media print{ #poPrintArea{padding:0 !important;} }`;
   document.head.appendChild(st);
   document.body.classList.add("po-print");
   const done = () => { document.body.classList.remove("po-print"); st.remove(); window.removeEventListener("afterprint", done); };
@@ -10052,29 +10085,99 @@ function schedFullscreen() {
   if (!w) toast("팝업이 차단되었습니다 — 브라우저에서 이 사이트의 팝업을 허용해주세요");
 }
 // 새 창(#schedfull=주)에서 부팅되면 앱 UI 위에 전체화면 표시 오버레이를 띄우고 10초마다 자동 새로고침
+let _schedLocked = false;
 async function schedEnterFullMode(week) {
   document.title = "주간 스케줄 · 현장 표시";
+  window._schedFullWeek = week;
   let ov = $("schedFullOv");
   if (!ov) { ov = document.createElement("div"); ov.id = "schedFullOv";
-    ov.style.cssText = "position:fixed; inset:0; background:#fff; z-index:99998; overflow:auto; padding:16px 22px;";
+    ov.style.cssText = "position:fixed; inset:0; background:#2b2b2b; z-index:99998; overflow:auto; padding:12px;";
     document.body.appendChild(ov); }
   const load = async () => {
     let d;
     try { const r = await api("/api/schedule?week=" + week); d = _schedNorm((r.data && Object.keys(r.data).length) ? r.data : _schedBlank(week), week); }
     catch (e) { d = _schedNorm(_schedBlank(week), week); }
+    window._schedFullData = d;
+    const barH = _schedLocked ? 4 : 56;
+    const availW = Math.max(320, ov.clientWidth - 24), availH = Math.max(240, ov.clientHeight - barH);
+    const sc = Math.min(availW / SCHED_A4.w, availH / SCHED_A4.h);
     const now = new Date().toLocaleTimeString("ko-KR");
-    ov.innerHTML = `<div style="display:flex; justify-content:flex-end; align-items:center; gap:8px; margin-bottom:10px;">
-        <span style="color:#999; font-size:12px;">🔄 10초마다 자동 새로고침 · ${now}</span>
-        <button id="schedFsBtn" style="border:1px solid #333; background:#111; color:#fff; border-radius:7px; padding:5px 12px; cursor:pointer;">⛶ 전체화면</button>
-        <button id="schedFsClose" style="border:1px solid #999; background:#fff; border-radius:7px; padding:5px 12px; cursor:pointer;">닫기</button>
-      </div>` + buildScheduleDoc(d, week);
-    $("schedFsBtn").onclick = () => { const el = document.documentElement;
-      (document.fullscreenElement ? document.exitFullscreen() : el.requestFullscreen()).catch(() => {}); };
-    $("schedFsClose").onclick = () => { if (window._schedFullT) clearInterval(window._schedFullT); location.hash = ""; try { window.close(); } catch (e) {} ov.remove(); };
+    const bar = _schedLocked
+      ? `<div style="position:fixed; top:6px; right:10px; z-index:5;"><button id="schedUnlock" title="잠금 해제(비밀번호)" style="border:1px solid #555; background:rgba(0,0,0,.35); color:#fff; border-radius:8px; padding:5px 10px; cursor:pointer; font-size:13px;">🔒</button></div>`
+      : `<div style="display:flex; justify-content:flex-end; align-items:center; gap:8px; margin-bottom:10px;">
+          <span style="color:#ccc; font-size:12px;">🔄 10초마다 자동 새로고침 · ${now}</span>
+          <button id="schedFsPrint" style="border:1px solid #888; background:#fff; border-radius:7px; padding:5px 12px; cursor:pointer;">🖨 인쇄</button>
+          <button id="schedFsBtn" style="border:1px solid #000; background:#111; color:#fff; border-radius:7px; padding:5px 12px; cursor:pointer;">⛶ 전체화면</button>
+          <button id="schedFsLock" title="화면 잠금 — 해제하려면 비밀번호가 필요합니다" style="border:1px solid #b8860b; background:#fff8e1; border-radius:7px; padding:5px 12px; cursor:pointer;">🔒 잠금</button>
+          <button id="schedFsClose" style="border:1px solid #888; background:#fff; border-radius:7px; padding:5px 12px; cursor:pointer;">닫기</button>
+        </div>`;
+    ov.innerHTML = bar + `<div style="width:${Math.round(SCHED_A4.w * sc)}px; height:${Math.round(SCHED_A4.h * sc)}px; margin:0 auto; overflow:hidden;">
+        <div style="width:${SCHED_A4.w}px; height:${SCHED_A4.h}px; transform-origin:top left; transform:scale(${sc.toFixed(4)}); background:#fff; box-shadow:0 6px 24px rgba(0,0,0,.5); overflow:hidden; box-sizing:border-box; padding:3px;">
+          ${buildScheduleDoc(d, week)}</div></div>`;
+    _fitSchedPage(ov.querySelector(".sched-doc"));
+    if (_schedLocked) {
+      $("schedUnlock").onclick = ev => { ev.stopPropagation(); _schedUnlockPrompt(); };
+    } else {
+      $("schedFsBtn").onclick = () => { const el = document.documentElement;
+        (document.fullscreenElement ? document.exitFullscreen() : el.requestFullscreen()).catch(() => {}); };
+      $("schedFsPrint").onclick = () => schedPrint(window._schedFullData, week);
+      $("schedFsLock").onclick = _schedDoLock;
+      $("schedFsClose").onclick = () => { if (window._schedFullT) clearInterval(window._schedFullT); location.hash = ""; try { window.close(); } catch (e) {} ov.remove(); };
+    }
   };
+  window._schedFullReload = load;
   await load();
   if (window._schedFullT) clearInterval(window._schedFullT);
-  window._schedFullT = setInterval(load, 10000);
+  window._schedFullT = setInterval(() => { if (!document.getElementById("schedUnlockBox")) load(); }, 10000);
+}
+// 잠금: 전체화면 진입 + 잠금 상태. ESC로 브라우저 전체화면이 풀려도 오버레이가 화면을 계속 덮고,
+//       아무 곳이나 누르면 다시 전체화면으로 들어가 현장 화면을 유지한다. 해제는 비밀번호 필요.
+function _schedDoLock() {
+  _schedLocked = true;
+  document.documentElement.requestFullscreen && document.documentElement.requestFullscreen().catch(() => {});
+  document.addEventListener("keydown", _schedLockKey, true);
+  document.addEventListener("click", _schedLockClick, true);
+  if (window._schedFullReload) window._schedFullReload();
+}
+function _schedLockKey(e) { if (_schedLocked) { e.preventDefault(); e.stopPropagation(); } }
+function _schedLockClick(e) {
+  if (!_schedLocked) return;
+  if (e.target.closest("#schedUnlock, #schedUnlockBox")) return;   // 잠금해제 UI는 통과
+  if (!document.fullscreenElement) document.documentElement.requestFullscreen && document.documentElement.requestFullscreen().catch(() => {});
+}
+function _schedUnlockPrompt() {
+  if (document.getElementById("schedUnlockBox")) return;
+  const box = document.createElement("div");
+  box.id = "schedUnlockBox";
+  box.style.cssText = "position:fixed; inset:0; z-index:100000; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center;";
+  box.innerHTML = `<div style="background:#fff; border-radius:12px; padding:22px 24px; width:320px; box-shadow:0 10px 40px rgba(0,0,0,.4);">
+      <div style="font-weight:800; font-size:15px; margin-bottom:10px;">🔒 화면 잠금 해제</div>
+      <div style="font-size:12px; color:#666; margin-bottom:10px;">로그인 비밀번호를 입력하세요.</div>
+      <input id="schedUnlockPw" type="password" autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #ccc; border-radius:8px; font-size:14px;">
+      <div id="schedUnlockErr" style="color:var(--crit,#c0392b); font-size:12px; height:16px; margin:4px 2px;"></div>
+      <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:6px;">
+        <button id="schedUnlockCancel" style="border:1px solid #999; background:#fff; border-radius:8px; padding:7px 14px; cursor:pointer;">취소</button>
+        <button id="schedUnlockOk" style="border:1px solid #111; background:#111; color:#fff; border-radius:8px; padding:7px 14px; cursor:pointer;">해제</button>
+      </div></div>`;
+  document.body.appendChild(box);
+  const pw = box.querySelector("#schedUnlockPw"); pw.focus();
+  const close = () => box.remove();
+  const tryUnlock = async () => {
+    try {
+      const r = await api("/api/verify-pw", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: pw.value }) });
+      if (r && r.ok) {
+        _schedLocked = false;
+        document.removeEventListener("keydown", _schedLockKey, true);
+        document.removeEventListener("click", _schedLockClick, true);
+        if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+        close();
+        if (window._schedFullReload) window._schedFullReload();
+      } else { box.querySelector("#schedUnlockErr").textContent = "비밀번호가 올바르지 않습니다"; pw.select(); }
+    } catch (e) { box.querySelector("#schedUnlockErr").textContent = "확인 중 오류가 발생했습니다"; }
+  };
+  box.querySelector("#schedUnlockOk").onclick = tryUnlock;
+  box.querySelector("#schedUnlockCancel").onclick = close;
+  pw.addEventListener("keydown", e => { if (e.key === "Enter") tryUnlock(); if (e.key === "Escape") close(); e.stopPropagation(); });
 }
 // 스케줄 화면 버튼 배선 (모듈 로드 시)
 (function wireSchedule() {
@@ -10108,5 +10211,8 @@ window.addEventListener("load", () => {
   $("todayLbl").textContent = `${todayISO()} (${DOW[t.getDay()]})`;
   const r = await fetch("/api/me");
   if (r.status === 401) { let m=""; try{m=(await r.json()).detail}catch(e){} showLogin(typeof m==="string"?m:""); return; }
-  await startApp(await r.json());
+  const me = await r.json();
+  // 전체화면(현장 표시) 창은 앱 UI/비밀번호 안내 없이 스케줄만 띄운다 (load 리스너가 schedEnterFullMode 호출)
+  if ((location.hash || "").startsWith("#schedfull")) { window.ME = me; return; }
+  await startApp(me);
 })();
