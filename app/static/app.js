@@ -2522,10 +2522,17 @@ function renderChecks() {
     const doneOther  = doneGlobal && c.done_date !== E.date; // 다른 날(대개 이후)에 완료 → 이 날짜선 잠금
     const carried    = !doneGlobal && c.created_date && c.created_date < E.date;
     const locked     = !canWrite || doneOther;               // 다른 날 완료건은 이 날짜서 토글 불가
+    if (canWrite && E.checkEditId === c.id) {   // 편집 모드 — 글자 수정
+      return `<div style="display:flex; align-items:center; gap:6px; padding:5px 2px; border-bottom:1px solid var(--line-soft);">
+        <input type="text" data-chkeditinput="${c.id}" value="${esc(c.text)}" style="flex:1; font-size:13px; padding:4px 7px; border:1px solid var(--line); border-radius:6px;">
+        <button class="btn sm" data-chksave="${c.id}" style="flex:none; padding:0 10px; background:var(--ink); color:#fff;">저장</button>
+        <button class="btn ghost sm" data-chkcancel="${c.id}" style="flex:none; padding:0 8px;">취소</button></div>`;
+    }
     return `<div style="display:flex; align-items:center; gap:8px; padding:5px 2px; border-bottom:1px solid var(--line-soft);">
       <input type="checkbox" data-chk="${c.id}" ${doneGlobal ? "checked" : ""} ${locked ? "disabled" : ""} title="${doneOther ? esc(c.done_date) + " 완료 — 이 날짜에서는 변경할 수 없습니다" : ""}" style="width:16px; height:16px; flex:none; cursor:${locked ? "not-allowed" : "pointer"};">
       <span style="flex:1; font-size:13px; ${doneGlobal ? "text-decoration:line-through; color:var(--muted);" : ""}">${esc(c.text)}${carried ? ` <span class="auto" style="font-size:11px;">(${esc(c.created_date.slice(5))}부터 이월)</span>` : ""}${doneGlobal ? ` <span class="auto" style="font-size:11px;">· ${esc(c.done_date.slice(5))} 완료${doneOther ? " (다른 날 완료)" : ""}</span>` : ""}</span>
-      ${canWrite ? `<button class="btn ghost sm" data-chkdel="${c.id}" style="flex:none; padding:0 7px;">삭제</button>` : ""}</div>`;
+      ${canWrite ? `<button class="btn ghost sm" data-chkedit="${c.id}" style="flex:none; padding:0 7px;">수정</button>
+      <button class="btn ghost sm" data-chkdel="${c.id}" style="flex:none; padding:0 7px; color:var(--crit);">삭제</button>` : ""}</div>`;
   }).join("") : '<div class="auto" style="font-size:12px; padding:4px 0;">체크사항이 없습니다 — 다음날에도 챙길 일을 아래에 추가하세요 (완료 전까지 매일 이월)</div>';
 }
 async function addCheck() {
@@ -2559,8 +2566,35 @@ if ($("checkAdd")) {
         E.checks = (E.checks || []).filter(x => x.id !== +del.dataset.chkdel);
         renderChecks();
       } catch (e2) { /* api 토스트 */ }
+      return;
     }
+    const edit = e.target.closest("[data-chkedit]");
+    if (edit) { E.checkEditId = +edit.dataset.chkedit; renderChecks();
+      const inp = $("checkList").querySelector(`[data-chkeditinput="${E.checkEditId}"]`); if (inp) { inp.focus(); inp.select(); }
+      return;
+    }
+    const cancel = e.target.closest("[data-chkcancel]");
+    if (cancel) { E.checkEditId = null; renderChecks(); return; }
+    const save = e.target.closest("[data-chksave]");
+    if (save) { await _checkSaveEdit(+save.dataset.chksave); return; }
   });
+  // 편집 입력창 Enter=저장 / Esc=취소
+  $("checkList").addEventListener("keydown", async e => {
+    const inp = e.target.closest("[data-chkeditinput]"); if (!inp) return;
+    if (e.key === "Enter") { e.preventDefault(); await _checkSaveEdit(+inp.dataset.chkeditinput); }
+    else if (e.key === "Escape") { E.checkEditId = null; renderChecks(); }
+  });
+}
+async function _checkSaveEdit(cid) {
+  const inp = $("checkList").querySelector(`[data-chkeditinput="${cid}"]`); if (!inp) return;
+  const text = (inp.value || "").trim();
+  if (!text) { toast("체크사항 내용을 입력하세요"); inp.focus(); return; }
+  try {
+    await api("/api/check/" + cid, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+    const c = (E.checks || []).find(x => x.id === cid); if (c) c.text = text;
+    E.checkEditId = null; renderChecks();
+    toast("체크사항이 수정되었습니다");
+  } catch (e) { /* api 토스트 */ }
 }
 /* 입고 카드 합계 — 실사 카드의 '입고'는 여기서 계산 (입고 카드에 그 자재가 없으면 과거 저장분 폴백) */
 function matInTotal(mid) {
