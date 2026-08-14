@@ -9712,6 +9712,14 @@ function _schedMonday(iso) {
   return fmtISO(m);
 }
 function _schedAddDays(iso, n) { const d = new Date(iso + "T00:00:00"); d.setDate(d.getDate() + n); return fmtISO(d); }
+function _schedDayDiff(a, b) { return Math.round((new Date(b + "T00:00:00") - new Date(a + "T00:00:00")) / 86400000); }
+// 스케줄 안의 모든 날짜(주간 출고일·제품군 출고일·소비기한·예정)를 days만큼 이동
+function _schedShiftDates(d, days) {
+  if (!days) return;
+  const sh = iso => iso ? _schedAddDays(iso, days) : iso;
+  if (Array.isArray(d.shipDates)) d.shipDates = d.shipDates.map(sh);
+  (d.groups || []).forEach(g => { g.shipDate = sh(g.shipDate); (g.items || []).forEach(it => { it.expiry = sh(it.expiry); it.expiry2 = sh(it.expiry2); }); });
+}
 function _schedMD(iso) {
   if (!iso) return "";
   const d = new Date(iso + "T00:00:00"); if (isNaN(d)) return esc(iso);
@@ -9757,6 +9765,24 @@ async function loadSchedule(dateOpt) {
   } catch (e) { SCHED.week = week; SCHED.data = _schedNorm(_schedBlank(week), week); SCHED.saved = ""; }
   if ($("schedDate")) $("schedDate").value = SCHED.week;
   renderSchedule();
+}
+// 지난주(이전에 저장된 가장 최근 주) 스케줄을 이번 주로 복제 — 날짜는 주 차이만큼 이동. 이후 일부만 수정해 저장.
+async function schedLoadPrev() {
+  if (!SCHED.data) return;
+  const prev = (SCHED.weeks || []).filter(w => w < SCHED.week).sort().pop();
+  if (!prev) { toast("불러올 이전 주 스케줄이 없습니다"); return; }
+  if ((SCHED.data.groups || []).length && !confirm(`이번 주(${SCHED.week}) 편집 내용을 ${prev} 스케줄로 덮어쓸까요?\n(저장 전이라 되돌릴 수 없습니다)`)) return;
+  try {
+    const r = await api("/api/schedule?week=" + prev);
+    if (!r.data || !Object.keys(r.data).length) { toast(`${prev} 스케줄이 비어 있습니다`); return; }
+    const src = _schedNorm(JSON.parse(JSON.stringify(r.data)), prev);
+    const shift = _schedDayDiff(prev, SCHED.week);   // 예: 지난주→이번주 = +7일
+    _schedShiftDates(src, shift);
+    SCHED.data = _schedNorm(src, SCHED.week);
+    SCHED.saved = `${prev} 불러옴 — 수정 후 저장하세요 (아직 저장 안 됨)`;
+    renderSchedule();
+    toast(`${prev} 스케줄을 불러왔습니다 (날짜 ${shift >= 0 ? "+" : ""}${shift}일 이동). 필요한 부분만 수정 후 💾 저장하세요`);
+  } catch (e) { /* api 토스트 */ }
 }
 // 저장된 표시 설정(폰트·크기·색상·요소별)을 스케줄 데이터에 적용
 function _applySchedStyle(d, st) {
@@ -10234,6 +10260,7 @@ function _schedUnlockPrompt() {
   on("schedPrev", () => loadSchedule(_schedAddDays(SCHED.week, -7)));
   on("schedNext", () => loadSchedule(_schedAddDays(SCHED.week, 7)));
   on("schedThis", () => loadSchedule(todayISO()));
+  on("schedLoadPrev", schedLoadPrev);
   on("schedAddGroup", () => {
     if (!SCHED.data) return;
     // 새 제품군의 첫 항목 개입수는 직전 제품군을 따라간다 (예: 45개입 통일)
