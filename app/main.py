@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.82.4"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.82.5"    # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -5219,11 +5219,28 @@ def schedule_get(week: str = ""):
         # 저장된 주 목록(주 이동 드롭다운/표시용)
         weeks = [r["week_start"] for r in con.execute(
             "SELECT week_start FROM schedule ORDER BY week_start DESC")]
+        # 표시 설정 기본값(폰트·크기·색상 등) — 새 주는 이 설정으로 시작
+        try:
+            style_default = json.loads(get_app_setting("sched_style", "") or "{}")
+        except ValueError:
+            style_default = {}
         return {"week_start": mon, "data": data, "weeks": weeks,
+                "style_default": style_default,
                 "updated_at": row["updated_at"] if row else "",
                 "updated_by": row["updated_by"] if row else ""}
     finally:
         con.close()
+
+
+@app.post("/api/schedule/style")
+def schedule_style_save(request: Request, body: dict):
+    """표시 설정(글자 폰트·크기·색상 등)을 전역 기본값으로 저장 — 새 주 스케줄이 이 값으로 시작."""
+    _require_writer(request)
+    style = body.get("style")
+    if not isinstance(style, dict):
+        raise HTTPException(400, "표시 설정이 올바르지 않습니다")
+    set_app_setting("sched_style", json.dumps(style, ensure_ascii=False))
+    return {"ok": True}
 
 
 @app.post("/api/schedule")

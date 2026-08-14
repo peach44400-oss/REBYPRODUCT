@@ -8581,6 +8581,7 @@ function padEligible(el) {
   // 배합비 표는 #scr-items 안에 있음 (#mt-bom 요소는 존재하지 않아 배합비 키패드가 안 뜨던 버그 수정)
   // 소비기한 분할 모달·폐기 모달의 숫자칸도 키패드 지원
   return !!(el.closest("#scr-entry") || el.closest("#lotSplitOverlay") || el.closest("#dispOverlay")
+    || el.closest("#scr-sched")
     || (el.closest("#scr-items") && mTab === "bom"));
 }
 function evalExpr(s) {
@@ -8635,7 +8636,7 @@ function padCommit(t) {
 }
 /** Tab 이동 대상 — 같은 화면(모달) 안의 보이는 숫자칸들을 화면 순서대로 */
 function padInputs(el) {
-  const scope = el.closest("#lotSplitOverlay, #dispOverlay, #scr-entry, #scr-items") || document;
+  const scope = el.closest("#lotSplitOverlay, #dispOverlay, #scr-entry, #scr-items, #scr-sched") || document;
   return [...scope.querySelectorAll("input.mini-input")]
     .filter(x => padEligible(x) && !x.disabled && !x.readOnly && x.offsetParent !== null);
 }
@@ -9748,11 +9749,28 @@ async function loadSchedule(dateOpt) {
   try {
     const r = await api("/api/schedule?week=" + week);
     SCHED.week = r.week_start; SCHED.weeks = r.weeks || [];
-    SCHED.data = _schedNorm((r.data && Object.keys(r.data).length) ? r.data : _schedBlank(r.week_start), r.week_start);
+    SCHED.styleDefault = (r.style_default && Object.keys(r.style_default).length) ? r.style_default : null;
+    const hasData = r.data && Object.keys(r.data).length;
+    SCHED.data = _schedNorm(hasData ? r.data : _schedBlank(r.week_start), r.week_start);
+    if (!hasData && SCHED.styleDefault) _applySchedStyle(SCHED.data, SCHED.styleDefault);   // 새 주는 저장된 표시 설정으로 시작
     SCHED.saved = r.updated_at ? `저장됨 · ${String(r.updated_at).slice(0, 16)}${r.updated_by ? " · " + r.updated_by : ""}` : "아직 저장 안 됨 (새 스케줄)";
   } catch (e) { SCHED.week = week; SCHED.data = _schedNorm(_schedBlank(week), week); SCHED.saved = ""; }
   if ($("schedDate")) $("schedDate").value = SCHED.week;
   renderSchedule();
+}
+// 저장된 표시 설정(폰트·크기·색상·요소별)을 스케줄 데이터에 적용
+function _applySchedStyle(d, st) {
+  if (!st) return;
+  if (st.fontScale > 0) d.fontScale = st.fontScale;
+  if (st.fontFamily != null) d.fontFamily = st.fontFamily;
+  if (st.textColor != null) d.textColor = st.textColor;
+  if (st.elem && typeof st.elem === "object") {
+    for (const k of ["label", "qty", "sub", "date"]) {
+      if (st.elem[k]) { d.elem[k] = d.elem[k] || {};
+        if (st.elem[k].s > 0) d.elem[k].s = st.elem[k].s;
+        if (st.elem[k].c != null) d.elem[k].c = st.elem[k].c; }
+    }
+  }
 }
 let _schedDocT = null;
 function _schedDocLater() { clearTimeout(_schedDocT); _schedDocT = setTimeout(renderSchedDoc, 220); }
@@ -9806,7 +9824,8 @@ function renderSchedStyle() {
         <input type="number" data-elsz="${k}" value="${s}" min="40" max="300" step="5" style="width:52px; font-size:12px; padding:2px 4px; border:1px solid var(--line); border-radius:5px; text-align:right;">%
         <input type="color" data-elcl="${k}" value="${esc(c || "#111111")}" title="색 지정 — 우클릭/기본 버튼으로 해제" style="width:28px; height:22px; padding:0; border:1px solid var(--line); border-radius:4px; cursor:pointer;">
         <button class="btn ghost sm" data-elclr="${k}" title="색 기본값" style="padding:0 5px;">×</button></span>`;
-    }).join("")}`;
+    }).join("")}
+    <button class="btn sm" id="schedStyleDefault" title="현재 글자/폰트/색 설정을 기본값으로 저장 — 새 주 스케줄이 이 설정으로 시작합니다" style="background:var(--ink); color:#fff;">⭐ 기본값으로 저장</button>`;
   const setScale = v => { d.fontScale = Math.max(0.8, Math.min(1.8, Math.round(v * 20) / 20)); $("schedFsRange").value = d.fontScale; $("schedFsPct").textContent = Math.round(d.fontScale * 100) + "%"; renderSchedDoc(); };
   $("schedFsRange").oninput = e => setScale(parseFloat(e.target.value));
   $("schedFsMinus").onclick = () => setScale((d.fontScale || 1) - 0.05);
@@ -9817,6 +9836,18 @@ function renderSchedStyle() {
   el.querySelectorAll("[data-elsz]").forEach(inp => inp.oninput = e => { d.elem[e.target.dataset.elsz].s = Math.max(40, Math.min(300, +e.target.value || 100)); renderSchedDoc(); });
   el.querySelectorAll("[data-elcl]").forEach(inp => inp.oninput = e => { d.elem[e.target.dataset.elcl].c = e.target.value; renderSchedDoc(); });
   el.querySelectorAll("[data-elclr]").forEach(btn => btn.onclick = e => { const k = e.target.dataset.elclr; d.elem[k].c = ""; const ci = el.querySelector(`[data-elcl="${k}"]`); if (ci) ci.value = "#111111"; renderSchedDoc(); });
+  const sd = $("schedStyleDefault"); if (sd) sd.onclick = saveSchedStyleDefault;
+}
+async function saveSchedStyleDefault() {
+  const d = SCHED.data; if (!d) return;
+  const style = { fontScale: d.fontScale, fontFamily: d.fontFamily, textColor: d.textColor,
+    elem: JSON.parse(JSON.stringify(d.elem || {})) };
+  try {
+    await api("/api/schedule/style", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ style }) });
+    SCHED.styleDefault = style;
+    toast("표시 설정을 기본값으로 저장했습니다 — 새 주 스케줄이 이 설정으로 시작합니다");
+  } catch (e) { /* api 토스트 */ }
 }
 function renderSchedGroups() {
   const d = SCHED.data; if (!d) return;
@@ -9826,9 +9857,9 @@ function renderSchedGroups() {
   const cards = d.groups.map((g, gi) => {
     const rows = g.items.map((it, ii) => `<tr>
         <td><input data-g="${gi}" data-i="${ii}" data-f="label" list="schedProdDl" value="${esc(it.label)}" placeholder="제품/품목" style="${IN} width:148px;"></td>
-        <td style="white-space:nowrap;"><input data-g="${gi}" data-i="${ii}" data-f="qty" value="${esc(it.qty)}" inputmode="numeric" placeholder="수량" style="${IN} width:78px; text-align:right;"><span class="auto" style="font-size:11px;"> 개</span></td>
-        <td><input data-g="${gi}" data-i="${ii}" data-f="pack" value="${esc(it.pack)}" inputmode="numeric" placeholder="개입" style="${IN} width:56px; text-align:right;"></td>
-        <td><input data-g="${gi}" data-i="${ii}" data-f="boxes" value="${esc(it.boxes)}" inputmode="numeric" placeholder="자동" title="비워두면 수량÷개입으로 자동 계산됩니다" style="${IN} width:70px; text-align:right;${it.boxesAuto ? " color:var(--muted);" : ""}"></td>
+        <td style="white-space:nowrap;"><input class="mini-input" data-g="${gi}" data-i="${ii}" data-f="qty" value="${esc(it.qty)}" inputmode="numeric" placeholder="수량" style="${IN} width:78px; text-align:right;"><span class="auto" style="font-size:11px;"> 개</span></td>
+        <td><input class="mini-input" data-g="${gi}" data-i="${ii}" data-f="pack" value="${esc(it.pack)}" inputmode="numeric" placeholder="개입" style="${IN} width:56px; text-align:right;"></td>
+        <td><input class="mini-input" data-g="${gi}" data-i="${ii}" data-f="boxes" value="${esc(it.boxes)}" inputmode="numeric" placeholder="자동" title="비워두면 수량÷개입으로 자동 계산됩니다" style="${IN} width:70px; text-align:right;${it.boxesAuto ? " color:var(--muted);" : ""}"></td>
         <td><input data-g="${gi}" data-i="${ii}" data-f="expiry" class="datepick" readonly value="${esc(it.expiry)}" placeholder="📅 소비기한" style="${IN} width:104px;"></td>
         <td><input data-g="${gi}" data-i="${ii}" data-f="expiry2" class="datepick" readonly value="${esc(it.expiry2)}" placeholder="📅 예정" style="${IN} width:104px;"></td>
         <td><input data-g="${gi}" data-i="${ii}" data-f="partner" list="schedPartnerDl" value="${esc(it.partner)}" placeholder="거래처 검색" style="${IN} width:96px;"></td>
