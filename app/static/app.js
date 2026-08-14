@@ -9720,13 +9720,15 @@ function _schedBlankItem() { return { product_id: null, label: "", qty: "", pack
 function _schedBlank(week) {
   const dates = []; for (let i = 0; i < 6; i++) dates.push(_schedAddDays(week, i));
   return { title: "주간 생산·출고 스케줄", note: "※ 스케줄은 현장 상황에 맞게 변경될 수 있음",
-    author: (window.ME && ME.username) || "", legend: "", refNote: "", shipDates: dates, groups: [] };
+    author: (window.ME && ME.username) || "", legend: "", refNote: "",
+    fontScale: 1, fontFamily: "", textColor: "", shipDates: dates, groups: [] };
 }
 function _schedNorm(d, week) {
   d = d || {};
   d.title = d.title || "주간 생산·출고 스케줄";
   if (d.note == null) d.note = "※ 스케줄은 현장 상황에 맞게 변경될 수 있음";
   d.author = d.author || ""; d.legend = d.legend || ""; d.refNote = d.refNote || "";
+  if (!(d.fontScale > 0)) d.fontScale = 1; d.fontFamily = d.fontFamily || ""; d.textColor = d.textColor || "";
   if (!Array.isArray(d.shipDates) || !d.shipDates.length) { d.shipDates = []; for (let i = 0; i < 6; i++) d.shipDates.push(_schedAddDays(week, i)); }
   if (!Array.isArray(d.groups)) d.groups = [];
   d.groups.forEach(g => {
@@ -9767,8 +9769,38 @@ function renderSchedule() {
   $("schedNote").oninput = e => { d.note = e.target.value; _schedDocLater(); };
   $("schedLegend").oninput = e => { d.legend = e.target.value; _schedDocLater(); };
   if ($("schedRef")) { $("schedRef").value = d.refNote || ""; $("schedRef").oninput = e => { d.refNote = e.target.value; _schedDocLater(); }; }
+  renderSchedStyle();
   renderSchedGroups();
   renderSchedDoc();
+}
+// 표시 설정 — 글자 크기(배율)·글씨체·글자 색. 스케줄에 저장되어 인쇄·전체화면에도 동일 적용.
+const _SCHED_FAMS = [["", "기본"], ["'맑은 고딕','Malgun Gothic',sans-serif", "맑은 고딕"],
+  ["'굴림',Gulim,sans-serif", "굴림"], ["'돋움',Dotum,sans-serif", "돋움"],
+  ["'바탕',Batang,serif", "바탕(명조)"], ["'궁서',Gungsuh,serif", "궁서"]];
+function renderSchedStyle() {
+  const d = SCHED.data, el = $("schedStyle"); if (!d || !el) return;
+  const scale = d.fontScale || 1;
+  el.innerHTML = `
+    <span style="font-size:12px; font-weight:800;">🅰 표시 설정</span>
+    <span style="display:flex; align-items:center; gap:6px; font-size:12px;">글자 크기
+      <button class="btn ghost sm" id="schedFsMinus" style="padding:0 9px;">－</button>
+      <input type="range" id="schedFsRange" min="0.8" max="1.8" step="0.05" value="${scale}" style="width:120px;">
+      <button class="btn ghost sm" id="schedFsPlus" style="padding:0 9px;">＋</button>
+      <b id="schedFsPct" style="min-width:44px; text-align:right;">${Math.round(scale * 100)}%</b></span>
+    <span style="display:flex; align-items:center; gap:6px; font-size:12px;">글씨체
+      <select id="schedFamSel" style="font-size:12px; padding:4px 6px; border:1px solid var(--line); border-radius:6px;">
+        ${_SCHED_FAMS.map(([v, n]) => `<option value="${esc(v)}" ${v === (d.fontFamily || "") ? "selected" : ""}>${n}</option>`).join("")}
+      </select></span>
+    <span style="display:flex; align-items:center; gap:6px; font-size:12px;">글자 색
+      <input type="color" id="schedColor" value="${esc(d.textColor || "#111111")}" style="width:36px; height:26px; padding:0; border:1px solid var(--line); border-radius:5px; cursor:pointer;">
+      <button class="btn ghost sm" id="schedColorReset" style="padding:0 9px;">기본색</button></span>`;
+  const setScale = v => { d.fontScale = Math.max(0.8, Math.min(1.8, Math.round(v * 20) / 20)); $("schedFsRange").value = d.fontScale; $("schedFsPct").textContent = Math.round(d.fontScale * 100) + "%"; renderSchedDoc(); };
+  $("schedFsRange").oninput = e => setScale(parseFloat(e.target.value));
+  $("schedFsMinus").onclick = () => setScale((d.fontScale || 1) - 0.05);
+  $("schedFsPlus").onclick = () => setScale((d.fontScale || 1) + 0.05);
+  $("schedFamSel").onchange = e => { d.fontFamily = e.target.value; renderSchedDoc(); };
+  $("schedColor").oninput = e => { d.textColor = e.target.value; renderSchedDoc(); };
+  $("schedColorReset").onclick = () => { d.textColor = ""; $("schedColor").value = "#111111"; renderSchedDoc(); };
 }
 function renderSchedGroups() {
   const d = SCHED.data; if (!d) return;
@@ -9855,24 +9887,33 @@ function buildScheduleDoc(d, week) {
   const NFq = v => { v = String(v == null ? "" : v).replace(/,/g, ""); if (v === "") return ""; const n = Number(v); return isNaN(n) ? esc(v) : n.toLocaleString("ko-KR"); };
   const groups = d.groups || [];
   const n = groups.length || 1;
-  // 열 수에 맞춰 글자 크기 자동 — 적을수록 크게(작업자 가독성). table-layout:fixed + 줄바꿈으로 오른쪽 잘림 방지.
-  const fs = n <= 3 ? 20 : n <= 4 ? 18 : n <= 5 ? 17 : n <= 6 ? 16 : n <= 7 ? 15 : 14;
-  const nameFs = fs + 3, titleFs = 30, labelFs = fs + 1;
+  const scale = d.fontScale > 0 ? d.fontScale : 1;
+  const S = px => Math.max(8, Math.round(px * scale));   // 글자 배율 적용
+  const fam = d.fontFamily || "inherit";
+  const ink = d.textColor || "#111";
+  // 열 수에 맞춰 기본 글자 크기 자동(적을수록 크게) × 사용자 배율. table-layout:fixed + 줄바꿈으로 오른쪽 잘림 방지.
+  const baseFs = n <= 3 ? 20 : n <= 4 ? 18 : n <= 5 ? 17 : n <= 6 ? 16 : n <= 7 ? 15 : 14;
+  const fs = S(baseFs), nameFs = S(baseFs + 3), titleFs = S(30), labelFs = S(baseFs + 1), qtyFs = S(baseFs + 8);
   // white-space:normal 로 앱 전역 td{white-space:nowrap} 를 눌러 줄바꿈 허용 → 오른쪽 잘림 방지
-  const TD = `border:1px solid #333; padding:8px 9px; vertical-align:top; font-size:${fs}px; line-height:1.5; white-space:normal; word-break:break-word; overflow-wrap:anywhere;`;
-  const LB = `border:1px solid #333; padding:8px 5px; background:#f2f1ec; font-weight:800; text-align:center; font-size:${labelFs}px; white-space:nowrap;`;
-  const labelW = n >= 7 ? 56 : 76;
+  const TD = `border:1px solid #333; padding:7px 8px; vertical-align:top; font-size:${fs}px; line-height:1.4; white-space:normal; word-break:break-word; overflow-wrap:anywhere;`;
+  const LB = `border:1px solid #333; padding:8px 4px; background:#f2f1ec; font-weight:800; text-align:center; font-size:${labelFs}px; word-break:keep-all; line-height:1.15; color:#111;`;
+  const labelW = labelFs * 4 + 16;   // '소비기한'(4자)이 배율과 무관하게 항상 들어가도록 라벨 폭 확보
   const colgroup = `<colgroup><col style="width:${labelW}px;">${groups.map(() => "<col>").join("")}</colgroup>`;
-  const ribbon = (d.shipDates || []).map(x => `<span style="display:inline-block; min-width:84px; text-align:center; border:1px solid #999; border-radius:5px; padding:2px 9px; margin:2px; font-size:${fs - 1}px;">${_schedMD(x)}</span>`).join("");
+  const ribbon = (d.shipDates || []).map(x => `<span style="display:inline-block; min-width:84px; text-align:center; border:1px solid #999; border-radius:5px; padding:2px 9px; margin:2px; font-size:${S(13)}px;">${_schedMD(x)}</span>`).join("");
   const nameRow = groups.map(g => `<th style="${TD} text-align:center; font-weight:800; font-size:${nameFs}px; background:#e7e4dd;">${esc(g.name || "—")}</th>`).join("");
   const shipRow = groups.map(g => `<td style="${TD} text-align:center; font-weight:800;">${g.shipDate ? _schedMD(g.shipDate) : "—"}</td>`).join("");
-  const qtyFs = fs + 7;   // 수량을 가장 크게 (작업 중점)
+  // 발주량: 항목마다 [제품명 / 수량(크게) / 개입·박스 / 비고]를 세로로 쌓고 항목 사이 점선으로 구분
   const orderRow = groups.map(g => {
-    const body = (g.items || []).map(it => {
+    const its = g.items || [];
+    const body = its.map((it, idx) => {
       const pb = _schedPackBox(it);
-      return `<div style="margin-bottom:8px; line-height:1.3;"><b style="font-weight:700;">${esc(it.label || "")}</b>
-        <span style="font-size:${qtyFs}px; font-weight:900; color:#111; margin:0 2px;">${NFq(it.qty)}</span>
-        ${pb ? `<span style="color:#c26a1f; font-weight:700;">${esc(pb)}</span>` : ""}${it.partner ? ` <span style="color:#2f3fa0;">·${esc(it.partner)}</span>` : ""}${it.memo ? ` <span style="color:#888;">${esc(it.memo)}</span>` : ""}</div>`;
+      const sep = idx < its.length - 1 ? "border-bottom:1px dashed #b9b9b9; padding-bottom:6px; margin-bottom:6px;" : "";
+      return `<div style="${sep}">
+        <div style="font-weight:700;">${esc(it.label || "") || "&nbsp;"}</div>
+        <div style="font-size:${qtyFs}px; font-weight:900; line-height:1.05; margin:1px 0;">${NFq(it.qty) || "&nbsp;"}</div>
+        ${(pb || it.partner) ? `<div style="font-size:${S(baseFs - 1)}px;"><span style="color:#c26a1f; font-weight:700;">${esc(pb)}</span>${it.partner ? ` <span style="color:#2f3fa0;">· ${esc(it.partner)}</span>` : ""}</div>` : ""}
+        ${it.memo ? `<div style="color:#888; font-size:${S(baseFs - 1)}px;">${esc(it.memo)}</div>` : ""}
+      </div>`;
     }).join("") || '<span style="color:#bbb;">—</span>';
     return `<td style="${TD}">${body}</td>`;
   }).join("");
@@ -9885,15 +9926,15 @@ function buildScheduleDoc(d, week) {
     return `<td style="${TD} text-align:center; color:#666;">${exps.length ? exps.map(esc).join("<br>") : "—"}</td>`;
   }).join("");
   const memoRow = groups.map(g => `<td style="${TD} text-align:center; color:#444;">${esc(g.memo || "")}</td>`).join("");
-  const empty = groups.length ? "" : `<div style="text-align:center; color:#bbb; padding:40px; font-size:15px;">제품군을 추가하면 여기에 표가 나타납니다</div>`;
-  return `<div class="sched-doc" style="color:#111; font-family:inherit; display:flex; flex-direction:column;">
+  const empty = groups.length ? "" : `<div style="text-align:center; color:#bbb; padding:40px; font-size:${S(15)}px;">제품군을 추가하면 여기에 표가 나타납니다</div>`;
+  return `<div class="sched-doc" style="color:${ink}; font-family:${fam}; display:flex; flex-direction:column;">
     <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:2px;">
-      <div style="width:210px; font-size:12px; color:#555;">${week} ~ ${_schedAddDays(week, 5)}<br>작성자 : <b>${esc(d.author || "—")}</b></div>
+      <div style="width:210px; font-size:${S(12)}px; color:#555;">${week} ~ ${_schedAddDays(week, 5)}<br>작성자 : <b>${esc(d.author || "—")}</b></div>
       <h1 style="text-align:center; letter-spacing:8px; font-size:${titleFs}px; margin:0; flex:1 1 0; min-width:0; word-break:keep-all;">${esc(d.title || "주간 생산·출고 스케줄")}</h1>
-      <div style="width:230px; font-size:12px; text-align:right; white-space:pre-wrap; color:#333;">${esc(d.legend || "")}</div>
+      <div style="width:230px; font-size:${S(12)}px; text-align:right; white-space:pre-wrap; color:#333;">${esc(d.legend || "")}</div>
     </div>
-    <div style="text-align:center; color:#666; font-size:13px; margin:2px 0 8px;">${esc(d.note || "")}</div>
-    <div style="text-align:center; margin-bottom:8px;"><b style="color:#555; font-size:13px;">주간 출고일</b> ${ribbon || "—"}</div>
+    <div style="text-align:center; color:#666; font-size:${S(13)}px; margin:2px 0 8px;">${esc(d.note || "")}</div>
+    <div style="text-align:center; margin-bottom:8px;"><b style="color:#555; font-size:${S(13)}px;">주간 출고일</b> ${ribbon || "—"}</div>
     ${empty || `<div class="sched-tblwrap" style="flex:1 1 auto;"><table class="sched-main" style="width:100%; height:100%; border-collapse:collapse; table-layout:fixed;">
       ${colgroup}
       <thead><tr><th style="${LB}">제품</th>${nameRow}</tr></thead>
@@ -9904,7 +9945,7 @@ function buildScheduleDoc(d, week) {
         <tr><td style="${LB} font-size:${labelFs - 1}px;">예정<br>소비기한</td>${exp2Row}</tr>
         <tr><td style="${LB}">비고</td>${memoRow}</tr>
       </tbody></table></div>`}
-    ${d.refNote ? `<div style="margin-top:10px; border:1px solid #999; border-radius:6px; padding:9px 11px; font-size:12px; white-space:pre-wrap; color:#333; flex:0 0 auto;">${esc(d.refNote)}</div>` : ""}
+    ${d.refNote ? `<div style="margin-top:10px; border:1px solid #999; border-radius:6px; padding:9px 11px; font-size:${S(12)}px; white-space:pre-wrap; color:#333; flex:0 0 auto;">${esc(d.refNote)}</div>` : ""}
   </div>`;
 }
 function renderSchedDoc() { if ($("schedDoc") && SCHED.data) $("schedDoc").innerHTML = buildScheduleDoc(SCHED.data, SCHED.week); }
