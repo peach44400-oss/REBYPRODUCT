@@ -2814,12 +2814,16 @@ function renderMatStatus() {
   const d = MATSTAT.data; if (!d) return;
   const canStock = typeof MYDUTY !== "undefined" && MYDUTY.has && MYDUTY.has("stock");
   const s = d.summary || { expired: 0, soon: 0, low: 0 };
-  const card = (key, icon, label, n, color) => `<button type="button" data-msfilter="${key}"
-    style="flex:1; min-width:118px; text-align:left; border:1px solid ${MATSTAT.filter === key ? color : "var(--line)"}; background:${MATSTAT.filter === key ? color + "1a" : "var(--bg)"}; border-radius:10px; padding:9px 12px; cursor:pointer;">
+  const card = (key, icon, label, n, color) => {
+    const isVar = color.indexOf("var(") === 0;   // var(--ink) 등은 hex 연결(+"1a") 불가 → 선택 배경은 soft 토큰으로 대체
+    const selBg = isVar ? "var(--accent-soft)" : color + "1a";
+    return `<button type="button" data-msfilter="${key}"
+    style="flex:1; min-width:118px; text-align:left; border:1px solid ${MATSTAT.filter === key ? color : "var(--line)"}; background:${MATSTAT.filter === key ? selBg : "var(--bg)"}; border-radius:10px; padding:9px 12px; cursor:pointer;">
     <div style="font-size:12px; color:var(--muted);">${icon} ${label}</div>
     <div style="font-size:20px; font-weight:800; color:${n > 0 ? color : "var(--muted)"};">${NF(n)}<span style="font-size:12px; font-weight:500; color:var(--muted);"> 종</span></div></button>`;
+  };
   $("msSummary").innerHTML =
-    card("stock", "📦", "전체 자재", (d.items || []).length, "#121212") +
+    card("stock", "📦", "전체 자재", (d.items || []).length, "var(--ink)") +
     card("expired", "⚠", "유통기한 만료", s.expired, "#c0392b") +
     card("soon", "⏰", `임박 (${d.soon_days || 7}일)`, s.soon, "#B45309") +
     card("low", "📉", "재고 부족", s.low, "#B45309");
