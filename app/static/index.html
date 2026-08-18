@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>REBYPRODUCT 재고관리</title>
+<script>/* 테마 무플래시 적용 — 페인트 전에 data-theme 설정 */try{var _tm=localStorage.getItem('ms_theme')||'light';var _te=(_tm==='dark'||_tm==='light')?_tm:((window.matchMedia&&matchMedia('(prefers-color-scheme:dark)').matches)?'dark':'light');document.documentElement.dataset.theme=_te;document.documentElement.dataset.themeMode=_tm;}catch(e){}</script>
 <style>
   :root{
     --bg:#F5F5F3; --surface:#FFFFFF; --line:#E5E4E0; --line-soft:#EFEEEA;
@@ -12,7 +13,27 @@
     --side:#0C0C0C; --side-ink:#F2F1EE; --side-muted:#8F8C86;
     --crit:#C2372C; --crit-soft:#FBEBE9; --warn:#C4841D; --warn-soft:#FAF1DF;
     --ok:#3E7A50; --ok-soft:#EAF2EC; --r:10px;
+    --solid:#121212; --solid-ink:#FFFFFF;   /* 짙은(solid) 버튼 — 다크모드에서 반전 */
   }
+  /* ── 다크 모드 (관리 › 화면 에서 전환, JS가 data-theme 지정) ── */
+  :root[data-theme="dark"]{
+    --bg:#161719; --surface:#202226; --line:#34373D; --line-soft:#2A2D32;
+    --ink:#E7E7E4; --muted:#9C9A95; --faint:#6E6C68;
+    --accent:#E7E7E4; --accent-ink:#16171A; --accent-soft:#2A2D32;
+    --side:#0B0B0D; --side-ink:#EDEDEA; --side-muted:#84827D;
+    --crit:#E76A5F; --crit-soft:#3A2320; --warn:#DBA748; --warn-soft:#37301C;
+    --ok:#5EA873; --ok-soft:#1F2E28;
+    --solid:#E7E7E4; --solid-ink:#17181B;   /* 다크에선 밝은 버튼 + 어두운 글자 */
+  }
+  :root[data-theme="dark"] input:not([type=color]):not([type=checkbox]):not([type=radio]),
+  :root[data-theme="dark"] select,
+  :root[data-theme="dark"] textarea{ background:var(--surface); color:var(--ink); border-color:var(--line); }
+  :root[data-theme="dark"] tbody tr:hover td{ background:var(--line-soft); }
+  :root[data-theme="dark"] #chatDayNav button,
+  :root[data-theme="dark"] #chatMentions button,
+  :root[data-theme="dark"] #chatAttach,
+  :root[data-theme="dark"] #chatHead .chbtn,
+  :root[data-theme="dark"] .dp-pop{ background:var(--surface); color:var(--ink); }
   *{box-sizing:border-box; margin:0; padding:0;}
   html,body{height:100%;}
   body{font-family:"Pretendard Variable",Pretendard,"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;
@@ -182,8 +203,8 @@
   .btn{border:1px solid var(--line); background:var(--surface); color:var(--ink);
     border-radius:8px; padding:8px 16px; font-size:13px; font-weight:700; white-space:nowrap;}
   .btn:hover{border-color:var(--faint);}
-  .btn.primary{background:var(--accent); border-color:var(--accent); color:#fff;}
-  .btn.primary:hover{background:#000;}
+  .btn.primary{background:var(--solid); border-color:var(--solid); color:var(--solid-ink);}
+  .btn.primary:hover{opacity:.88;}
   .btn.ghost{border-color:transparent; color:var(--muted);}
   .btn.sm{padding:5px 11px; font-size:12px;}
   .kpis{display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:14px;}
@@ -292,7 +313,7 @@
   .pager button{min-width:28px; height:26px; padding:0 7px; border:1px solid var(--line); border-radius:6px;
     background:var(--surface); color:var(--ink); font-size:12px; cursor:pointer;}
   .pager button:hover:not(:disabled){background:var(--bg);}
-  .pager button.on{background:var(--ink); color:#fff; border-color:var(--ink); font-weight:700;}
+  .pager button.on{background:var(--solid); color:var(--solid-ink); border-color:var(--solid); font-weight:700;}
   .pager button:disabled{opacity:.35; cursor:default;}
   /* 기준정보 완성도 점검 배너 */
   .mh-wrap{display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:10px 14px;
@@ -317,7 +338,7 @@
   .ord-btn:disabled{opacity:.3; cursor:default;}
   tr.dragging{opacity:.4;}
   tr[draggable="true"]{cursor:default;}
-  #mQuickEdit.on{background:var(--ink); color:#fff; border-color:var(--ink);}
+  #mQuickEdit.on{background:var(--solid); color:var(--solid-ink); border-color:var(--ink);}
   /* 공용 날짜 선택 달력 */
   input.datepick{cursor:pointer; user-select:none;}   /* 읽기전용 달력칸 클릭 시 글자 선택(하이라이트)로 안 보이는 것 방지 */
   input.datepick:hover{border-color:var(--ink);}
@@ -333,7 +354,7 @@
   .dp-days button{position:relative; border:1px solid transparent; background:none; cursor:pointer; padding:10px 0; font-size:14px; border-radius:7px; color:var(--ink);}
   .dp-days button:hover{background:var(--bg);}
   .dp-days button.today{border-color:var(--line); font-weight:700;}
-  .dp-days button.sel{background:var(--ink); color:#fff; font-weight:700;}
+  .dp-days button.sel{background:var(--solid); color:var(--solid-ink); font-weight:700;}
   .dp-days button.has::after{content:''; position:absolute; left:50%; transform:translateX(-50%); bottom:3px; width:4px; height:4px; border-radius:99px; background:var(--ok);}
   .dp-days button.sel.has::after{background:#fff;}
   .dp-days span{display:block;}
@@ -523,7 +544,7 @@
   .days button:hover{background:var(--bg);}
   .days .has::after{content:''; position:absolute; left:50%; transform:translateX(-50%);
     bottom:2.5px; width:4px; height:4px; border-radius:99px; background:var(--ok);}
-  .days .today{background:var(--ink); color:#fff; font-weight:800;}
+  .days .today{background:var(--solid); color:var(--solid-ink); font-weight:800;}
   .days .off{color:var(--faint); font-weight:500;}
   .days .sel{box-shadow:inset 0 0 0 2px var(--ink);}
   .callegend{display:flex; gap:14px; font-size:11px; color:var(--muted); margin-top:9px;}
@@ -558,7 +579,7 @@
   .overlay{position:fixed; inset:0; background:rgba(12,12,12,.45); display:none;
     align-items:center; justify-content:center; z-index:60; padding:20px;}
   .overlay.on{display:flex;}
-  .modal{background:#fff; border-radius:12px; padding:20px 22px; width:520px; max-width:100%;
+  .modal{background:var(--surface); color:var(--ink); border-radius:12px; padding:20px 22px; width:520px; max-width:100%;
     max-height:90vh; overflow-y:auto; box-shadow:0 18px 50px rgba(12,12,12,.28);}
   .modal h3{font-size:15px; font-weight:800; margin-bottom:4px;}
   .modal .hint{margin-bottom:10px;}
@@ -584,7 +605,7 @@
   #padInfo .diff{font-size:10.5px; font-weight:700;}
   #numPad button.pfn{font-size:12.5px; color:var(--muted);}
   #numPad button.pop{background:var(--accent-soft); color:var(--accent-ink); font-size:16px;}
-  #numPad button.pok{background:var(--ink); border-color:var(--ink); color:#fff; font-size:13px;}
+  #numPad button.pok{background:var(--solid); border-color:var(--solid); color:var(--solid-ink); font-size:13px;}
   .stopbtn{border:1px dashed var(--line); background:none; border-radius:6px; padding:4px 10px;
     font-size:12px; color:var(--muted); max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
   .stopbtn.hastext{border-style:solid; color:var(--ink); font-weight:600;}
@@ -1391,7 +1412,7 @@
             <button class="btn ghost sm" id="schedLoadPrev" title="이전에 저장된 가장 최근 주 스케줄을 이번 주로 불러옵니다 (날짜 자동 이동) — 일부만 수정 후 저장하세요">📋 지난주 불러오기</button>
             <span style="flex:1;"></span>
             <button class="btn sm" id="schedAddGroup">＋ 제품군</button>
-            <button class="btn sm" id="schedSave" style="background:var(--ink); color:#fff;">💾 저장</button>
+            <button class="btn sm" id="schedSave" style="background:var(--solid); color:var(--solid-ink);">💾 저장</button>
             <button class="btn ghost sm" id="schedPrintBtn">🖨 인쇄</button>
             <button class="btn ghost sm" id="schedPdf">📄 PDF</button>
             <button class="btn sm" id="schedFull" title="새 창을 열어 전체화면으로 — 현장 모니터에 실시간 표시(10초마다 자동 새로고침)">🖥 전체화면</button>
@@ -1934,6 +1955,17 @@
       <button data-atab="net">🌐 외부접속</button>
       <button data-atab="backup">💾 백업 / 복원</button>
       <button data-atab="check">🔍 데이터 점검</button>
+      <button data-atab="theme">🎨 화면(테마)</button>
+    </div>
+
+    <div class="admin-pane" data-apane="theme" style="display:none;">
+      <p class="hint" style="margin:0 0 10px;">앱 배경/글자 색 테마를 고릅니다. 이 기기(브라우저)에 저장되며, 인쇄물·미리보기(A4 문서)는 항상 흰 종이로 출력됩니다.</p>
+      <div id="themeBtns" style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="btn" data-theme-set="light">☀️ 라이트</button>
+        <button class="btn" data-theme-set="dark">🌙 다크</button>
+        <button class="btn" data-theme-set="system">🖥 시스템 설정 따름</button>
+      </div>
+      <p class="hint" id="themeCur" style="margin:10px 0 0;"></p>
     </div>
 
     <div class="admin-pane" data-apane="upd">

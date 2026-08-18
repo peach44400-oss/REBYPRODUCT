@@ -2525,7 +2525,7 @@ function renderChecks() {
     if (canWrite && E.checkEditId === c.id) {   // 편집 모드 — 글자 수정
       return `<div style="display:flex; align-items:center; gap:6px; padding:5px 2px; border-bottom:1px solid var(--line-soft);">
         <input type="text" data-chkeditinput="${c.id}" value="${esc(c.text)}" style="flex:1; font-size:13px; padding:4px 7px; border:1px solid var(--line); border-radius:6px;">
-        <button class="btn sm" data-chksave="${c.id}" style="flex:none; padding:0 10px; background:var(--ink); color:#fff;">저장</button>
+        <button class="btn sm" data-chksave="${c.id}" style="flex:none; padding:0 10px; background:var(--solid); color:var(--solid-ink);">저장</button>
         <button class="btn ghost sm" data-chkcancel="${c.id}" style="flex:none; padding:0 8px;">취소</button></div>`;
     }
     return `<div style="display:flex; align-items:center; gap:8px; padding:5px 2px; border-bottom:1px solid var(--line-soft);">
@@ -8841,7 +8841,31 @@ async function openAdmin() {
   updCheck(true);   // 열 때 조용히 현재 버전 표시(있으면 새 버전도)
 }
 window.closeAdmin = () => $("adminOverlay").classList.remove("on");
-$("btnAdmin").onclick = openAdmin;
+$("btnAdmin").onclick = () => { openAdmin(); applyTheme(); };
+
+/* ── 화면 테마 (라이트 / 다크 / 시스템) — 이 기기(localStorage 'ms_theme')에 저장 ── */
+function _themeEffective(mode) {
+  if (mode === "dark" || mode === "light") return mode;
+  return (window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+}
+function applyTheme(mode) {
+  if (mode) { try { localStorage.setItem("ms_theme", mode); } catch (e) {} }
+  let m = mode;
+  if (!m) { try { m = localStorage.getItem("ms_theme"); } catch (e) {} m = m || "light"; }
+  const eff = _themeEffective(m);
+  document.documentElement.dataset.theme = eff;
+  document.documentElement.dataset.themeMode = m;
+  document.querySelectorAll("[data-theme-set]").forEach(b => b.classList.toggle("primary", b.dataset.themeSet === m));
+  const lbl = $("themeCur");
+  if (lbl) lbl.textContent = "현재 테마: " + ({ light: "라이트", dark: "다크", system: "시스템 설정 따름" }[m] || m)
+    + (m === "system" ? ` (지금 ${eff === "dark" ? "다크" : "라이트"})` : "");
+  if (mode) toast(`화면 테마: ${{ light: "라이트", dark: "다크", system: "시스템 따름" }[m] || m}`);
+}
+document.querySelectorAll("[data-theme-set]").forEach(b => b.onclick = () => applyTheme(b.dataset.themeSet));
+if (window.matchMedia) matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+  if ((document.documentElement.dataset.themeMode || "light") === "system") applyTheme("system");
+});
+applyTheme();   // 저장된 테마 적용(무플래시 스크립트와 동기화)
 
 /* ── 외부 접속(cloudflared 터널) ── */
 let TUN = { timer: null };
@@ -9934,7 +9958,7 @@ function renderSchedStyle() {
         <input type="color" data-elcl="${k}" value="${esc(c || "#111111")}" title="색 지정 — 우클릭/기본 버튼으로 해제" style="width:28px; height:22px; padding:0; border:1px solid var(--line); border-radius:4px; cursor:pointer;">
         <button class="btn ghost sm" data-elclr="${k}" title="색 기본값" style="padding:0 5px;">×</button></span>`;
     }).join("")}
-    <button class="btn sm" id="schedStyleDefault" title="현재 글자/폰트/색 설정을 기본값으로 저장 — 새 주 스케줄이 이 설정으로 시작합니다" style="background:var(--ink); color:#fff;">⭐ 기본값으로 저장</button>`;
+    <button class="btn sm" id="schedStyleDefault" title="현재 글자/폰트/색 설정을 기본값으로 저장 — 새 주 스케줄이 이 설정으로 시작합니다" style="background:var(--solid); color:var(--solid-ink);">⭐ 기본값으로 저장</button>`;
   const setScale = v => { d.fontScale = Math.max(0.8, Math.min(1.8, Math.round(v * 20) / 20)); $("schedFsRange").value = d.fontScale; $("schedFsPct").textContent = Math.round(d.fontScale * 100) + "%"; renderSchedDoc(); };
   $("schedFsRange").oninput = e => setScale(parseFloat(e.target.value));
   $("schedFsMinus").onclick = () => setScale((d.fontScale || 1) - 0.05);
