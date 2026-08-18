@@ -459,6 +459,27 @@
   .lp-row-cb{display:inline-flex; align-items:center; margin-right:5px; vertical-align:middle; cursor:pointer;}
   .lp-row-cb input{width:14px; height:14px; cursor:pointer;}
   #ledgerBody tr.lp-off, #ledgerFin tr.lp-off, #ledgerStaff tr.lp-off{opacity:.32;}
+  /* '종이 문서'로 렌더되는 영역은 인쇄물과 동일하게 항상 흰 배경·검은 글씨로 고정한다(다크모드에서도).
+     내부 표는 색을 하드코딩(테두리 #333, 헤더 #eef0f2 등)하지만, 글자색을 지정하지 않은 칸은
+     기본 글자색(다크모드에서 밝은 var(--ink))을 상속받아 흰 종이 위에서 보이지 않게 되므로 여기서 #111로 고정.
+     대상: 수불부(원료·완제품·인원), 인원 원장, 월마감 리포트, 발주 정산/보기, 보낸 발주서, 주간 스케줄 미리보기. */
+  #ledgerBody, #ledgerFin, #ledgerStaff, #staffLedgerBody,
+  #mrBody, #poSettleBody, #poViewBody, #sentViewBody, #schedDoc{
+    background:#fff; color:#111;
+  }
+  :root[data-theme="dark"] #ledgerBody,
+  :root[data-theme="dark"] #ledgerFin,
+  :root[data-theme="dark"] #ledgerStaff,
+  :root[data-theme="dark"] #staffLedgerBody,
+  :root[data-theme="dark"] #mrBody,
+  :root[data-theme="dark"] #poSettleBody,
+  :root[data-theme="dark"] #poViewBody,
+  :root[data-theme="dark"] #sentViewBody,
+  :root[data-theme="dark"] #schedDoc{
+    box-shadow:0 0 0 1px #3a3a3a, 0 8px 26px rgba(0,0,0,.45);
+  }
+  /* 종이 위 편집셀 hover 색도 흰 배경 기준으로 유지 */
+  #ledgerBody .lcell:hover, #ledgerFin .lcell:hover, #ledgerStaff .lcell:hover{ background:#FFFBE6 !important; }
   @media print{
     #poPrintArea .lp-row-cb{display:none !important;}
     #poPrintArea tr.lp-off{display:none !important;}
