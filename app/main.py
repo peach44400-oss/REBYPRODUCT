@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.82.16"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.82.17"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -5880,6 +5880,11 @@ def ledger(request: Request, date: str = ""):
             batches.setdefault(r["material_id"], []).append(
                 {"in": r["date"], "qty": float(r["qty"] or 0),
                  "exp": r["expiry"] or "", "made": r["made_date"] or ""})
+        # 이미 폐기된 소비기한(LOT) — 그 날짜(≤date)까지 확정 폐기된 것. 수불부 소비기한 열에서 제외한다.
+        disp_exp = {}   # material_id -> set(expiry)
+        for r in con.execute("""SELECT material_id, expiry FROM material_disposal
+                WHERE date<=? AND COALESCE(expiry,'')!='' GROUP BY material_id, expiry""", (date,)):
+            disp_exp.setdefault(r["material_id"], set()).add(r["expiry"])
         # carry-forward 소비기한 — 그날까지(≤date) 가장 최근에 입력된 소비기한.
         # 입고분(material_in.expiry) + 입고 없는 재고 수동입력(material_expiry) 중 가장 최근 날짜.
         # FEFO 활성 배치를 못 잡을 때(초기·잉여 재고 등)의 폴백 — 입력한 기한이 표에서 사라지지 않게 한다.
@@ -6017,9 +6022,20 @@ def ledger(request: Request, date: str = ""):
             # 당일 사용량이 여러 소비기한 배치에 걸치면 그 기한을 모두 표시 (예: "2026-07-01, 2026-07-02")
             exps_today = fefo_consumed_today(m["id"], d["prev_qty"] if d else None,
                                              d["used_qty"] if d else None)
+            # 이미 폐기된 소비기한(LOT)은 수불부에 표시하지 않는다 (재고에서 빠졌으므로)
+            dset = disp_exp.get(m["id"])
+            if dset:
+                exps_today = [e for e in exps_today if e not in dset]
+                if exp:   # 단일/콤마 문자열에서도 폐기된 기한 제거
+                    keep = [e.strip() for e in exp.split(",") if e.strip() and e.strip() not in dset]
+                    exp = ", ".join(keep)
+                    if not exp:
+                        exp_est = False
             if len(exps_today) > 1:
                 exp = ", ".join(exps_today)
                 exp_est = False
+            elif len(exps_today) == 1 and not exp:
+                exp = exps_today[0]
             row = {"id": m["id"], "name": m["name"], "unit": m["unit"] or "",
                    "prev": (d["prev_qty"] if d else None), "in": (d["in_qty"] if d else None),
                    "used": (d["used_qty"] if d else None), "real": (d["real_qty"] if d else None),
