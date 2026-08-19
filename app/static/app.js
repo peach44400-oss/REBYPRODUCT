@@ -10161,6 +10161,12 @@ function _schedClick(e) {
     gs.push({ name: "", shipDate: "", memo: "", items: [it] });
     renderSchedDoc(); return;
   }
+  const ib = e.target.closest("[data-schediblank]");
+  if (ib) {   // 이 항목 위에 빈 칸(스페이서) 삽입 → 한 칸 아래로 띄움
+    const [gi, ii] = ib.dataset.schediblank.split(":").map(Number);
+    SCHED.data.groups[gi].items.splice(ii, 0, _schedBlankItem());
+    renderSchedDoc(); return;
+  }
   const gm = e.target.closest("[data-schedgmove]");
   if (gm) {
     const [gi, dir] = gm.dataset.schedgmove.split(":").map(Number);
@@ -10329,6 +10335,7 @@ function buildScheduleDocEdit(d, week) {
           ${it_(gi, ii, "partner", it.partner, "", ` list="schedPartnerDl" placeholder="거래처" style="flex:1 1 0; color:#2f3fa0;"`)}
           ${it_(gi, ii, "memo", it.memo, "", ` placeholder="비고" style="flex:1 1 0; color:#888;"`)}</div>
         <div class="sched-ectl" style="position:absolute; top:0; right:0; display:flex; gap:2px; font-size:${Math.max(13, S(13))}px;">
+          <button data-schediblank="${gi}:${ii}" title="이 항목 위에 빈 칸 삽입 (한 칸 아래로 띄움)" style="padding:2px 6px;">␣</button>
           <button data-schedimove="${gi}:${ii}:-1" title="위로" ${ii === 0 ? "disabled" : ""} style="padding:2px 6px;">▲</button>
           <button data-schedimove="${gi}:${ii}:1" title="아래로" ${ii === its.length - 1 ? "disabled" : ""} style="padding:2px 6px;">▼</button>
           <button data-schedidel="${gi}:${ii}" title="항목 삭제" style="padding:2px 7px; color:#c0392b;">×</button></div>
@@ -10445,10 +10452,21 @@ async function saveSchedule() {
 // 편집/미리보기 버튼·안내문·＋제품군 버튼을 현재 editMode에 맞춰 갱신
 function _schedSyncEditUI() {
   const b = $("schedEditToggle"); if (b) b.textContent = SCHED.editMode ? "✔ 편집 완료" : "✏️ 편집";
-  const ag = $("schedAddGroup"); if (ag) ag.style.display = SCHED.editMode ? "" : "none";
+  ["schedAddGroup", "schedEqualize"].forEach(id => { const el = $(id); if (el) el.style.display = SCHED.editMode ? "" : "none"; });
   const hdr = $("schedDocHdr"); if (hdr) hdr.innerHTML = SCHED.editMode
     ? '📝 편집 중 <span class="auto" style="font-weight:400;">— 각 칸을 클릭해 입력하세요. 엑셀 표를 복사해 칸에 <b>Ctrl+V</b>로 붙여넣을 수 있습니다. 마치면 <b>✔ 편집 완료</b>를 누르세요.</span>'
     : '📄 미리보기 <span class="auto" style="font-weight:400;">— 실제 인쇄·전체화면에 이 모양으로 출력됩니다. 수정하려면 위 <b>✏️ 편집</b> 버튼을 누르세요.</span>';
+}
+// 모든 제품군의 항목(칸) 수를 가장 많은 제품군에 맞춰 빈 칸으로 채운다 — 열끼리 줄 맞출 때
+function schedEqualize() {
+  const d = SCHED.data; if (!d || !d.groups.length) return;
+  const max = Math.max(...d.groups.map(g => (g.items || []).length));
+  if (max === 0) { toast("항목이 있는 제품군이 없습니다"); return; }
+  let added = 0;
+  d.groups.forEach(g => { while ((g.items || []).length < max) { g.items.push(_schedBlankItem()); added++; } });
+  if (!SCHED.editMode) { SCHED.editMode = true; _schedSyncEditUI(); }
+  renderSchedDoc();
+  toast(added ? `빈 칸 ${added}개를 채워 모든 제품군을 ${max}칸으로 맞췄습니다` : `이미 모두 ${max}칸으로 맞춰져 있습니다`);
 }
 // ── 엑셀(CSV) 내보내기/불러오기 — 열: 제품군·출고일·제품명·수량·개입·박스·소비기한·예정·거래처·비고 ──
 const _SCHED_CSV_HEAD = ["제품군", "출고일", "제품명", "수량", "개입", "박스", "소비기한", "예정소비기한", "거래처", "비고"];
@@ -10659,6 +10677,7 @@ function _schedUnlockPrompt() {
   on("schedFull", schedFullscreen);
   const dd = $("schedDate"); if (dd) dd.addEventListener("change", e => { if (e.target.value) loadSchedule(e.target.value); });
   on("schedEditToggle", () => { SCHED.editMode = !SCHED.editMode; _schedSyncEditUI(); renderSchedDoc(); });
+  on("schedEqualize", schedEqualize);
   on("schedExport", schedExportCsv);
   on("schedImport", () => { const f = $("schedImportFile"); if (f) f.click(); });
   const impf = $("schedImportFile");
