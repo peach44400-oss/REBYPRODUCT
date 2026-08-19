@@ -9877,6 +9877,7 @@ function _schedNorm(d, week) {
   for (const k of ["label", "qty", "sub", "date"]) { d.elem[k] = d.elem[k] || {}; if (!(d.elem[k].s > 0)) d.elem[k].s = 100; d.elem[k].c = d.elem[k].c || ""; }
   if (!Array.isArray(d.shipDates) || !d.shipDates.length) { d.shipDates = []; for (let i = 0; i < 6; i++) d.shipDates.push(_schedAddDays(week, i)); }
   if (!Array.isArray(d.rowW)) d.rowW = [];   // 행(줄) 높이 가중치 배열(기본 비어있음 → 1)
+  d.rowsEqual = !!d.rowsEqual;   // 행 높이 균일 맞춤 여부
   if (!Array.isArray(d.groups)) d.groups = [];
   d.groups.forEach(g => {
     g.name = g.name || ""; g.shipDate = g.shipDate || ""; g.memo = g.memo || "";
@@ -10278,8 +10279,10 @@ function buildScheduleDoc(d, week) {
       ${(pb || it.partner) ? `<div style="font-size:${subSize}px;"><span style="color:${ec("sub", "#c26a1f")}; font-weight:700;">${esc(pb)}</span>${it.partner ? ` <span style="color:#2f3fa0;">· ${esc(it.partner)}</span>` : ""}</div>` : ""}
       ${it.memo ? `<div style="color:#888; font-size:${subSize}px;">${esc(it.memo)}</div>` : ""}</td>`;
   };
+  const uniformH = labelSize + qtySize + subSize * 2 + S(18);
+  const rowStyle = d.rowsEqual ? ` style="height:${uniformH}px;"` : "";
   const orderRows = Array.from({ length: maxItems }, (_, k) =>
-    `<tr class="order-row">${k === 0 ? `<td style="${LB}" rowspan="${maxItems}">발주량</td>` : ""}${groups.map(g => itemCell((g.items || [])[k], rowPad(k))).join("")}</tr>`
+    `<tr class="order-row"${rowStyle}>${k === 0 ? `<td style="${LB}" rowspan="${maxItems}">발주량</td>` : ""}${groups.map(g => itemCell((g.items || [])[k], rowPad(k))).join("")}</tr>`
   ).join("");
   const expRow = groups.map(g => {
     const exps = [...new Set((g.items || []).map(it => it.expiry).filter(Boolean))];
@@ -10340,8 +10343,6 @@ function buildScheduleDocEdit(d, week) {
     `<span style="display:inline-block; min-width:84px; text-align:center; border:1px solid #999; border-radius:5px; padding:2px 9px; margin:2px; font-size:${S(13)}px; line-height:1.25;">${_schedMD(x)}<br><b style="color:#0a7a2f;">${_shipMap[x]}개</b></span>`
   ).join("") || `<span class="auto" style="font-size:${S(12)}px; color:#bbb;">출고일 미입력</span>`;
   const gctl = gi => `<div class="sched-ectl" style="position:absolute; top:1px; right:1px; display:flex; gap:2px; font-size:${Math.max(13, S(14))}px;">
-    <button data-schedgwidth="${gi}:-1" title="이 열 좁게" style="padding:2px 6px;">－</button>
-    <button data-schedgwidth="${gi}:1" title="이 열 넓게" style="padding:2px 6px;">＋</button>
     <button data-schedgmove="${gi}:-1" title="왼쪽으로" ${gi === 0 ? "disabled" : ""} style="padding:2px 6px;">◀</button>
     <button data-schedgmove="${gi}:1" title="오른쪽으로" ${gi === groups.length - 1 ? "disabled" : ""} style="padding:2px 6px;">▶</button>
     <button data-schedgdel="${gi}" title="제품군 삭제" style="padding:2px 7px; color:#c0392b;">×</button></div>`;
@@ -10378,12 +10379,13 @@ function buildScheduleDocEdit(d, week) {
         <button data-schedidel="${gi}:${ii}" title="항목 삭제" style="padding:2px 7px; color:#c0392b;">×</button></div>
     </div></td>`;
   };
-  // 편집: 왼쪽 '발주량' 칸을 rowspan 없이 행마다 나눠 각 행에 높이 [＋][－] 버튼을 둔다
-  const rowLabelCell = k => `<td class="sched-celledit" style="${LB} position:relative;">${k === 0 ? "발주량" : ""}<div class="sched-ectl" style="position:absolute; bottom:1px; left:0; right:0; display:flex; gap:1px; justify-content:center; font-size:${Math.max(12, S(12))}px;"><button data-schedrowh="${k}:1" title="이 줄 높게" style="padding:1px 5px;">＋</button><button data-schedrowh="${k}:-1" title="이 줄 낮게" style="padding:1px 5px;">－</button></div></td>`;
+  // 행 높이 맞춤(rowsEqual)이면 모든 줄을 균일 높이로, 아니면 내용 높이. '발주량' 라벨은 rowspan 병합.
+  const uniformH = labelSize + qtySize + subSize * 2 + S(18);
+  const rowStyle = d.rowsEqual ? ` style="height:${uniformH}px;"` : "";
   const orderRows = Array.from({ length: maxItems }, (_, k) =>
-    `<tr class="order-row">${rowLabelCell(k)}${groups.map((g, gi) => itemCellEdit(g, gi, k, rowPad(k))).join("")}<td style="${TD}"></td></tr>`
+    `<tr class="order-row"${rowStyle}>${k === 0 ? `<td style="${LB}" rowspan="${maxItems + 1}">발주량</td>` : ""}${groups.map((g, gi) => itemCellEdit(g, gi, k, rowPad(k))).join("")}<td style="${TD}"></td></tr>`
   ).join("")
-    + `<tr><td style="${LB}"></td>${groups.map((g, gi) => `<td style="${TD}"><button class="sched-addbtn" data-schediadd="${gi}" style="width:100%; padding:4px; font-size:${Math.max(12, subSize)}px;">＋ 항목</button></td>`).join("")}<td style="${TD}"></td></tr>`;
+    + `<tr>${groups.map((g, gi) => `<td style="${TD}"><button class="sched-addbtn" data-schediadd="${gi}" style="width:100%; padding:4px; font-size:${Math.max(12, subSize)}px;">＋ 항목</button></td>`).join("")}<td style="${TD}"></td></tr>`;
   const gExp = (g, key) => { const u = [...new Set((g.items || []).map(it => it[key]).filter(Boolean))]; return u[0] || ""; };
   const expRow = groups.map((g, gi) => `<td style="${TD} text-align:center; font-weight:700; font-size:${dateSize}px; color:${ec("date", "inherit")};">${g_(gi, "gexp", gExp(g, "expiry"), "datepick", ` readonly placeholder="📅 소비기한" style="text-align:center; font-weight:700; cursor:pointer;"`)}</td>`).join("") + `<td style="${TD}"></td>`;
   const exp2Row = groups.map((g, gi) => `<td style="${TD} text-align:center; font-size:${dateSize}px; color:${ec("date", "#666")};">${g_(gi, "gexp2", gExp(g, "expiry2"), "datepick", ` readonly placeholder="📅 예정" style="text-align:center; cursor:pointer;"`)}</td>`).join("") + `<td style="${TD}"></td>`;
@@ -10493,7 +10495,8 @@ async function saveSchedule() {
 // 편집/미리보기 버튼·안내문·＋제품군 버튼을 현재 editMode에 맞춰 갱신
 function _schedSyncEditUI() {
   const b = $("schedEditToggle"); if (b) b.textContent = SCHED.editMode ? "✔ 편집 완료" : "✏️ 편집";
-  { const el = $("schedAddGroup"); if (el) el.style.display = SCHED.editMode ? "" : "none"; }
+  ["schedAddGroup", "schedColEqual", "schedRowEqual"].forEach(id => { const el = $(id); if (el) el.style.display = SCHED.editMode ? "" : "none"; });
+  { const rb = $("schedRowEqual"); if (rb) rb.textContent = (SCHED.data && SCHED.data.rowsEqual) ? "↕ 행 높이 자동" : "↕ 행 높이 맞춤"; }
   const hdr = $("schedDocHdr"); if (hdr) hdr.innerHTML = SCHED.editMode
     ? '📝 편집 중 <span class="auto" style="font-weight:400;">— 각 칸을 클릭해 입력하세요. 엑셀 표를 복사해 칸에 <b>Ctrl+V</b>로 붙여넣을 수 있습니다. 마치면 <b>✔ 편집 완료</b>를 누르세요.</span>'
     : '📄 미리보기 <span class="auto" style="font-weight:400;">— 실제 인쇄·전체화면에 이 모양으로 출력됩니다. 수정하려면 위 <b>✏️ 편집</b> 버튼을 누르세요.</span>';
@@ -10708,6 +10711,17 @@ function _schedUnlockPrompt() {
   on("schedFull", schedFullscreen);
   const dd = $("schedDate"); if (dd) dd.addEventListener("change", e => { if (e.target.value) loadSchedule(e.target.value); });
   on("schedEditToggle", () => { SCHED.editMode = !SCHED.editMode; _schedSyncEditUI(); renderSchedDoc(); });
+  on("schedColEqual", () => {
+    if (!SCHED.data) return;
+    SCHED.data.groups.forEach(g => { g.w = 1; });
+    renderSchedDoc(); toast("모든 열 폭을 똑같이 맞췄습니다");
+  });
+  on("schedRowEqual", () => {
+    if (!SCHED.data) return;
+    SCHED.data.rowsEqual = !SCHED.data.rowsEqual;
+    _schedSyncEditUI(); renderSchedDoc();
+    toast(SCHED.data.rowsEqual ? "모든 줄 높이를 똑같이 맞췄습니다" : "줄 높이를 내용에 맞춰 자동으로 되돌렸습니다");
+  });
   on("schedExport", schedExportCsv);
   on("schedImport", () => { const f = $("schedImportFile"); if (f) f.click(); });
   const impf = $("schedImportFile");
