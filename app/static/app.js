@@ -9838,7 +9838,7 @@ $("pwSaveBtn").onclick = async () => {
 // ══ 주간 생산·출고 스케줄 ══════════════════════════════════════════
 // 계획이 자주 바뀌므로 주(월요일 기준) 단위 JSON 한 덩어리로 편집·저장한다(느슨한 구조).
 // 편집기(제품군 카드) → SCHED.data 갱신 → 미리보기(=인쇄본) 실시간 갱신. 전체화면은 새 창(#schedfull) 재사용.
-const SCHED = { week: "", data: null, saved: "", weeks: [], gridMode: (localStorage.getItem("ms_schedGrid") || "col") };
+const SCHED = { week: "", data: null, saved: "", weeks: [], gridMode: (localStorage.getItem("ms_schedGrid") || "col"), editMode: false };
 const _SCHED_DOW = ["일", "월", "화", "수", "목", "금", "토"];
 function _schedMonday(iso) {
   const d = new Date((iso || todayISO()) + "T00:00:00");
@@ -9950,6 +9950,7 @@ function renderSchedule() {
   if ($("schedSaved")) $("schedSaved").textContent = SCHED.saved || "";
   // 편집=미리보기 한 화면으로 통합 — 별도 편집기(메타/제품군 카드·열)·보기전환 토글은 숨긴다(모든 편집은 아래 미리보기에서).
   ["schedMeta", "schedGroups", "schedViewToggle", "schedRefBox"].forEach(id => { const el = $(id); if (el) { el.style.display = "none"; if (id === "schedGroups") el.innerHTML = ""; } });
+  _schedSyncEditUI();
   renderSchedStyle();
   renderSchedDoc();
 }
@@ -10305,10 +10306,10 @@ function buildScheduleDocEdit(d, week) {
   const ribbon = Object.keys(_shipMap).sort().map(x =>
     `<span style="display:inline-block; min-width:84px; text-align:center; border:1px solid #999; border-radius:5px; padding:2px 9px; margin:2px; font-size:${S(13)}px; line-height:1.25;">${_schedMD(x)}<br><b style="color:#0a7a2f;">${_shipMap[x]}개</b></span>`
   ).join("") || `<span class="auto" style="font-size:${S(12)}px; color:#bbb;">출고일 미입력</span>`;
-  const gctl = gi => `<div class="sched-ectl" style="position:absolute; top:1px; right:1px; display:flex; gap:1px; font-size:${Math.max(9, S(11))}px;">
-    <button data-schedgmove="${gi}:-1" title="왼쪽으로" ${gi === 0 ? "disabled" : ""} style="padding:0 3px;">◀</button>
-    <button data-schedgmove="${gi}:1" title="오른쪽으로" ${gi === groups.length - 1 ? "disabled" : ""} style="padding:0 3px;">▶</button>
-    <button data-schedgdel="${gi}" title="제품군 삭제" style="padding:0 4px; color:#c0392b;">×</button></div>`;
+  const gctl = gi => `<div class="sched-ectl" style="position:absolute; top:1px; right:1px; display:flex; gap:2px; font-size:${Math.max(13, S(14))}px;">
+    <button data-schedgmove="${gi}:-1" title="왼쪽으로" ${gi === 0 ? "disabled" : ""} style="padding:2px 6px;">◀</button>
+    <button data-schedgmove="${gi}:1" title="오른쪽으로" ${gi === groups.length - 1 ? "disabled" : ""} style="padding:2px 6px;">▶</button>
+    <button data-schedgdel="${gi}" title="제품군 삭제" style="padding:2px 7px; color:#c0392b;">×</button></div>`;
   const nameRow = groups.map((g, gi) => `<th class="sched-celledit" style="${TD} text-align:center; font-weight:800; font-size:${nameFs}px; background:#e7e4dd; position:relative;">${g_(gi, "name", g.name, "", ` placeholder="제품군명" style="text-align:center; font-weight:800;"`)}${gctl(gi)}</th>`).join("")
     + `<th style="${TD} text-align:center; background:#f2f1ec;"><button class="sched-addbtn" data-schedgaddcol="1" title="제품군(열) 추가" style="padding:6px 8px; font-size:${labelFs}px;">＋<br>제품군</button></th>`;
   const shipRow = groups.map((g, gi) => `<td style="${TD} text-align:center; font-weight:800; font-size:${dateSize}px; color:${ec("date", "inherit")};">${g_(gi, "shipDate", g.shipDate, "datepick", ` readonly placeholder="📅 출고일" style="text-align:center; font-weight:800; cursor:pointer;"`)}</td>`).join("") + `<td style="${TD}"></td>`;
@@ -10327,13 +10328,13 @@ function buildScheduleDocEdit(d, week) {
         <div style="display:flex; gap:2px; font-size:${subSize}px;">
           ${it_(gi, ii, "partner", it.partner, "", ` list="schedPartnerDl" placeholder="거래처" style="flex:1 1 0; color:#2f3fa0;"`)}
           ${it_(gi, ii, "memo", it.memo, "", ` placeholder="비고" style="flex:1 1 0; color:#888;"`)}</div>
-        <div class="sched-ectl" style="position:absolute; top:0; right:0; display:flex; gap:1px; font-size:${Math.max(9, S(10))}px;">
-          <button data-schedimove="${gi}:${ii}:-1" title="위로" ${ii === 0 ? "disabled" : ""} style="padding:0 3px;">▲</button>
-          <button data-schedimove="${gi}:${ii}:1" title="아래로" ${ii === its.length - 1 ? "disabled" : ""} style="padding:0 3px;">▼</button>
-          <button data-schedidel="${gi}:${ii}" title="항목 삭제" style="padding:0 4px; color:#c0392b;">×</button></div>
+        <div class="sched-ectl" style="position:absolute; top:0; right:0; display:flex; gap:2px; font-size:${Math.max(13, S(13))}px;">
+          <button data-schedimove="${gi}:${ii}:-1" title="위로" ${ii === 0 ? "disabled" : ""} style="padding:2px 6px;">▲</button>
+          <button data-schedimove="${gi}:${ii}:1" title="아래로" ${ii === its.length - 1 ? "disabled" : ""} style="padding:2px 6px;">▼</button>
+          <button data-schedidel="${gi}:${ii}" title="항목 삭제" style="padding:2px 7px; color:#c0392b;">×</button></div>
       </div>`;
     }).join("");
-    return `<td style="${TD}">${body}<button class="sched-addbtn" data-schediadd="${gi}" style="width:100%; margin-top:4px; padding:2px; font-size:${subSize}px;">＋ 항목</button></td>`;
+    return `<td style="${TD}">${body}<button class="sched-addbtn" data-schediadd="${gi}" style="width:100%; margin-top:5px; padding:4px; font-size:${Math.max(12, subSize)}px;">＋ 항목</button></td>`;
   }).join("") + `<td style="${TD}"></td>`;
   const gExp = (g, key) => { const u = [...new Set((g.items || []).map(it => it[key]).filter(Boolean))]; return u[0] || ""; };
   const expRow = groups.map((g, gi) => `<td style="${TD} text-align:center; font-weight:700; font-size:${dateSize}px; color:${ec("date", "inherit")};">${g_(gi, "gexp", gExp(g, "expiry"), "datepick", ` readonly placeholder="📅 소비기한" style="text-align:center; font-weight:700; cursor:pointer;"`)}</td>`).join("") + `<td style="${TD}"></td>`;
@@ -10423,9 +10424,10 @@ function renderSchedDoc() {
   // 제품명·거래처 자동완성 목록(편집칸에서 사용) — 스케일 밖에 둔다
   const dl = `<datalist id="schedProdDl">${(M.product || []).map(p => `<option value="${esc(p.name)}">`).join("")}</datalist>`
     + `<datalist id="schedPartnerDl">${(M.partner || []).filter(p => p.status !== "중지" && (p.type || "").includes("판매")).map(p => `<option value="${esc(p.name)}">`).join("")}</datalist>`;
-  // 편집형 A4 용지(1122×793, 여백 30px) — 인쇄와 같은 배치이되 각 칸이 입력칸이다
+  // A4 용지(1122×793, 여백 30px) — 편집 모드면 입력칸(buildScheduleDocEdit), 아니면 인쇄와 똑같은 미리보기(buildScheduleDoc)
+  const inner = SCHED.editMode ? buildScheduleDocEdit(SCHED.data, SCHED.week) : buildScheduleDoc(SCHED.data, SCHED.week);
   const sheet = `<div style="width:${SH.w}px; height:${SH.h}px; background:#fff; box-sizing:border-box; padding:${SCHED_A4_PAD}px; overflow:hidden;">
-    <div style="width:${SCHED_A4.w}px; height:${SCHED_A4.h}px; overflow:hidden;">${buildScheduleDocEdit(SCHED.data, SCHED.week)}</div></div>`;
+    <div style="width:${SCHED_A4.w}px; height:${SCHED_A4.h}px; overflow:hidden;">${inner}</div></div>`;
   host.innerHTML = dl + `<div style="width:${Math.round(SH.w * outer)}px; height:${Math.round(SH.h * outer)}px; margin:0 auto; overflow:hidden; box-shadow:0 1px 6px rgba(0,0,0,.15);">
     <div style="width:${SH.w}px; height:${SH.h}px; transform-origin:top left; transform:scale(${outer.toFixed(4)});">${sheet}</div></div>`;
   host.style.height = Math.round(SH.h * outer + 8) + "px";
@@ -10439,6 +10441,78 @@ async function saveSchedule() {
     toast("주간 스케줄이 저장되었습니다");
     await loadSchedule(SCHED.week);
   } catch (e) { /* api 토스트 */ }
+}
+// 편집/미리보기 버튼·안내문·＋제품군 버튼을 현재 editMode에 맞춰 갱신
+function _schedSyncEditUI() {
+  const b = $("schedEditToggle"); if (b) b.textContent = SCHED.editMode ? "✔ 편집 완료" : "✏️ 편집";
+  const ag = $("schedAddGroup"); if (ag) ag.style.display = SCHED.editMode ? "" : "none";
+  const hdr = $("schedDocHdr"); if (hdr) hdr.innerHTML = SCHED.editMode
+    ? '📝 편집 중 <span class="auto" style="font-weight:400;">— 각 칸을 클릭해 입력하세요. 엑셀 표를 복사해 칸에 <b>Ctrl+V</b>로 붙여넣을 수 있습니다. 마치면 <b>✔ 편집 완료</b>를 누르세요.</span>'
+    : '📄 미리보기 <span class="auto" style="font-weight:400;">— 실제 인쇄·전체화면에 이 모양으로 출력됩니다. 수정하려면 위 <b>✏️ 편집</b> 버튼을 누르세요.</span>';
+}
+// ── 엑셀(CSV) 내보내기/불러오기 — 열: 제품군·출고일·제품명·수량·개입·박스·소비기한·예정·거래처·비고 ──
+const _SCHED_CSV_HEAD = ["제품군", "출고일", "제품명", "수량", "개입", "박스", "소비기한", "예정소비기한", "거래처", "비고"];
+function _csvCell(v) { v = v == null ? "" : String(v); return /[",\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
+function schedExportCsv() {
+  const d = SCHED.data; if (!d) return;
+  const lines = [_SCHED_CSV_HEAD.join(",")];
+  (d.groups || []).forEach(g => {
+    const its = (g.items && g.items.length) ? g.items : [{}];
+    its.forEach(it => lines.push([g.name, g.shipDate, it.label, it.qty, it.pack, it.boxes, it.expiry, it.expiry2, it.partner, it.memo].map(_csvCell).join(",")));
+  });
+  const csv = "﻿" + lines.join("\r\n");   // BOM → 엑셀에서 한글 안 깨짐
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8;" }));
+  a.download = `주간스케줄_${SCHED.week || "sched"}.csv`;
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+  toast("엑셀(CSV)로 내보냈습니다");
+}
+// 단순 CSV 파서(따옴표·쉼표·개행). 쉼표 없고 탭만 있으면 TSV로 인식.
+function _parseDelimited(text) {
+  text = text.replace(/^﻿/, "");
+  const nl = text.indexOf("\n"); const firstLine = nl < 0 ? text : text.slice(0, nl);
+  const delim = (firstLine.indexOf(",") < 0 && firstLine.indexOf("\t") >= 0) ? "\t" : ",";
+  const rows = []; let row = [], cell = "", q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) { if (c === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += c; }
+    else if (c === '"') q = true;
+    else if (c === delim) { row.push(cell); cell = ""; }
+    else if (c === "\n") { row.push(cell); rows.push(row); row = []; cell = ""; }
+    else if (c === "\r") { /* skip */ }
+    else cell += c;
+  }
+  if (cell !== "" || row.length) { row.push(cell); rows.push(row); }
+  return rows.filter(r => r.some(c => String(c).trim() !== ""));
+}
+function schedImportCsv(text) {
+  if (!SCHED.data) return;
+  let rows = _parseDelimited(text);
+  if (!rows.length) { toast("불러올 내용이 없습니다"); return; }
+  const h0 = (rows[0] || []).map(s => String(s).trim());
+  if (h0.includes("제품군") || h0.includes("제품명") || h0.includes("품목")) rows = rows.slice(1);
+  if (!rows.length) { toast("데이터 행이 없습니다 (헤더만 있음)"); return; }
+  const groups = [], idx = {};
+  rows.forEach(r => {
+    const [gname, ship, label, qty, pack, boxes, exp, exp2, partner, memo] = r.map(x => (x == null ? "" : String(x).trim()));
+    const key = gname || "(제품군 없음)";
+    if (!(key in idx)) { idx[key] = groups.length; groups.push({ name: gname, shipDate: ship || "", memo: "", items: [] }); }
+    const g = groups[idx[key]]; if (ship && !g.shipDate) g.shipDate = ship;
+    const it = _schedBlankItem();
+    it.label = label; it.qty = (qty || "").replace(/,/g, ""); it.pack = (pack || "").replace(/,/g, "");
+    it.boxes = boxes; it.boxesAuto = boxes === ""; it.expiry = exp; it.expiry2 = exp2; it.partner = partner; it.memo = memo;
+    const p = (M.product || []).find(x => x.name === label); it.product_id = p ? p.id : null;
+    g.items.push(it);
+  });
+  const totalItems = groups.reduce((a, g) => a + g.items.length, 0);
+  if (!confirm(`불러온 데이터로 이번 주 스케줄을 덮어쓸까요?\n제품군 ${groups.length}개 · 항목 ${totalItems}개\n(저장 전이라 되돌릴 수 없습니다)`)) return;
+  SCHED.data.groups = groups;
+  _schedNorm(SCHED.data, SCHED.week);
+  SCHED.editMode = true;   // 불러오면 바로 확인·수정하도록 편집 모드
+  SCHED.saved = "엑셀 불러옴 — 수정 후 💾 저장하세요 (아직 저장 안 됨)";
+  renderSchedule();
+  toast(`엑셀에서 제품군 ${groups.length}개·항목 ${totalItems}개를 불러왔습니다`);
 }
 function schedPrint(dataArg, weekArg) {
   // dataArg가 스케줄 객체(groups 보유)일 때만 사용 — 버튼 onclick의 이벤트 객체가 들어와도 무시
@@ -10584,7 +10658,15 @@ function _schedUnlockPrompt() {
   on("schedPdf", () => { toast("인쇄 창에서 대상을 'PDF로 저장'으로 선택하세요"); setTimeout(schedPrint, 400); });
   on("schedFull", schedFullscreen);
   const dd = $("schedDate"); if (dd) dd.addEventListener("change", e => { if (e.target.value) loadSchedule(e.target.value); });
-  // 편집=미리보기: 모든 편집 이벤트를 미리보기(#schedDoc)에서 받는다
+  on("schedEditToggle", () => { SCHED.editMode = !SCHED.editMode; _schedSyncEditUI(); renderSchedDoc(); });
+  on("schedExport", schedExportCsv);
+  on("schedImport", () => { const f = $("schedImportFile"); if (f) f.click(); });
+  const impf = $("schedImportFile");
+  if (impf) impf.addEventListener("change", e => {
+    const file = e.target.files && e.target.files[0]; if (!file) return;
+    const rd = new FileReader(); rd.onload = () => { schedImportCsv(String(rd.result || "")); e.target.value = ""; }; rd.readAsText(file, "utf-8");
+  });
+  // 편집=미리보기: 모든 편집 이벤트를 미리보기(#schedDoc)에서 받는다 (편집 모드에서만 입력칸이 있음)
   const del = $("schedDoc");
   if (del) { del.addEventListener("input", _schedFieldUpdate); del.addEventListener("change", _schedFieldUpdate); del.addEventListener("click", _schedClick); del.addEventListener("paste", _schedPaste); }
 })();
