@@ -9878,6 +9878,7 @@ function _schedNorm(d, week) {
   if (!Array.isArray(d.shipDates) || !d.shipDates.length) { d.shipDates = []; for (let i = 0; i < 6; i++) d.shipDates.push(_schedAddDays(week, i)); }
   if (!Array.isArray(d.rowW)) d.rowW = [];   // 행(줄) 높이 가중치 배열(기본 비어있음 → 1)
   d.rowsEqual = !!d.rowsEqual;   // 행 높이 균일 맞춤 여부
+  if (d.fillPage == null) d.fillPage = true;   // 페이지 꽉 채우기(기본 켜짐)
   if (!Array.isArray(d.groups)) d.groups = [];
   d.groups.forEach(g => {
     g.name = g.name || ""; g.shipDate = g.shipDate || ""; g.memo = g.memo || "";
@@ -10425,48 +10426,57 @@ function _schedSheetHtml(data, week) {
 function _fitSchedPage(doc) {
   if (!doc) return;
   const W0 = SCHED_A4.w, H0 = SCHED_A4.h, TARGET = H0 / W0;
-  // 행 높이 맞춤: 줄 높이가 이미 실측으로 균일하게 고정돼 있으므로 '세로 채움'을 하지 않고 축소만 한다(균일 유지).
-  if (doc.dataset.rowsEqual) {
-    doc.style.transform = "none"; doc.style.transformOrigin = "top left"; doc.style.minHeight = ""; doc.style.width = W0 + "px";
-    const hh = doc.scrollHeight;
-    doc.style.transform = `scale(${(Math.min(1, H0 / hh) * 0.998).toFixed(4)})`;
-    return;
-  }
+  const fill = doc.dataset.fill !== "0";     // 기본: 페이지 꽉 채움
+  const equal = doc.dataset.rowsEqual === "1";
+  // 스케일 적용 + A4 한 장 안에서 항상 가운데 정렬(translate)
+  const applyCentered = s => {
+    const dw = parseFloat(doc.style.width) || W0, h = doc.scrollHeight;
+    const tx = Math.max(0, (W0 - dw * s) / 2), ty = Math.max(0, (H0 - h * s) / 2);
+    doc.style.transformOrigin = "top left";
+    doc.style.transform = `translate(${tx.toFixed(1)}px, ${ty.toFixed(1)}px) scale(${s.toFixed(4)})`;
+  };
   const clearFill = () => {
     doc.querySelectorAll(".sched-main").forEach(t => t.style.height = "");
     doc.querySelectorAll(".sched-main tr:not(.order-row)").forEach(tr => tr.style.height = "");
   };
-  doc.style.transform = "none"; doc.style.transformOrigin = "top left";
-  doc.style.minHeight = ""; doc.style.width = W0 + "px"; clearFill();
+  doc.style.transform = "none"; doc.style.transformOrigin = "top left"; doc.style.minHeight = ""; doc.style.width = W0 + "px";
+  // ── 행 높이 맞춤: 줄 높이는 이미 균일(실측). 꽉 채우기면 남는 세로를 '균등하게' 늘려 채운 뒤 축소·가운데 ──
+  if (equal) {
+    const rows = [...doc.querySelectorAll(".sched-main tr.order-row")];
+    if (fill && rows.length) {
+      const each0 = parseFloat(rows[0].style.height) || rows[0].offsetHeight;
+      const other = doc.scrollHeight - each0 * rows.length;
+      const each = Math.max(each0, Math.floor((H0 - other) / rows.length));   // 내용보다 작아지진 않게, 남으면 균등 확대
+      rows.forEach(r => r.style.height = each + "px");
+    }
+    applyCentered(Math.min(1, H0 / doc.scrollHeight) * 0.998);
+    return;
+  }
+  clearFill();
   let h = doc.scrollHeight;
+  // 꽉 채우기 아님 → 원래 크기로 A4에 맞춰 축소만(가로 폭 그대로), 가운데 정렬
+  if (!fill) { applyCentered(Math.min(1, H0 / h) * 0.998); return; }
   if (h <= H0) {
-    // 짧음 → 세로 채움(가로는 이미 꽉 참)
     doc.style.minHeight = H0 + "px";
     doc.querySelectorAll(".sched-main").forEach(t => t.style.height = "100%");
     doc.querySelectorAll(".sched-main tr:not(.order-row)").forEach(tr => tr.style.height = "0");
-    if (doc.scrollHeight > H0 + 1) {   // 경계에서 넘치면 살짝 축소해 잘림 방지
-      doc.style.minHeight = ""; clearFill();
-      doc.style.transform = `scale(${(H0 / doc.scrollHeight * 0.996).toFixed(4)})`;
-    }
-    return;
+    if (doc.scrollHeight > H0 + 1) { doc.style.minHeight = ""; clearFill(); applyCentered(H0 / doc.scrollHeight * 0.996); return; }
+    applyCentered(1); return;
   }
-  // 넘침 → (높이/폭) 비율을 A4에 맞추도록 폭 조절
+  // 넘침 → (높이/폭) 비율을 A4에 맞추도록 폭 조절 후 축소
   let W = W0;
   for (let k = 0; k < 7; k++) {
-    doc.style.width = Math.round(W) + "px";
-    h = doc.scrollHeight;
+    doc.style.width = Math.round(W) + "px"; h = doc.scrollHeight;
     const ratio = h / W;
     if (Math.abs(ratio - TARGET) <= 0.008) break;
     W = Math.max(W0, Math.min(W0 * 4, W * (ratio / TARGET)));
   }
-  doc.style.width = Math.round(W) + "px";   // 최종 폭 확정(스케일과 일치)
-  // 세로도 A4 비율만큼 '발주량' 행으로 채워 아래 여백 제거(내용이 더 길면 그대로)
+  doc.style.width = Math.round(W) + "px";
   doc.style.minHeight = Math.round(W * TARGET) + "px";
   doc.querySelectorAll(".sched-main").forEach(t => t.style.height = "100%");
   doc.querySelectorAll(".sched-main tr:not(.order-row)").forEach(tr => tr.style.height = "0");
   h = doc.scrollHeight;
-  const s = Math.min(1, W0 / W, H0 / h) * 0.998;   // 가로·세로 어느 쪽도 넘지 않게
-  doc.style.transform = `scale(${s.toFixed(4)})`;   // 폭=W×s≈W0(가로 꽉), 높이 한 장(잘림 없음)
+  applyCentered(Math.min(1, W0 / W, H0 / h) * 0.998);
 }
 // 행 높이 맞춤 — A4 폭에서 각 발주량 줄의 실제 높이를 재서 '가장 높은 줄'에 모두 맞춘다(진짜 균일). 이후 _fitSchedPage가 축소.
 function _schedEqualizeRows(doc) {
@@ -10496,6 +10506,7 @@ function renderSchedDoc() {
     <div style="width:${SH.w}px; height:${SH.h}px; transform-origin:top left; transform:scale(${outer.toFixed(4)});">${sheet}</div></div>`;
   host.style.height = Math.round(SH.h * outer + 8) + "px";
   const docEl = host.querySelector(".sched-doc");
+  docEl.dataset.fill = SCHED.data.fillPage === false ? "0" : "1";   // 페이지 꽉 채우기 여부
   if (SCHED.data.rowsEqual) _schedEqualizeRows(docEl);   // 줄 높이 균일 맞춤(실측)
   _fitSchedPage(docEl);
 }
@@ -10511,8 +10522,9 @@ async function saveSchedule() {
 // 편집/미리보기 버튼·안내문·＋제품군 버튼을 현재 editMode에 맞춰 갱신
 function _schedSyncEditUI() {
   const b = $("schedEditToggle"); if (b) b.textContent = SCHED.editMode ? "✔ 편집 완료" : "✏️ 편집";
-  ["schedAddGroup", "schedColEqual", "schedRowEqual"].forEach(id => { const el = $(id); if (el) el.style.display = SCHED.editMode ? "" : "none"; });
+  ["schedAddGroup", "schedColEqual", "schedRowEqual", "schedFillPage"].forEach(id => { const el = $(id); if (el) el.style.display = SCHED.editMode ? "" : "none"; });
   { const rb = $("schedRowEqual"); if (rb) rb.textContent = (SCHED.data && SCHED.data.rowsEqual) ? "↕ 행 높이 자동" : "↕ 행 높이 맞춤"; }
+  { const fb = $("schedFillPage"); if (fb) fb.textContent = (SCHED.data && SCHED.data.fillPage === false) ? "⛶ 꽉 채우기" : "🎯 원래 크기"; }
   const hdr = $("schedDocHdr"); if (hdr) hdr.innerHTML = SCHED.editMode
     ? '📝 편집 중 <span class="auto" style="font-weight:400;">— 각 칸을 클릭해 입력하세요. 엑셀 표를 복사해 칸에 <b>Ctrl+V</b>로 붙여넣을 수 있습니다. 마치면 <b>✔ 편집 완료</b>를 누르세요.</span>'
     : '📄 미리보기 <span class="auto" style="font-weight:400;">— 실제 인쇄·전체화면에 이 모양으로 출력됩니다. 수정하려면 위 <b>✏️ 편집</b> 버튼을 누르세요.</span>';
@@ -10594,6 +10606,7 @@ function schedPrint(dataArg, weekArg) {
   box.innerHTML = _schedSheetHtml(data, week);
   document.body.appendChild(box);
   const _pdoc = box.querySelector(".sched-doc");
+  _pdoc.dataset.fill = data.fillPage === false ? "0" : "1";
   if (data.rowsEqual) _schedEqualizeRows(_pdoc);
   _fitSchedPage(_pdoc);
   box.style.left = ""; box.style.top = ""; box.style.position = "";   // 인쇄 영역에선 일반 배치
@@ -10644,6 +10657,7 @@ async function schedEnterFullMode(week) {
         <div style="width:${SH.w}px; height:${SH.h}px; transform-origin:top left; transform:scale(${sc.toFixed(4)});">
           ${_schedSheetHtml(d, week)}</div></div>`;
     const _fdoc = ov.querySelector(".sched-doc");
+    _fdoc.dataset.fill = d.fillPage === false ? "0" : "1";
     if (d.rowsEqual) _schedEqualizeRows(_fdoc);
     _fitSchedPage(_fdoc);
     if (_schedLocked) {
@@ -10741,6 +10755,12 @@ function _schedUnlockPrompt() {
     SCHED.data.rowsEqual = !SCHED.data.rowsEqual;
     _schedSyncEditUI(); renderSchedDoc();
     toast(SCHED.data.rowsEqual ? "모든 줄 높이를 똑같이 맞췄습니다" : "줄 높이를 내용에 맞춰 자동으로 되돌렸습니다");
+  });
+  on("schedFillPage", () => {
+    if (!SCHED.data) return;
+    SCHED.data.fillPage = SCHED.data.fillPage === false ? true : false;
+    _schedSyncEditUI(); renderSchedDoc();
+    toast(SCHED.data.fillPage ? "A4 한 장을 꽉 채웁니다" : "원래 크기로(가운데 정렬) 돌아갑니다");
   });
   on("schedExport", schedExportCsv);
   on("schedImport", () => { const f = $("schedImportFile"); if (f) f.click(); });
