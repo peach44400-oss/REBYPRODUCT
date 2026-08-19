@@ -9674,6 +9674,34 @@ function renderChatBadge() {
   $("chatToggle").title = ment ? "나를 호출한 메시지가 있습니다" : "";
   updateTabTitle();                           // 탭 제목에 미읽음 개수 배지
 }
+// 업데이트/재시작 안내 오버레이 — 관리자가 업데이트를 시작하면 접속 중인 모든 화면에 표시.
+// 서버가 내려갔다(다운로드→교체) 다시 뜨면 자동 새로고침해 새 버전으로 전환한다.
+let _srvBusy = null;
+function showServerBusy(kind, ver) {
+  if (!_srvBusy) {
+    const ov = document.createElement("div");
+    ov.id = "srvBusyOv";
+    ov.style.cssText = "position:fixed; inset:0; z-index:99995; background:rgba(18,19,22,.90); color:#fff; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; text-align:center; padding:24px;";
+    ov.innerHTML = `<div style="font-size:44px;">🔄</div>
+      <div id="srvBusyMsg" style="font-size:20px; font-weight:800; line-height:1.55;"></div>
+      <div style="font-size:14px; color:#cfcfcf; line-height:1.6;">작업을 잠시 멈춰 주세요. 준비되면 <b>자동으로 새로고침</b>됩니다.</div>
+      <div style="width:28px; height:28px; border:3px solid #555; border-top-color:#fff; border-radius:50%; animation:spin .8s linear infinite; margin-top:4px;"></div>`;
+    document.body.appendChild(ov);
+    _srvBusy = ov; _srvBusy.down = 0;
+    // 서버가 내려갔다(교체 중) 다시 살아나면 새로고침. 아직 살아있는 동안엔 새로고침하지 않는다.
+    _srvBusy._t = setInterval(async () => {
+      try {
+        const r = await fetch("/api/ping", { cache: "no-store" });
+        if (r && _srvBusy && _srvBusy.down >= 2) location.reload();   // 내려갔다 다시 응답 → 새 버전 준비됨
+      } catch (e) { if (_srvBusy) _srvBusy.down++; }
+    }, 1500);
+  }
+  const msg = $("srvBusyMsg");
+  if (msg) msg.innerHTML = kind === "updating"
+    ? `프로그램 업데이트 진행 중입니다${ver ? " <span style='color:#9ad;'>(v" + ver + ")</span>" : ""}`
+    : "프로그램이 재시작 중입니다<br><span style='font-weight:400; font-size:15px; color:#ccc;'>(업데이트/재실행)</span>";
+}
+let _presOnline = false, _presFails = 0;
 async function pollPresence() {
   try {
     const past = !!CHAT.viewDay;      // 지난 대화 보기 중엔 오늘 메시지를 화면에 그리지 않는다
@@ -9684,6 +9712,8 @@ async function pollPresence() {
     // 일일 입력 화면을 보고 있으면 그 날짜를 알려 '동시 편집' 감지에 참여 (다른 화면이면 빠짐)
     const editQ = (document.querySelector("#scr-entry.on") && E.date) ? `&edit=${E.date}` : "";
     let d = await api(`/api/presence?after=${usedAfter}${readQ}${editQ}`);
+    _presOnline = true; _presFails = 0;
+    if (d && d.updating) showServerBusy("updating", d.update_ver);   // 관리자가 업데이트 시작 → 즉시 안내
     if (editQ) {
       const prev = (E.viewers || []).join(",");
       E.viewers = d.viewers || [];
@@ -9747,7 +9777,11 @@ async function pollPresence() {
     applyReactions(d.reactions); renderPinned(d.pinned);
     renderChatBadge();
     refreshReadMarks(d.me, d.reads);   // 다른 사람이 읽으면 내 메시지의 '읽음 N'이 늘어난다
-  } catch (e) { /* 폴링 일시 오류 무시 */ }
+  } catch (e) {
+    // 연결이 여러 번 끊기면 = 서버 재시작/업데이트 중일 가능성 → 안내 오버레이(자동 새로고침)
+    _presFails++;
+    if (_presOnline && _presFails >= 2) showServerBusy("reconnect");
+  }
 }
 async function chatSend() {
   if (CHAT.viewDay) return;                       // 지난 대화 보기는 읽기 전용

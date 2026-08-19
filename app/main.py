@@ -41,7 +41,9 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.84.9"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.85.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+# 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
+_UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -408,7 +410,7 @@ def ensure_admin():
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
     sid = request.cookies.get("sid")
-    if path.startswith("/api/") and path != "/api/login":
+    if path.startswith("/api/") and path not in ("/api/login", "/api/ping"):
         user = SESSIONS.get(sid)
         if not user:
             msg = KICKED.pop(sid, None)   # 강제 로그인으로 끊긴 세션이면 사유를 알린다
@@ -1792,6 +1794,10 @@ def update_apply(request: Request):
     if not version_newer(m["version"], APP_VERSION):
         raise HTTPException(400, "이미 최신 버전입니다")
 
+    # 접속 중인 다른 화면에 '업데이트 진행 중'을 알린다(다운로드하는 몇 초 동안 presence가 이 값을 전달).
+    _UPDATE_STATE["updating"] = True
+    _UPDATE_STATE["version"] = m["version"]
+
     exe = Path(sys.executable)                       # 현재 실행 중인 exe (…/재고관리.exe)
     newexe = exe.with_name(exe.stem + "_업데이트" + exe.suffix)
     import urllib.request
@@ -1803,16 +1809,19 @@ def update_apply(request: Request):
     except Exception as e:
         try: newexe.unlink(missing_ok=True)
         except OSError: pass
+        _UPDATE_STATE["updating"] = False   # 실패 시 안내 해제(접속 화면이 계속 '업데이트 중'에 갇히지 않게)
         raise HTTPException(502, f"다운로드 실패: {e}")
     # 검증: 최소 크기 + (있으면) sha256
     if len(raw) < 1_000_000:
         newexe.unlink(missing_ok=True)
+        _UPDATE_STATE["updating"] = False
         raise HTTPException(502, "받은 파일이 너무 작습니다 — 다운로드가 온전치 않습니다")
     want = (m.get("sha256") or "").lower().strip()
     if want:
         got = hashlib.sha256(raw).hexdigest()
         if got != want:
             newexe.unlink(missing_ok=True)
+            _UPDATE_STATE["updating"] = False
             raise HTTPException(502, "체크섬이 일치하지 않습니다 — 교체를 중단했습니다")
     # 교체 전 DB 백업 (혹시 새 버전 마이그레이션 문제 대비)
     try:
@@ -2309,6 +2318,12 @@ def chat_purge_daily():
         pass
 
 
+@app.get("/api/ping")
+def ping():
+    """로그인 없이 응답하는 헬스체크 — 화면이 '서버 살아있나'를 확인해 업데이트/재시작 후 자동 새로고침하는 용도."""
+    return {"ok": True, "version": APP_VERSION, "updating": _UPDATE_STATE["updating"]}
+
+
 @app.get("/api/presence")
 def presence(request: Request, after: int = 0, read: int = 0, edit: str = ""):
     """접속 인원 + 오늘자 채팅(after 이후) — 프론트가 8초마다 폴링.
@@ -2365,7 +2380,8 @@ def presence(request: Request, after: int = 0, read: int = 0, edit: str = ""):
             "last_id": last, "day": today, "reads": reads, "mention_unread": mention,
             "users": chat_usernames(), "mver": MASTERS_VER["v"],
             "viewers": viewers, "day_ver": day_ver, "day_by": DAY_SAVED_BY.get(edit),
-            "chat_ver": CHAT_VER["v"], "reactions": reactions, "pinned": pinned}
+            "chat_ver": CHAT_VER["v"], "reactions": reactions, "pinned": pinned,
+            "updating": _UPDATE_STATE["updating"], "update_ver": _UPDATE_STATE["version"]}
 
 
 @app.get("/api/chat/day")
