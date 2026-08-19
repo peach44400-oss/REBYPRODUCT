@@ -6390,6 +6390,14 @@ $("ledgerAll").addEventListener("change", e => { LEDGER.showAll = e.target.check
 
 // ── 완제품 수불부 (제품별 전일재고·생산·출고·재고 + LOT 소비기한) ──
 const FINLED = { data: null, showAll: false };
+// 완제품 수불부 결재칸 크기 — 기기에 저장(localStorage). 기본 너비 65px · 서명높이 50px.
+function finApprSize() {
+  const clamp = (v, lo, hi, dv) => { v = parseInt(v, 10); return isNaN(v) ? dv : Math.max(lo, Math.min(hi, v)); };
+  return {
+    w: clamp(localStorage.getItem("ms_finApprW"), 30, 160, 65),
+    h: clamp(localStorage.getItem("ms_finApprH"), 20, 140, 50),
+  };
+}
 async function loadFinLedger(date) {
   try {
     FINLED.data = await api("/api/finledger?date=" + encodeURIComponent(date));
@@ -6441,19 +6449,22 @@ function buildFinLedgerDoc(d) {
       <td style="${TD}"></td></tr>` : "";
   const dow = ["일", "월", "화", "수", "목", "금", "토"][new Date(d.date + "T00:00").getDay()];
   const TDm = "border:1px solid #333; padding:2px 6px; font-size:11px;";
-  const approve = `<table style="border-collapse:collapse; display:inline-table;">
+  const AS = finApprSize();   // 결재칸 크기(사용자 설정, 기기에 저장) — {w:칸너비, h:서명높이}
+  // table-layout:fixed + colgroup 으로 칸 너비를 정확히 강제(auto 레이아웃에선 width가 무시돼 좁게 나옴)
+  const approve = `<table style="border-collapse:collapse; table-layout:fixed; width:${24 + AS.w * 3}px;">
+    <colgroup><col style="width:24px;"><col style="width:${AS.w}px;"><col style="width:${AS.w}px;"><col style="width:${AS.w}px;"></colgroup>
     <tr><td rowspan="2" style="${TDm} text-align:center; writing-mode:vertical-rl; letter-spacing:3px; background:#eef0f2;">결 재</td>
-      <td style="${TDm} text-align:center; background:#eef0f2; width:65px;">작성</td>
-      <td style="${TDm} text-align:center; background:#eef0f2; width:65px;">확인</td>
-      <td style="${TDm} text-align:center; background:#eef0f2; width:65px;">승인</td></tr>
-    <tr><td style="${TDm} height:50px;"></td><td style="${TDm}"></td><td style="${TDm}"></td></tr></table>`;
+      <td style="${TDm} text-align:center; background:#eef0f2;">작성</td>
+      <td style="${TDm} text-align:center; background:#eef0f2;">확인</td>
+      <td style="${TDm} text-align:center; background:#eef0f2;">승인</td></tr>
+    <tr><td style="${TDm} height:${AS.h}px;"></td><td style="${TDm}"></td><td style="${TDm}"></td></tr></table>`;
   const header = `<table style="width:100%; border-collapse:collapse; margin:0 0 8px; border:0;"><tr>
     <td style="border:0; vertical-align:top; width:32%; font-size:11px; line-height:1.9;">
       ● 작성일 : <b>${d.date} (${dow})</b><br>● 완제품 재고관리 (생산일자 기준)
       ${FINLED.showAll ? "" : `<br><span style="color:#888;">움직인 제품 ${rows.length}종</span>`}</td>
     <td style="border:0; text-align:center; vertical-align:middle;">
       <span style="font-size:23px; font-weight:800; letter-spacing:10px;">완 제 품 수 불 부</span></td>
-    <td style="border:0; text-align:right; vertical-align:top; width:250px;">${approve}</td></tr></table>`;
+    <td style="border:0; text-align:right; vertical-align:top; width:${AS.w * 3 + 55}px;">${approve}</td></tr></table>`;
   const HD = "border:1px solid #333; padding:4px 6px; background:#eef0f2; font-size:11.5px;";
   const head = `<thead><tr>
     <th style="${HD} text-align:left;">제 품 명</th>${hasSpec ? `<th style="${HD}">규격</th>` : ""}
@@ -6466,6 +6477,19 @@ function buildFinLedgerDoc(d) {
   return `<div style="font-family:'Malgun Gothic',sans-serif; color:#111;">${header}${tbl}</div>`;
 }
 $("finAll").addEventListener("change", e => { FINLED.showAll = e.target.checked; renderFinLedger(); });
+// 결재칸 크기 옵션 — 입력값을 기기에 저장하고 즉시 미리보기 갱신
+(() => {
+  const sz = finApprSize();
+  if ($("finApprW")) $("finApprW").value = sz.w;
+  if ($("finApprH")) $("finApprH").value = sz.h;
+  const bind = (id, key) => $(id) && $(id).addEventListener("input", e => {
+    const v = e.target.value.trim();
+    if (v === "") { localStorage.removeItem(key); } else { localStorage.setItem(key, v); }
+    renderFinLedger();
+  });
+  bind("finApprW", "ms_finApprW");
+  bind("finApprH", "ms_finApprH");
+})();
 $("finDate").addEventListener("change", e => { if (e.target.value) loadFinLedger(e.target.value); });
 $("finPrevBtn").onclick = () => { const p = FINLED.data && FINLED.data.prev; p ? loadFinLedger(p) : toast("이전 기록이 없습니다"); };
 $("finNextBtn").onclick = () => { const n = FINLED.data && FINLED.data.next; n ? loadFinLedger(n) : toast("다음 기록이 없습니다"); };

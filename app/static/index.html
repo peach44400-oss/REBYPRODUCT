@@ -1679,6 +1679,10 @@
       <button class="btn sm" id="finSelAll" title="인쇄할 행 전체 선택/해제 — 체크 해제한 행은 인쇄되지 않습니다">☑ 행 전체</button>
       <button class="btn sm" id="finSavePrint" title="지금 화면(임시 수정·행 선택) 그대로 '출력용'으로 저장합니다 — 원본 데이터는 건드리지 않습니다">📌 출력용 저장</button>
       <button class="btn sm" id="finViewPrint" title="이 날짜에 저장해 둔 '출력용' 보기를 불러옵니다">👁 출력용 보기</button>
+      <span style="font-size:11px; display:inline-flex; align-items:center; gap:3px; border:1px solid var(--line); border-radius:8px; padding:2px 7px;" title="완제품 수불부 결재칸 크기 — 이 기기에 저장되어 다음에도 유지됩니다">결재칸
+        <input type="number" id="finApprW" min="30" max="160" step="1" style="width:44px; padding:2px 4px; border:1px solid var(--line); border-radius:6px; font-size:11px; text-align:center;" title="작성·확인·승인 칸 너비(px)">
+        <span style="color:var(--muted);">×</span>
+        <input type="number" id="finApprH" min="20" max="140" step="1" style="width:44px; padding:2px 4px; border:1px solid var(--line); border-radius:6px; font-size:11px; text-align:center;" title="서명(도장) 칸 높이(px)">px</span>
       <span id="finMode" class="auto" style="font-size:11px; font-weight:700;"></span>
       <span class="spacer"></span>
       <span class="auto" style="font-size:11px;">숫자 칸 클릭해 임시 수정 가능(저장 안 됨) · 인쇄는 <b>가로 방향</b></span>
