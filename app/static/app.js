@@ -9838,7 +9838,7 @@ $("pwSaveBtn").onclick = async () => {
 // ══ 주간 생산·출고 스케줄 ══════════════════════════════════════════
 // 계획이 자주 바뀌므로 주(월요일 기준) 단위 JSON 한 덩어리로 편집·저장한다(느슨한 구조).
 // 편집기(제품군 카드) → SCHED.data 갱신 → 미리보기(=인쇄본) 실시간 갱신. 전체화면은 새 창(#schedfull) 재사용.
-const SCHED = { week: "", data: null, saved: "", weeks: [] };
+const SCHED = { week: "", data: null, saved: "", weeks: [], gridMode: (localStorage.getItem("ms_schedGrid") || "col") };
 const _SCHED_DOW = ["일", "월", "화", "수", "목", "금", "토"];
 function _schedMonday(iso) {
   const d = new Date((iso || todayISO()) + "T00:00:00");
@@ -10023,6 +10023,7 @@ function renderSchedGroups() {
   const prodDl = `<datalist id="schedProdDl">${(M.product || []).map(p => `<option value="${esc(p.name)}">`).join("")}</datalist>`
     + `<datalist id="schedPartnerDl">${(M.partner || []).filter(p => p.status !== "중지" && (p.type || "").includes("판매")).map(p => `<option value="${esc(p.name)}">`).join("")}</datalist>`;
   const IN = "font-size:12px; padding:4px 6px; border:1px solid var(--line); border-radius:6px;";
+  if (SCHED.gridMode === "col") { $("schedGroups").innerHTML = prodDl + _schedColsHTML(d); return; }
   const cards = d.groups.map((g, gi) => {
     const rows = g.items.map((it, ii) => `<tr>
         <td><input data-g="${gi}" data-i="${ii}" data-f="label" list="schedProdDl" value="${esc(it.label)}" placeholder="제품/품목" style="${IN} width:148px;"></td>
@@ -10054,6 +10055,85 @@ function renderSchedGroups() {
   }).join("") || `<div class="auto" style="padding:14px 4px; font-size:12.5px;">아직 제품군이 없습니다 — 상단 <b>＋ 제품군</b>으로 추가하세요. (예: 달광도넛◎ · The촉촉한 · 소보로E …)</div>`;
   $("schedGroups").innerHTML = prodDl + cards;
 }
+// 미리보기형(열) 편집 레이아웃 — 인쇄와 같은 '제품군=세로 열' 배치. 기존 카드와 같은 data-* 속성을 써서
+// _schedFieldUpdate/_schedClick 처리 로직을 그대로 재사용한다. 엑셀 붙여넣기는 _schedPaste가 담당.
+function _schedColsHTML(d) {
+  const C = "font-size:12px; padding:4px 6px; border:1px solid var(--line); border-radius:6px; box-sizing:border-box;";
+  const cols = d.groups.map((g, gi) => {
+    const items = g.items.map((it, ii) => `
+      <div style="border:1px dashed var(--line); border-radius:8px; padding:6px; margin-bottom:6px; background:var(--bg);">
+        <input data-g="${gi}" data-i="${ii}" data-f="label" list="schedProdDl" value="${esc(it.label)}" placeholder="제품/품목" style="${C} width:100%; font-weight:700;">
+        <div style="display:flex; gap:4px; margin-top:4px;">
+          <input class="mini-input" data-g="${gi}" data-i="${ii}" data-f="qty" value="${esc(it.qty)}" inputmode="numeric" placeholder="수량" style="${C} flex:1 1 0; min-width:0; text-align:right;">
+          <input class="mini-input" data-g="${gi}" data-i="${ii}" data-f="pack" value="${esc(it.pack)}" inputmode="numeric" placeholder="개입" style="${C} width:54px; text-align:right;">
+          <input class="mini-input" data-g="${gi}" data-i="${ii}" data-f="boxes" value="${esc(it.boxes)}" inputmode="numeric" placeholder="자동" title="비워두면 수량÷개입으로 자동 계산" style="${C} width:58px; text-align:right;${it.boxesAuto ? " color:var(--muted);" : ""}">
+        </div>
+        <div style="display:flex; gap:4px; margin-top:4px;">
+          <input data-g="${gi}" data-i="${ii}" data-f="expiry" class="datepick" readonly value="${esc(it.expiry)}" placeholder="📅 소비기한" style="${C} flex:1 1 0; min-width:0;">
+          <input data-g="${gi}" data-i="${ii}" data-f="expiry2" class="datepick" readonly value="${esc(it.expiry2)}" placeholder="📅 예정" style="${C} flex:1 1 0; min-width:0;">
+        </div>
+        <div style="display:flex; gap:4px; margin-top:4px; align-items:center;">
+          <input data-g="${gi}" data-i="${ii}" data-f="partner" list="schedPartnerDl" value="${esc(it.partner)}" placeholder="거래처" style="${C} flex:1 1 0; min-width:0;">
+          <input data-g="${gi}" data-i="${ii}" data-f="memo" value="${esc(it.memo)}" placeholder="비고" style="${C} flex:1 1 0; min-width:0;">
+          <button class="btn ghost sm" data-schedimove="${gi}:${ii}:-1" title="위로" style="padding:0 5px;"${ii === 0 ? " disabled" : ""}>▲</button>
+          <button class="btn ghost sm" data-schedimove="${gi}:${ii}:1" title="아래로" style="padding:0 5px;"${ii === g.items.length - 1 ? " disabled" : ""}>▼</button>
+          <button class="btn ghost sm" data-schedidel="${gi}:${ii}" title="항목 삭제" style="color:var(--crit); padding:0 6px;">×</button>
+        </div>
+      </div>`).join("");
+    return `<div style="flex:0 0 auto; width:252px; border:1px solid var(--line); border-radius:10px; padding:8px; background:var(--surface);">
+      <div style="display:flex; flex-direction:column; gap:5px; margin-bottom:7px;">
+        <input data-g="${gi}" data-f="name" value="${esc(g.name)}" placeholder="제품군명 (예: 달광도넛◎)" style="${C} font-weight:800;">
+        <input data-g="${gi}" data-f="shipDate" class="datepick" readonly value="${esc(g.shipDate)}" placeholder="📅 출고일" style="${C}">
+        <input data-g="${gi}" data-f="memo" value="${esc(g.memo)}" placeholder="제품군 비고" style="${C}">
+        <div style="display:flex; gap:4px; align-items:center;">
+          <button class="btn ghost sm" data-schedgmove="${gi}:-1" title="왼쪽으로(앞 열)" ${gi === 0 ? "disabled" : ""} style="padding:0 8px;">◀</button>
+          <button class="btn ghost sm" data-schedgmove="${gi}:1" title="오른쪽으로(뒷 열)" ${gi === d.groups.length - 1 ? "disabled" : ""} style="padding:0 8px;">▶</button>
+          <span style="flex:1;"></span>
+          <button class="btn ghost sm" data-schedgdel="${gi}" style="color:var(--crit);">제품군 삭제</button>
+        </div>
+      </div>
+      ${items}
+      <button class="btn ghost sm" data-schediadd="${gi}" style="width:100%; margin-top:2px;">＋ 항목</button>
+    </div>`;
+  }).join("");
+  const addCol = d.groups.length ? `<div style="flex:0 0 auto; display:flex;"><button class="btn sm" data-schedgaddcol="1" style="min-height:70px; white-space:nowrap;">＋<br>제품군</button></div>` : "";
+  const body = cols || `<div class="auto" style="padding:14px 4px; font-size:12.5px;">아직 제품군이 없습니다 — <b>＋ 제품군</b>으로 추가하세요.</div>`;
+  const hint = `<div class="auto" style="font-size:11.5px; margin-bottom:7px; line-height:1.5;">💡 엑셀에서 표 범위(제품명·수량·개입 …)를 복사한 뒤, 채울 칸을 클릭하고 <b>Ctrl+V</b>로 붙여넣으면 여러 항목이 한 번에 채워집니다. <span style="color:var(--muted);">붙여넣기 열 순서: 제품명·수량·개입·박스·소비기한·예정·거래처·비고</span></div>`;
+  return hint + `<div style="display:flex; gap:10px; overflow-x:auto; padding-bottom:6px; align-items:flex-start;">${body}${addCol}</div>`;
+}
+// 한 필드 값을 데이터에 반영(카드/열/붙여넣기 공통 규칙) — 숫자 콤마 제거·박스 자동계산·제품 매칭
+function _schedSetField(gi, ii, f, val) {
+  const g = SCHED.data && SCHED.data.groups[gi]; if (!g) return;
+  if (ii == null) { g[f] = val; return; }
+  const it = g.items[ii]; if (!it) return;
+  it[f] = (f === "qty" || f === "pack") ? String(val).replace(/,/g, "") : val;
+  if (f === "label") { const p = (M.product || []).find(x => x.name === val); it.product_id = p ? p.id : null; }
+  if (f === "boxes") it.boxesAuto = String(val).trim() === "";
+  if ((f === "qty" || f === "pack") && it.boxesAuto !== false) {
+    const q = Number(String(it.qty).replace(/,/g, "")), p = Number(String(it.pack).replace(/,/g, ""));
+    it.boxes = (q > 0 && p > 0) ? String(Math.round(q / p)) : "";
+  }
+}
+// 엑셀(TSV) 붙여넣기 — 탭/줄바꿈이 있으면 여러 칸·여러 항목으로 분배. 항목이 모자라면 자동 생성.
+function _schedPaste(e) {
+  const inp = e.target.closest("[data-f]"); if (!inp || !SCHED.data) return;
+  if (inp.dataset.i == null || inp.dataset.i === "") return;   // 항목 칸에서만 (제품군명 등은 일반 붙여넣기)
+  const txt = ((e.clipboardData || window.clipboardData) || {}).getData ? (e.clipboardData || window.clipboardData).getData("text") : "";
+  if (!txt || !/[\t\n\r]/.test(txt)) return;   // 단일 값이면 기본 붙여넣기(→ input 이벤트로 처리)
+  const ORDER = ["label", "qty", "pack", "boxes", "expiry", "expiry2", "partner", "memo"];
+  const startF = ORDER.indexOf(inp.dataset.f); if (startF < 0) return;
+  e.preventDefault();
+  const gi = +inp.dataset.g, ii0 = +inp.dataset.i;
+  const g = SCHED.data.groups[gi]; if (!g) return;
+  const rows = txt.replace(/\r/g, "").replace(/\n+$/, "").split("\n").map(r => r.split("\t"));
+  rows.forEach((cells, ri) => {
+    const tgt = ii0 + ri;
+    while (g.items.length <= tgt) { const ni = _schedBlankItem(); ni.pack = (g.items[0] || {}).pack || ""; g.items.push(ni); }
+    cells.forEach((v, ci) => { const fi = startF + ci; if (fi < ORDER.length) _schedSetField(gi, tgt, ORDER[fi], String(v).trim()); });
+  });
+  renderSchedGroups(); renderSchedDoc();
+  toast(`엑셀 데이터 ${rows.length}행을 붙여넣었습니다`);
+}
 function _schedFieldUpdate(e) {
   const inp = e.target.closest("[data-f]"); if (!inp || !SCHED.data) return;
   const g = SCHED.data.groups[+inp.dataset.g]; if (!g) return;
@@ -10075,6 +10155,13 @@ function _schedFieldUpdate(e) {
 }
 function _schedClick(e) {
   if (!SCHED.data) return;
+  const gac = e.target.closest("[data-schedgaddcol]");
+  if (gac) {
+    const gs = SCHED.data.groups, prevPack = gs.length ? ((gs[gs.length - 1].items[0] || {}).pack || "") : "";
+    const it = _schedBlankItem(); it.pack = prevPack;
+    gs.push({ name: "", shipDate: "", memo: "", items: [it] });
+    renderSchedGroups(); renderSchedDoc(); return;
+  }
   const gm = e.target.closest("[data-schedgmove]");
   if (gm) {
     const [gi, dir] = gm.dataset.schedgmove.split(":").map(Number);
@@ -10411,8 +10498,15 @@ function _schedUnlockPrompt() {
   on("schedPdf", () => { toast("인쇄 창에서 대상을 'PDF로 저장'으로 선택하세요"); setTimeout(schedPrint, 400); });
   on("schedFull", schedFullscreen);
   const dd = $("schedDate"); if (dd) dd.addEventListener("change", e => { if (e.target.value) loadSchedule(e.target.value); });
+  const updViewBtn = () => { const b = $("schedViewToggle"); if (b) b.textContent = SCHED.gridMode === "col" ? "🗂 열(미리보기형)" : "🃏 카드"; };
+  on("schedViewToggle", () => {
+    SCHED.gridMode = SCHED.gridMode === "col" ? "card" : "col";
+    localStorage.setItem("ms_schedGrid", SCHED.gridMode);
+    updViewBtn(); renderSchedGroups();
+  });
+  updViewBtn();
   const gel = $("schedGroups");
-  if (gel) { gel.addEventListener("input", _schedFieldUpdate); gel.addEventListener("change", _schedFieldUpdate); gel.addEventListener("click", _schedClick); }
+  if (gel) { gel.addEventListener("input", _schedFieldUpdate); gel.addEventListener("change", _schedFieldUpdate); gel.addEventListener("click", _schedClick); gel.addEventListener("paste", _schedPaste); }
 })();
 window.addEventListener("load", () => {
   const m = (location.hash || "").match(/#schedfull=([^&]+)/);
