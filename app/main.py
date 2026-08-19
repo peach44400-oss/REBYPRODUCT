@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.84.8"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.84.9"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 새 버전 정보(version.json)를 읽어올 주소.
 #   1순위: exe 옆 update_url.txt 파일 (재빌드 없이 호스트 변경 가능)
 #   2순위: 아래 기본값 (배포 전 GitHub Releases 등의 raw 주소로 교체)
@@ -1464,11 +1464,17 @@ def pick_folder(request: Request):
     브라우저는 보안상 서버 경로를 직접 못 고르므로 로컬 앱에서만 쓰는 방식."""
     require_admin(request)
     import subprocess
+    # 폴더 선택 창을 '맨 앞(TopMost)'으로 띄운다 — 투명·작업표시줄 숨김 owner 폼을 소유자로 넘겨
+    # 브라우저(웨일 등) 창 뒤에 가려 안 보이던 문제를 방지한다.
     ps = ("[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;"
           "Add-Type -AssemblyName System.Windows.Forms;"
+          "$o=New-Object System.Windows.Forms.Form;"
+          "$o.TopMost=$true;$o.ShowInTaskbar=$false;$o.Opacity=0;$o.StartPosition='CenterScreen';"
+          "$o.Show();$o.Activate();"
           "$f=New-Object System.Windows.Forms.FolderBrowserDialog;"
           "$f.Description='백업 폴더를 선택하세요';$f.ShowNewFolderButton=$true;"
-          "if($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){[Console]::Out.Write($f.SelectedPath)}")
+          "$r=$f.ShowDialog($o);$o.Close();"
+          "if($r -eq [System.Windows.Forms.DialogResult]::OK){[Console]::Out.Write($f.SelectedPath)}")
     try:
         out = subprocess.run(["powershell", "-NoProfile", "-STA", "-Command", ps],
                              capture_output=True, timeout=300,
