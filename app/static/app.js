@@ -6477,18 +6477,24 @@ function buildFinLedgerDoc(d) {
   return `<div style="font-family:'Malgun Gothic',sans-serif; color:#111;">${header}${tbl}</div>`;
 }
 $("finAll").addEventListener("change", e => { FINLED.showAll = e.target.checked; renderFinLedger(); });
-// 결재칸 크기 옵션 — 입력값을 기기에 저장하고 즉시 미리보기 갱신
-(() => {
+// 결재칸 크기 옵션 — 완제품·원료 수불부 공통 설정. 입력값을 기기에 저장하고 두 미리보기를 즉시 갱신.
+// (완제품 탭 finApprW/H · 원료 탭 rawApprW/H — 같은 값을 공유하며 서로 동기화)
+function syncApprInputs() {
   const sz = finApprSize();
-  if ($("finApprW")) $("finApprW").value = sz.w;
-  if ($("finApprH")) $("finApprH").value = sz.h;
+  [["finApprW", sz.w], ["rawApprW", sz.w], ["finApprH", sz.h], ["rawApprH", sz.h]]
+    .forEach(([id, v]) => { if ($(id)) $(id).value = v; });
+}
+(() => {
+  syncApprInputs();
   const bind = (id, key) => $(id) && $(id).addEventListener("input", e => {
     const v = e.target.value.trim();
     if (v === "") { localStorage.removeItem(key); } else { localStorage.setItem(key, v); }
-    renderFinLedger();
+    syncApprInputs();                          // 두 탭 입력칸 동기화
+    if (FINLED.data) renderFinLedger();         // 완제품 미리보기 갱신
+    if (LEDGER.data) renderLedger();            // 원료 미리보기 갱신
   });
-  bind("finApprW", "ms_finApprW");
-  bind("finApprH", "ms_finApprH");
+  bind("finApprW", "ms_finApprW"); bind("rawApprW", "ms_finApprW");
+  bind("finApprH", "ms_finApprH"); bind("rawApprH", "ms_finApprH");
 })();
 $("finDate").addEventListener("change", e => { if (e.target.value) loadFinLedger(e.target.value); });
 $("finPrevBtn").onclick = () => { const p = FINLED.data && FINLED.data.prev; p ? loadFinLedger(p) : toast("이전 기록이 없습니다"); };
@@ -6568,12 +6574,14 @@ function buildLedgerDoc(d, forPrint) {
     <td style="${TD} text-align:left; font-size:9px; white-space:normal;" ${ED}>${esc(r.note || "")}</td></tr>`).join("");
   const dow = ["일", "월", "화", "수", "목", "금", "토"][new Date(d.date + "T00:00").getDay()];
   const TDm = "border:1px solid #333; padding:2px 6px; font-size:11px;";
-  const approve = `<table style="border-collapse:collapse; display:inline-table;">
+  const AS = finApprSize();   // 결재칸 크기(완제품·원료 공통 설정, 기기에 저장) — {w:칸너비, h:서명높이}
+  const approve = `<table style="border-collapse:collapse; table-layout:fixed; width:${24 + AS.w * 3}px;">
+    <colgroup><col style="width:24px;"><col style="width:${AS.w}px;"><col style="width:${AS.w}px;"><col style="width:${AS.w}px;"></colgroup>
     <tr><td rowspan="2" style="${TDm} text-align:center; writing-mode:vertical-rl; letter-spacing:3px; background:#eef0f2;">결 재</td>
-      <td style="${TDm} text-align:center; background:#eef0f2; width:54px;">작성</td>
-      <td style="${TDm} text-align:center; background:#eef0f2; width:54px;">확인</td>
-      <td style="${TDm} text-align:center; background:#eef0f2; width:54px;">승인</td></tr>
-    <tr><td style="${TDm} height:34px;"></td><td style="${TDm}"></td><td style="${TDm}"></td></tr></table>`;
+      <td style="${TDm} text-align:center; background:#eef0f2;">작성</td>
+      <td style="${TDm} text-align:center; background:#eef0f2;">확인</td>
+      <td style="${TDm} text-align:center; background:#eef0f2;">승인</td></tr>
+    <tr><td style="${TDm} height:${AS.h}px;"></td><td style="${TDm}"></td><td style="${TDm}"></td></tr></table>`;
   // 상단 머리: 왼쪽=작성정보 / 가운데=제목 / 오른쪽=결재란 — float 대신 3칸 표(인쇄에서 안 밀림)
   const header = `<table style="width:100%; border-collapse:collapse; margin:0 0 8px; border:0;"><tr>
     <td style="border:0; vertical-align:top; width:32%; font-size:11px; line-height:1.9;">
@@ -6581,7 +6589,7 @@ function buildLedgerDoc(d, forPrint) {
       ${showAll ? "" : `<br><span style="color:#888;">사용 자재 ${rows2.length}종 · 생산 제품 ${prods.length}종</span>`}</td>
     <td style="border:0; text-align:center; vertical-align:middle;">
       <span style="font-size:23px; font-weight:800; letter-spacing:10px;">원 료 수 불 부</span></td>
-    <td style="border:0; text-align:right; vertical-align:top; width:210px;">${approve}</td></tr></table>`;
+    <td style="border:0; text-align:right; vertical-align:top; width:${AS.w * 3 + 55}px;">${approve}</td></tr></table>`;
   const emptyMsg = showAll ? "기록이 없습니다" : "이 날짜에는 사용·입고 기록이 없습니다 (빈 양식은 [전체 품목] 체크)";
   const tbl = `<table style="border-collapse:collapse; width:100%; table-layout:fixed;">
       <thead>${head}${totalRow}</thead><tbody>${body || `<tr><td style="${TD}" colspan="99">${emptyMsg}</td></tr>`}</tbody></table>`;

@@ -1649,45 +1649,59 @@
       </div>
     </div>
     <!-- 원료 수불부 도구 (raw 탭 전용) -->
-    <div id="ledgerRawTools" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
-      <button class="btn sm" id="ledgerPrevBtn" title="기록 있는 이전 날짜">◀</button>
-      <input type="text" readonly data-dots class="datepick" id="ledgerDate" placeholder="📅 날짜" style="font-size:13px; padding:4px 8px; border:1px solid var(--line); border-radius:8px; width:130px; text-align:left; cursor:pointer;">
-      <button class="btn sm" id="ledgerNextBtn" title="기록 있는 다음 날짜">▶</button>
-      <button class="btn sm" id="ledgerTodayBtn">오늘</button>
-      <label style="font-size:12px; display:flex; align-items:center; gap:4px; cursor:pointer;" title="체크하면 사용/입고가 없는 자재·제품도 모두 표시 (빈 양식 인쇄용)">
-        <input type="checkbox" id="ledgerAll"> 전체 품목</label>
-      <button class="btn sm" id="ledgerReset" title="원래 저장된(재고관리) 데이터로 되돌립니다">↺ 초기화</button>
-      <button class="btn sm" id="ledgerSelAll" title="인쇄할 행 전체 선택/해제 — 체크 해제한 행은 인쇄되지 않습니다">☑ 행 전체</button>
-      <button class="btn sm" id="ledgerSavePrint" title="지금 화면(임시 수정·행 선택) 그대로 '출력용'으로 저장합니다 — 원본 재고 데이터는 건드리지 않습니다">📌 출력용 저장</button>
-      <button class="btn sm" id="ledgerViewPrint" title="이 날짜에 저장해 둔 '출력용' 보기를 불러옵니다">👁 출력용 보기</button>
-      <span id="ledgerMode" class="auto" style="font-size:11px; font-weight:700;"></span>
-      <span class="spacer"></span>
-      <span class="auto" style="font-size:11px;">숫자 칸을 클릭해 임시 수정 가능(저장 안 됨) · 인쇄는 <b>가로 방향</b></span>
-      <button class="btn sm" id="ledgerPdf" title="인쇄 창에서 'PDF로 저장' 선택">📑 PDF</button>
-      <button class="btn sm primary" id="ledgerPrintBtn">🖨 인쇄</button>
+    <div id="ledgerRawTools" style="display:none; flex-direction:column; gap:6px; margin-bottom:8px;">
+      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+        <button class="btn sm" id="ledgerPrevBtn" title="기록 있는 이전 날짜">◀</button>
+        <input type="text" readonly data-dots class="datepick" id="ledgerDate" placeholder="📅 날짜" style="font-size:13px; padding:4px 8px; border:1px solid var(--line); border-radius:8px; width:130px; text-align:left; cursor:pointer;">
+        <button class="btn sm" id="ledgerNextBtn" title="기록 있는 다음 날짜">▶</button>
+        <button class="btn sm" id="ledgerTodayBtn">오늘</button>
+        <label style="font-size:12px; display:flex; align-items:center; gap:4px; cursor:pointer;" title="체크하면 사용/입고가 없는 자재·제품도 모두 표시 (빈 양식 인쇄용)">
+          <input type="checkbox" id="ledgerAll"> 전체 품목</label>
+        <span style="font-size:11px; display:inline-flex; align-items:center; gap:3px; border:1px solid var(--line); border-radius:8px; padding:2px 7px;" title="결재칸 크기 — 완제품 수불부와 공통 설정, 이 기기에 저장됩니다">결재칸
+          <input type="number" id="rawApprW" min="30" max="160" step="1" style="width:44px; padding:2px 4px; border:1px solid var(--line); border-radius:6px; font-size:11px; text-align:center;" title="작성·확인·승인 칸 너비(px)">
+          <span style="color:var(--muted);">×</span>
+          <input type="number" id="rawApprH" min="20" max="140" step="1" style="width:44px; padding:2px 4px; border:1px solid var(--line); border-radius:6px; font-size:11px; text-align:center;" title="서명(도장) 칸 높이(px)">px</span>
+        <span class="spacer"></span>
+        <button class="btn sm" id="ledgerPdf" title="인쇄 창에서 'PDF로 저장' 선택">📑 PDF</button>
+        <button class="btn sm primary" id="ledgerPrintBtn">🖨 인쇄</button>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+        <button class="btn sm" id="ledgerReset" title="원래 저장된(재고관리) 데이터로 되돌립니다">↺ 초기화</button>
+        <button class="btn sm" id="ledgerSelAll" title="인쇄할 행 전체 선택/해제 — 체크 해제한 행은 인쇄되지 않습니다">☑ 행 전체</button>
+        <button class="btn sm" id="ledgerSavePrint" title="지금 화면(임시 수정·행 선택) 그대로 '출력용'으로 저장합니다 — 원본 재고 데이터는 건드리지 않습니다">📌 출력용 저장</button>
+        <button class="btn sm" id="ledgerViewPrint" title="이 날짜에 저장해 둔 '출력용' 보기를 불러옵니다">👁 출력용 보기</button>
+        <span id="ledgerMode" class="auto" style="font-size:11px; font-weight:700;"></span>
+        <span class="spacer"></span>
+        <span class="auto" style="font-size:11px;">숫자 칸을 클릭해 임시 수정 가능(저장 안 됨) · 인쇄는 <b>가로 방향</b></span>
+      </div>
     </div>
     <div id="ledgerBody" style="max-height:74vh; overflow:auto; border:1px solid var(--line-soft); border-radius:8px; background:#fff; padding:12px;"></div>
     <!-- 완제품 수불부 도구 (fin 탭 전용) -->
-    <div id="ledgerFinTools" style="display:none; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
-      <button class="btn sm" id="finPrevBtn" title="기록 있는 이전 날짜">◀</button>
-      <input type="text" readonly data-dots class="datepick" id="finDate" placeholder="📅 날짜" style="font-size:13px; padding:4px 8px; border:1px solid var(--line); border-radius:8px; width:130px; text-align:left; cursor:pointer;">
-      <button class="btn sm" id="finNextBtn" title="기록 있는 다음 날짜">▶</button>
-      <button class="btn sm" id="finTodayBtn">오늘</button>
-      <label style="font-size:12px; display:flex; align-items:center; gap:4px; cursor:pointer;" title="체크하면 생산·출고가 없는 제품도 모두 표시 (빈 양식 인쇄용)">
-        <input type="checkbox" id="finAll"> 전체 제품</label>
-      <button class="btn sm" id="finReset" title="임시 수정·행 선택을 원래 데이터로 되돌립니다">↺ 초기화</button>
-      <button class="btn sm" id="finSelAll" title="인쇄할 행 전체 선택/해제 — 체크 해제한 행은 인쇄되지 않습니다">☑ 행 전체</button>
-      <button class="btn sm" id="finSavePrint" title="지금 화면(임시 수정·행 선택) 그대로 '출력용'으로 저장합니다 — 원본 데이터는 건드리지 않습니다">📌 출력용 저장</button>
-      <button class="btn sm" id="finViewPrint" title="이 날짜에 저장해 둔 '출력용' 보기를 불러옵니다">👁 출력용 보기</button>
-      <span style="font-size:11px; display:inline-flex; align-items:center; gap:3px; border:1px solid var(--line); border-radius:8px; padding:2px 7px;" title="완제품 수불부 결재칸 크기 — 이 기기에 저장되어 다음에도 유지됩니다">결재칸
-        <input type="number" id="finApprW" min="30" max="160" step="1" style="width:44px; padding:2px 4px; border:1px solid var(--line); border-radius:6px; font-size:11px; text-align:center;" title="작성·확인·승인 칸 너비(px)">
-        <span style="color:var(--muted);">×</span>
-        <input type="number" id="finApprH" min="20" max="140" step="1" style="width:44px; padding:2px 4px; border:1px solid var(--line); border-radius:6px; font-size:11px; text-align:center;" title="서명(도장) 칸 높이(px)">px</span>
-      <span id="finMode" class="auto" style="font-size:11px; font-weight:700;"></span>
-      <span class="spacer"></span>
-      <span class="auto" style="font-size:11px;">숫자 칸 클릭해 임시 수정 가능(저장 안 됨) · 인쇄는 <b>가로 방향</b></span>
-      <button class="btn sm" id="finPdf" title="인쇄 창에서 'PDF로 저장' 선택">📑 PDF</button>
-      <button class="btn sm primary" id="finPrintBtn">🖨 인쇄</button>
+    <div id="ledgerFinTools" style="display:none; flex-direction:column; gap:6px; margin-bottom:8px;">
+      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+        <button class="btn sm" id="finPrevBtn" title="기록 있는 이전 날짜">◀</button>
+        <input type="text" readonly data-dots class="datepick" id="finDate" placeholder="📅 날짜" style="font-size:13px; padding:4px 8px; border:1px solid var(--line); border-radius:8px; width:130px; text-align:left; cursor:pointer;">
+        <button class="btn sm" id="finNextBtn" title="기록 있는 다음 날짜">▶</button>
+        <button class="btn sm" id="finTodayBtn">오늘</button>
+        <label style="font-size:12px; display:flex; align-items:center; gap:4px; cursor:pointer;" title="체크하면 생산·출고가 없는 제품도 모두 표시 (빈 양식 인쇄용)">
+          <input type="checkbox" id="finAll"> 전체 제품</label>
+        <span style="font-size:11px; display:inline-flex; align-items:center; gap:3px; border:1px solid var(--line); border-radius:8px; padding:2px 7px;" title="결재칸 크기 — 원료 수불부와 공통 설정, 이 기기에 저장됩니다">결재칸
+          <input type="number" id="finApprW" min="30" max="160" step="1" style="width:44px; padding:2px 4px; border:1px solid var(--line); border-radius:6px; font-size:11px; text-align:center;" title="작성·확인·승인 칸 너비(px)">
+          <span style="color:var(--muted);">×</span>
+          <input type="number" id="finApprH" min="20" max="140" step="1" style="width:44px; padding:2px 4px; border:1px solid var(--line); border-radius:6px; font-size:11px; text-align:center;" title="서명(도장) 칸 높이(px)">px</span>
+        <span class="spacer"></span>
+        <button class="btn sm" id="finPdf" title="인쇄 창에서 'PDF로 저장' 선택">📑 PDF</button>
+        <button class="btn sm primary" id="finPrintBtn">🖨 인쇄</button>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+        <button class="btn sm" id="finReset" title="임시 수정·행 선택을 원래 데이터로 되돌립니다">↺ 초기화</button>
+        <button class="btn sm" id="finSelAll" title="인쇄할 행 전체 선택/해제 — 체크 해제한 행은 인쇄되지 않습니다">☑ 행 전체</button>
+        <button class="btn sm" id="finSavePrint" title="지금 화면(임시 수정·행 선택) 그대로 '출력용'으로 저장합니다 — 원본 데이터는 건드리지 않습니다">📌 출력용 저장</button>
+        <button class="btn sm" id="finViewPrint" title="이 날짜에 저장해 둔 '출력용' 보기를 불러옵니다">👁 출력용 보기</button>
+        <span id="finMode" class="auto" style="font-size:11px; font-weight:700;"></span>
+        <span class="spacer"></span>
+        <span class="auto" style="font-size:11px;">숫자 칸 클릭해 임시 수정 가능(저장 안 됨) · 인쇄는 <b>가로 방향</b></span>
+      </div>
     </div>
     <div id="ledgerFin" style="display:none; max-height:74vh; overflow:auto; border:1px solid var(--line-soft); border-radius:8px; background:#fff; padding:12px;"></div>
     <!-- 인원 수불부 도구 (staff 탭 전용) -->
