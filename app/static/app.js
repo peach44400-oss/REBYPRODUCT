@@ -10279,10 +10279,8 @@ function buildScheduleDoc(d, week) {
       ${(pb || it.partner) ? `<div style="font-size:${subSize}px;"><span style="color:${ec("sub", "#c26a1f")}; font-weight:700;">${esc(pb)}</span>${it.partner ? ` <span style="color:#2f3fa0;">· ${esc(it.partner)}</span>` : ""}</div>` : ""}
       ${it.memo ? `<div style="color:#888; font-size:${subSize}px;">${esc(it.memo)}</div>` : ""}</td>`;
   };
-  const uniformH = labelSize + qtySize + subSize * 2 + S(18);
-  const rowStyle = d.rowsEqual ? ` style="height:${uniformH}px;"` : "";
   const orderRows = Array.from({ length: maxItems }, (_, k) =>
-    `<tr class="order-row"${rowStyle}>${k === 0 ? `<td style="${LB}" rowspan="${maxItems}">발주량</td>` : ""}${groups.map(g => itemCell((g.items || [])[k], rowPad(k))).join("")}</tr>`
+    `<tr class="order-row">${k === 0 ? `<td style="${LB}" rowspan="${maxItems}">발주량</td>` : ""}${groups.map(g => itemCell((g.items || [])[k], rowPad(k))).join("")}</tr>`
   ).join("");
   const expRow = groups.map(g => {
     const exps = [...new Set((g.items || []).map(it => it.expiry).filter(Boolean))];
@@ -10379,11 +10377,9 @@ function buildScheduleDocEdit(d, week) {
         <button data-schedidel="${gi}:${ii}" title="항목 삭제" style="padding:2px 7px; color:#c0392b;">×</button></div>
     </div></td>`;
   };
-  // 행 높이 맞춤(rowsEqual)이면 모든 줄을 균일 높이로, 아니면 내용 높이. '발주량' 라벨은 rowspan 병합.
-  const uniformH = labelSize + qtySize + subSize * 2 + S(18);
-  const rowStyle = d.rowsEqual ? ` style="height:${uniformH}px;"` : "";
+  // 행 높이 맞춤은 렌더 후 실측해서 가장 높은 줄에 맞춘다(_schedEqualizeRows). '발주량' 라벨은 rowspan 병합.
   const orderRows = Array.from({ length: maxItems }, (_, k) =>
-    `<tr class="order-row"${rowStyle}>${k === 0 ? `<td style="${LB}" rowspan="${maxItems + 1}">발주량</td>` : ""}${groups.map((g, gi) => itemCellEdit(g, gi, k, rowPad(k))).join("")}<td style="${TD}"></td></tr>`
+    `<tr class="order-row">${k === 0 ? `<td style="${LB}" rowspan="${maxItems + 1}">발주량</td>` : ""}${groups.map((g, gi) => itemCellEdit(g, gi, k, rowPad(k))).join("")}<td style="${TD}"></td></tr>`
   ).join("")
     + `<tr>${groups.map((g, gi) => `<td style="${TD}"><button class="sched-addbtn" data-schediadd="${gi}" style="width:100%; padding:4px; font-size:${Math.max(12, subSize)}px;">＋ 항목</button></td>`).join("")}<td style="${TD}"></td></tr>`;
   const gExp = (g, key) => { const u = [...new Set((g.items || []).map(it => it[key]).filter(Boolean))]; return u[0] || ""; };
@@ -10429,6 +10425,13 @@ function _schedSheetHtml(data, week) {
 function _fitSchedPage(doc) {
   if (!doc) return;
   const W0 = SCHED_A4.w, H0 = SCHED_A4.h, TARGET = H0 / W0;
+  // 행 높이 맞춤: 줄 높이가 이미 실측으로 균일하게 고정돼 있으므로 '세로 채움'을 하지 않고 축소만 한다(균일 유지).
+  if (doc.dataset.rowsEqual) {
+    doc.style.transform = "none"; doc.style.transformOrigin = "top left"; doc.style.minHeight = ""; doc.style.width = W0 + "px";
+    const hh = doc.scrollHeight;
+    doc.style.transform = `scale(${(Math.min(1, H0 / hh) * 0.998).toFixed(4)})`;
+    return;
+  }
   const clearFill = () => {
     doc.querySelectorAll(".sched-main").forEach(t => t.style.height = "");
     doc.querySelectorAll(".sched-main tr:not(.order-row)").forEach(tr => tr.style.height = "");
@@ -10465,6 +10468,17 @@ function _fitSchedPage(doc) {
   const s = Math.min(1, W0 / W, H0 / h) * 0.998;   // 가로·세로 어느 쪽도 넘지 않게
   doc.style.transform = `scale(${s.toFixed(4)})`;   // 폭=W×s≈W0(가로 꽉), 높이 한 장(잘림 없음)
 }
+// 행 높이 맞춤 — A4 폭에서 각 발주량 줄의 실제 높이를 재서 '가장 높은 줄'에 모두 맞춘다(진짜 균일). 이후 _fitSchedPage가 축소.
+function _schedEqualizeRows(doc) {
+  if (!doc) return;
+  doc.dataset.rowsEqual = "1";
+  doc.style.width = SCHED_A4.w + "px";   // 인쇄와 같은 폭에서 측정(줄바꿈 동일)
+  const rows = [...doc.querySelectorAll(".sched-main tr.order-row")];
+  if (rows.length < 2) return;
+  rows.forEach(r => { r.style.height = ""; });
+  const maxH = Math.max(...rows.map(r => r.offsetHeight));
+  if (maxH > 0) rows.forEach(r => { r.style.height = maxH + "px"; });
+}
 function renderSchedDoc() {
   const host = $("schedDoc"); if (!host || !SCHED.data) return;
   const SH = SCHED_A4_SHEET;
@@ -10481,7 +10495,9 @@ function renderSchedDoc() {
   host.innerHTML = dl + `<div style="width:${Math.round(SH.w * outer)}px; height:${Math.round(SH.h * outer)}px; margin:0 auto; overflow:hidden; box-shadow:0 1px 6px rgba(0,0,0,.15);">
     <div style="width:${SH.w}px; height:${SH.h}px; transform-origin:top left; transform:scale(${outer.toFixed(4)});">${sheet}</div></div>`;
   host.style.height = Math.round(SH.h * outer + 8) + "px";
-  _fitSchedPage(host.querySelector(".sched-doc"));
+  const docEl = host.querySelector(".sched-doc");
+  if (SCHED.data.rowsEqual) _schedEqualizeRows(docEl);   // 줄 높이 균일 맞춤(실측)
+  _fitSchedPage(docEl);
 }
 async function saveSchedule() {
   if (!SCHED.data) return;
@@ -10577,7 +10593,9 @@ function schedPrint(dataArg, weekArg) {
   box.style.cssText = `position:fixed; left:-10000px; top:0;`;
   box.innerHTML = _schedSheetHtml(data, week);
   document.body.appendChild(box);
-  _fitSchedPage(box.querySelector(".sched-doc"));
+  const _pdoc = box.querySelector(".sched-doc");
+  if (data.rowsEqual) _schedEqualizeRows(_pdoc);
+  _fitSchedPage(_pdoc);
   box.style.left = ""; box.style.top = ""; box.style.position = "";   // 인쇄 영역에선 일반 배치
   $("poPrintArea").innerHTML = "";
   $("poPrintArea").appendChild(box);
@@ -10625,7 +10643,9 @@ async function schedEnterFullMode(week) {
     ov.innerHTML = bar + `<div style="width:${Math.round(SH.w * sc)}px; height:${Math.round(SH.h * sc)}px; margin:0 auto; overflow:hidden; box-shadow:0 6px 24px rgba(0,0,0,.5);">
         <div style="width:${SH.w}px; height:${SH.h}px; transform-origin:top left; transform:scale(${sc.toFixed(4)});">
           ${_schedSheetHtml(d, week)}</div></div>`;
-    _fitSchedPage(ov.querySelector(".sched-doc"));
+    const _fdoc = ov.querySelector(".sched-doc");
+    if (d.rowsEqual) _schedEqualizeRows(_fdoc);
+    _fitSchedPage(_fdoc);
     if (_schedLocked) {
       $("schedUnlock").onclick = ev => { ev.stopPropagation(); _schedUnlockPrompt(); };
     } else {
