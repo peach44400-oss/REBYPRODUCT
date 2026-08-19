@@ -10527,13 +10527,23 @@ function renderSchedDoc() {
   const host = $("schedDoc"); if (!host || !SCHED.data) return;
   const SH = SCHED_A4_SHEET;
   const avail = Math.max(320, host.clientWidth - 22);
-  const outer = Math.min(1, avail / SH.w);   // A4 용지 전체를 패널 폭에 맞춰 축소(비율 = 실제 A4 가로)
-  host.style.overflow = "visible";
   // 제품명·거래처 자동완성 목록(편집칸에서 사용) — 스케일 밖에 둔다
   const dl = `<datalist id="schedProdDl">${(M.product || []).map(p => `<option value="${esc(p.name)}">`).join("")}</datalist>`
     + `<datalist id="schedPartnerDl">${(M.partner || []).filter(p => p.status !== "중지" && (p.type || "").includes("판매")).map(p => `<option value="${esc(p.name)}">`).join("")}</datalist>`;
-  // A4 용지(1122×793, 여백 30px) — 편집 모드면 입력칸(buildScheduleDocEdit), 아니면 인쇄와 똑같은 미리보기(buildScheduleDoc)
-  const inner = SCHED.editMode ? buildScheduleDocEdit(SCHED.data, SCHED.week) : buildScheduleDoc(SCHED.data, SCHED.week);
+  // ── 편집 모드: A4 한 장에 욱여넣어 축소하지 않고, '편하게 큰 크기'로 두고 길어지면 세로 스크롤 ──
+  //    (항목을 아무리 추가해도 칸 크기가 작아지지 않아 입력이 편함. 완료하면 아래 미리보기 분기로 A4에 맞춰 보여줌)
+  if (SCHED.editMode) {
+    const z = Math.min(1, avail / SH.w);   // 패널 폭에 맞춤(축소만, 확대는 안 함) — 넓은 화면이면 실제 크기
+    host.style.overflow = "auto"; host.style.height = "auto"; host.style.maxHeight = "calc(100vh - 300px)";
+    host.innerHTML = dl + `<div style="zoom:${z.toFixed(4)}; width:${SH.w}px; margin:0 auto;">
+      <div style="background:#fff; box-sizing:border-box; padding:${SCHED_A4_PAD}px; box-shadow:0 1px 6px rgba(0,0,0,.15);">
+        <div style="width:${SCHED_A4.w}px;">${buildScheduleDocEdit(SCHED.data, SCHED.week)}</div></div></div>`;
+    return;
+  }
+  // ── 미리보기(완료) 모드: A4 한 장에 맞춰 축소 + 가운데 정렬 (실제 인쇄본과 동일) ──
+  host.style.overflow = "visible"; host.style.height = ""; host.style.maxHeight = "";
+  const outer = Math.min(1, avail / SH.w);
+  const inner = buildScheduleDoc(SCHED.data, SCHED.week);
   const sheet = `<div style="width:${SH.w}px; height:${SH.h}px; background:#fff; box-sizing:border-box; padding:${SCHED_A4_PAD}px; overflow:hidden;">
     <div style="width:${SCHED_A4.w}px; height:${SCHED_A4.h}px; overflow:hidden;">${inner}</div></div>`;
   host.innerHTML = dl + `<div style="width:${Math.round(SH.w * outer)}px; height:${Math.round(SH.h * outer)}px; margin:0 auto; overflow:hidden; box-shadow:0 1px 6px rgba(0,0,0,.15);">
