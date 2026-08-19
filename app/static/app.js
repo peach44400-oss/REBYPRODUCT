@@ -10239,21 +10239,22 @@ function buildScheduleDoc(d, week) {
   ).join("") || `<span class="auto" style="font-size:${S(12)}px; color:#bbb;">출고일 미입력</span>`;
   const nameRow = groups.map(g => `<th style="${TD} text-align:center; font-weight:800; font-size:${nameFs}px; background:#e7e4dd;">${esc(g.name || "—")}</th>`).join("");
   const shipRow = groups.map(g => `<td style="${TD} text-align:center; font-weight:800; font-size:${dateSize}px; color:${ec("date", "inherit")};">${g.shipDate ? _schedMD(g.shipDate) : "—"}</td>`).join("");
-  // 발주량: 항목마다 [제품명 / 수량(크게) / 개입·박스 / 비고]를 세로로 쌓고 항목 사이 점선으로 구분
-  const orderRow = groups.map(g => {
-    const its = g.items || [];
-    const body = its.map((it, idx) => {
-      const pb = _schedPackBox(it);
-      const sep = idx < its.length - 1 ? "border-bottom:1px dashed #b9b9b9; padding-bottom:6px; margin-bottom:6px;" : "";
-      return `<div style="${sep}">
-        <div style="font-weight:700; font-size:${labelSize}px; color:${ec("label", "inherit")};">${esc(it.label || "") || "&nbsp;"}</div>
-        <div style="font-size:${qtySize}px; font-weight:900; line-height:1.05; margin:1px 0; color:${ec("qty", "inherit")};">${NFq(it.qty) ? NFq(it.qty) + '<span style="font-size:' + Math.round(qtySize * 0.6) + 'px; font-weight:700;">개</span>' : "&nbsp;"}</div>
-        ${(pb || it.partner) ? `<div style="font-size:${subSize}px;"><span style="color:${ec("sub", "#c26a1f")}; font-weight:700;">${esc(pb)}</span>${it.partner ? ` <span style="color:#2f3fa0;">· ${esc(it.partner)}</span>` : ""}</div>` : ""}
-        ${it.memo ? `<div style="color:#888; font-size:${subSize}px;">${esc(it.memo)}</div>` : ""}
-      </div>`;
-    }).join("") || '<span style="color:#bbb;">—</span>';
-    return `<td style="${TD}">${body}</td>`;
-  }).join("");
+  // 발주량: '항목=표의 한 행'으로 렌더 → 같은 행(가로줄)의 칸들은 높이가 같아 열끼리 위치가 정확히 맞는다.
+  const maxItems = Math.max(1, ...groups.map(g => (g.items || []).length));
+  const itemCell = it => {
+    if (!it) return `<td style="${TD}"></td>`;
+    const pb = _schedPackBox(it);
+    const isBlank = !(it.label || NFq(it.qty) || pb || it.partner || it.memo);
+    if (isBlank) return `<td style="${TD}">&nbsp;</td>`;
+    return `<td style="${TD}">
+      <div style="font-weight:700; font-size:${labelSize}px; color:${ec("label", "inherit")};">${esc(it.label || "") || "&nbsp;"}</div>
+      <div style="font-size:${qtySize}px; font-weight:900; line-height:1.05; margin:1px 0; color:${ec("qty", "inherit")};">${NFq(it.qty) ? NFq(it.qty) + '<span style="font-size:' + Math.round(qtySize * 0.6) + 'px; font-weight:700;">개</span>' : "&nbsp;"}</div>
+      ${(pb || it.partner) ? `<div style="font-size:${subSize}px;"><span style="color:${ec("sub", "#c26a1f")}; font-weight:700;">${esc(pb)}</span>${it.partner ? ` <span style="color:#2f3fa0;">· ${esc(it.partner)}</span>` : ""}</div>` : ""}
+      ${it.memo ? `<div style="color:#888; font-size:${subSize}px;">${esc(it.memo)}</div>` : ""}</td>`;
+  };
+  const orderRows = Array.from({ length: maxItems }, (_, k) =>
+    `<tr class="order-row">${k === 0 ? `<td style="${LB}" rowspan="${maxItems}">발주량</td>` : ""}${groups.map(g => itemCell((g.items || [])[k])).join("")}</tr>`
+  ).join("");
   const expRow = groups.map(g => {
     const exps = [...new Set((g.items || []).map(it => it.expiry).filter(Boolean))];
     return `<td style="${TD} text-align:center; font-weight:700; font-size:${dateSize}px; color:${ec("date", "inherit")};">${exps.length ? exps.map(esc).join("<br>") : "—"}</td>`;
@@ -10277,7 +10278,7 @@ function buildScheduleDoc(d, week) {
       <thead><tr><th style="${LB}">제품</th>${nameRow}</tr></thead>
       <tbody>
         <tr><td style="${LB}">출고일</td>${shipRow}</tr>
-        <tr class="order-row"><td style="${LB}">발주량</td>${orderRow}</tr>
+        ${orderRows}
         <tr><td style="${LB}">소비기한</td>${expRow}</tr>
         <tr><td style="${LB} font-size:${labelFs - 1}px;">예정<br>소비기한</td>${exp2Row}</tr>
         <tr><td style="${LB}">비고</td>${memoRow}</tr>
@@ -10319,30 +10320,33 @@ function buildScheduleDocEdit(d, week) {
   const nameRow = groups.map((g, gi) => `<th class="sched-celledit" style="${TD} text-align:center; font-weight:800; font-size:${nameFs}px; background:#e7e4dd; position:relative;">${g_(gi, "name", g.name, "", ` placeholder="제품군명" style="text-align:center; font-weight:800;"`)}${gctl(gi)}</th>`).join("")
     + `<th style="${TD} text-align:center; background:#f2f1ec;"><button class="sched-addbtn" data-schedgaddcol="1" title="제품군(열) 추가" style="padding:6px 8px; font-size:${labelFs}px;">＋<br>제품군</button></th>`;
   const shipRow = groups.map((g, gi) => `<td style="${TD} text-align:center; font-weight:800; font-size:${dateSize}px; color:${ec("date", "inherit")};">${g_(gi, "shipDate", g.shipDate, "datepick", ` readonly placeholder="📅 출고일" style="text-align:center; font-weight:800; cursor:pointer;"`)}</td>`).join("") + `<td style="${TD}"></td>`;
-  const orderRow = groups.map((g, gi) => {
-    const its = g.items || [];
-    const body = its.map((it, ii) => {
-      const sep = ii < its.length - 1 ? "border-bottom:1px dashed #b9b9b9; padding-bottom:5px; margin-bottom:5px;" : "";
-      return `<div class="sched-celledit" style="position:relative; ${sep}">
-        ${it_(gi, ii, "label", it.label, "", ` list="schedProdDl" placeholder="제품/품목" style="font-weight:700; font-size:${labelSize}px; color:${ec("label", "inherit")};"`)}
-        <div style="display:flex; align-items:baseline; gap:2px; margin:1px 0;">
-          ${it_(gi, ii, "qty", it.qty, "", ` inputmode="numeric" placeholder="수량" style="font-size:${qtySize}px; font-weight:900; text-align:right; flex:1 1 auto; color:${ec("qty", "inherit")};"`)}
-          <span style="font-size:${Math.round(qtySize * 0.6)}px; font-weight:700;">개</span></div>
-        <div style="display:flex; align-items:center; gap:1px; font-size:${subSize}px; flex-wrap:wrap;">
-          ${it_(gi, ii, "pack", it.pack, "", ` inputmode="numeric" placeholder="개입" style="width:40px; text-align:right; color:${ec("sub", "#c26a1f")}; font-weight:700;"`)}<span style="color:${ec("sub", "#c26a1f")};">개입/</span>
-          ${it_(gi, ii, "boxes", it.boxes, "", ` inputmode="numeric" placeholder="자동" style="width:40px; text-align:right; color:${ec("sub", "#c26a1f")}; font-weight:700;"`)}<span style="color:${ec("sub", "#c26a1f")};">박스</span></div>
-        <div style="display:flex; gap:2px; font-size:${subSize}px;">
-          ${it_(gi, ii, "partner", it.partner, "", ` list="schedPartnerDl" placeholder="거래처" style="flex:1 1 0; color:#2f3fa0;"`)}
-          ${it_(gi, ii, "memo", it.memo, "", ` placeholder="비고" style="flex:1 1 0; color:#888;"`)}</div>
-        <div class="sched-ectl" style="position:absolute; top:0; right:0; display:flex; gap:2px; font-size:${Math.max(13, S(13))}px;">
-          <button data-schediblank="${gi}:${ii}" title="이 항목 위에 빈 칸 삽입 (한 칸 아래로 띄움)" style="padding:2px 6px;">␣</button>
-          <button data-schedimove="${gi}:${ii}:-1" title="위로" ${ii === 0 ? "disabled" : ""} style="padding:2px 6px;">▲</button>
-          <button data-schedimove="${gi}:${ii}:1" title="아래로" ${ii === its.length - 1 ? "disabled" : ""} style="padding:2px 6px;">▼</button>
-          <button data-schedidel="${gi}:${ii}" title="항목 삭제" style="padding:2px 7px; color:#c0392b;">×</button></div>
-      </div>`;
-    }).join("");
-    return `<td style="${TD}">${body}<button class="sched-addbtn" data-schediadd="${gi}" style="width:100%; margin-top:5px; padding:4px; font-size:${Math.max(12, subSize)}px;">＋ 항목</button></td>`;
-  }).join("") + `<td style="${TD}"></td>`;
+  // 발주량: '항목=표의 한 행' — 같은 행 칸들은 높이가 같아 열끼리 위치가 맞는다. 항목 없는 칸은 빈 칸.
+  const maxItems = Math.max(1, ...groups.map(g => (g.items || []).length));
+  const itemCellEdit = (g, gi, ii) => {
+    const it = (g.items || [])[ii];
+    if (!it) return `<td style="${TD}"></td>`;
+    return `<td style="${TD}"><div class="sched-celledit" style="position:relative;">
+      ${it_(gi, ii, "label", it.label, "", ` list="schedProdDl" placeholder="제품/품목" style="font-weight:700; font-size:${labelSize}px; color:${ec("label", "inherit")};"`)}
+      <div style="display:flex; align-items:baseline; gap:2px; margin:1px 0;">
+        ${it_(gi, ii, "qty", it.qty, "", ` inputmode="numeric" placeholder="수량" style="font-size:${qtySize}px; font-weight:900; text-align:right; flex:1 1 auto; color:${ec("qty", "inherit")};"`)}
+        <span style="font-size:${Math.round(qtySize * 0.6)}px; font-weight:700;">개</span></div>
+      <div style="display:flex; align-items:center; gap:1px; font-size:${subSize}px; flex-wrap:wrap;">
+        ${it_(gi, ii, "pack", it.pack, "", ` inputmode="numeric" placeholder="개입" style="width:40px; text-align:right; color:${ec("sub", "#c26a1f")}; font-weight:700;"`)}<span style="color:${ec("sub", "#c26a1f")};">개입/</span>
+        ${it_(gi, ii, "boxes", it.boxes, "", ` inputmode="numeric" placeholder="자동" style="width:40px; text-align:right; color:${ec("sub", "#c26a1f")}; font-weight:700;"`)}<span style="color:${ec("sub", "#c26a1f")};">박스</span></div>
+      <div style="display:flex; gap:2px; font-size:${subSize}px;">
+        ${it_(gi, ii, "partner", it.partner, "", ` list="schedPartnerDl" placeholder="거래처" style="flex:1 1 0; color:#2f3fa0;"`)}
+        ${it_(gi, ii, "memo", it.memo, "", ` placeholder="비고" style="flex:1 1 0; color:#888;"`)}</div>
+      <div class="sched-ectl" style="position:absolute; top:0; right:0; display:flex; gap:2px; font-size:${Math.max(13, S(13))}px;">
+        <button data-schediblank="${gi}:${ii}" title="이 항목 위에 빈 칸 삽입 (한 칸 아래로 띄움)" style="padding:2px 6px;">␣</button>
+        <button data-schedimove="${gi}:${ii}:-1" title="위로" ${ii === 0 ? "disabled" : ""} style="padding:2px 6px;">▲</button>
+        <button data-schedimove="${gi}:${ii}:1" title="아래로" ${ii === (g.items.length - 1) ? "disabled" : ""} style="padding:2px 6px;">▼</button>
+        <button data-schedidel="${gi}:${ii}" title="항목 삭제" style="padding:2px 7px; color:#c0392b;">×</button></div>
+    </div></td>`;
+  };
+  const orderRows = Array.from({ length: maxItems }, (_, k) =>
+    `<tr class="order-row">${k === 0 ? `<td style="${LB}" rowspan="${maxItems + 1}">발주량</td>` : ""}${groups.map((g, gi) => itemCellEdit(g, gi, k)).join("")}<td style="${TD}"></td></tr>`
+  ).join("")
+    + `<tr>${groups.map((g, gi) => `<td style="${TD}"><button class="sched-addbtn" data-schediadd="${gi}" style="width:100%; padding:4px; font-size:${Math.max(12, subSize)}px;">＋ 항목</button></td>`).join("")}<td style="${TD}"></td></tr>`;
   const gExp = (g, key) => { const u = [...new Set((g.items || []).map(it => it[key]).filter(Boolean))]; return u[0] || ""; };
   const expRow = groups.map((g, gi) => `<td style="${TD} text-align:center; font-weight:700; font-size:${dateSize}px; color:${ec("date", "inherit")};">${g_(gi, "gexp", gExp(g, "expiry"), "datepick", ` readonly placeholder="📅 소비기한" style="text-align:center; font-weight:700; cursor:pointer;"`)}</td>`).join("") + `<td style="${TD}"></td>`;
   const exp2Row = groups.map((g, gi) => `<td style="${TD} text-align:center; font-size:${dateSize}px; color:${ec("date", "#666")};">${g_(gi, "gexp2", gExp(g, "expiry2"), "datepick", ` readonly placeholder="📅 예정" style="text-align:center; cursor:pointer;"`)}</td>`).join("") + `<td style="${TD}"></td>`;
@@ -10361,7 +10365,7 @@ function buildScheduleDocEdit(d, week) {
       <thead><tr><th style="${LB}">제품</th>${nameRow}</tr></thead>
       <tbody>
         <tr><td style="${LB}">출고일</td>${shipRow}</tr>
-        <tr class="order-row"><td style="${LB}">발주량</td>${orderRow}</tr>
+        ${orderRows}
         <tr><td style="${LB}">소비기한</td>${expRow}</tr>
         <tr><td style="${LB} font-size:${labelFs - 1}px;">예정<br>소비기한</td>${exp2Row}</tr>
         <tr><td style="${LB}">비고</td>${memoRow}</tr>
