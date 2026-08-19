@@ -6443,17 +6443,17 @@ function buildFinLedgerDoc(d) {
   const TDm = "border:1px solid #333; padding:2px 6px; font-size:11px;";
   const approve = `<table style="border-collapse:collapse; display:inline-table;">
     <tr><td rowspan="2" style="${TDm} text-align:center; writing-mode:vertical-rl; letter-spacing:3px; background:#eef0f2;">결 재</td>
-      <td style="${TDm} text-align:center; background:#eef0f2; width:54px;">작성</td>
-      <td style="${TDm} text-align:center; background:#eef0f2; width:54px;">확인</td>
-      <td style="${TDm} text-align:center; background:#eef0f2; width:54px;">승인</td></tr>
-    <tr><td style="${TDm} height:34px;"></td><td style="${TDm}"></td><td style="${TDm}"></td></tr></table>`;
+      <td style="${TDm} text-align:center; background:#eef0f2; width:65px;">작성</td>
+      <td style="${TDm} text-align:center; background:#eef0f2; width:65px;">확인</td>
+      <td style="${TDm} text-align:center; background:#eef0f2; width:65px;">승인</td></tr>
+    <tr><td style="${TDm} height:50px;"></td><td style="${TDm}"></td><td style="${TDm}"></td></tr></table>`;
   const header = `<table style="width:100%; border-collapse:collapse; margin:0 0 8px; border:0;"><tr>
     <td style="border:0; vertical-align:top; width:32%; font-size:11px; line-height:1.9;">
       ● 작성일 : <b>${d.date} (${dow})</b><br>● 완제품 재고관리 (생산일자 기준)
       ${FINLED.showAll ? "" : `<br><span style="color:#888;">움직인 제품 ${rows.length}종</span>`}</td>
     <td style="border:0; text-align:center; vertical-align:middle;">
       <span style="font-size:23px; font-weight:800; letter-spacing:10px;">완 제 품 수 불 부</span></td>
-    <td style="border:0; text-align:right; vertical-align:top; width:210px;">${approve}</td></tr></table>`;
+    <td style="border:0; text-align:right; vertical-align:top; width:250px;">${approve}</td></tr></table>`;
   const HD = "border:1px solid #333; padding:4px 6px; background:#eef0f2; font-size:11.5px;";
   const head = `<thead><tr>
     <th style="${HD} text-align:left;">제 품 명</th>${hasSpec ? `<th style="${HD}">규격</th>` : ""}
