@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.85.4"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.85.5"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -3071,6 +3071,26 @@ def po_save(request: Request, body: dict):
         audit(con, "save_po", f"발주서 #{cur.lastrowid} — 품목 {len(clean)}종")
         con.commit()
         return {"ok": True, "id": cur.lastrowid}
+    finally:
+        con.close()
+
+
+@app.post("/api/po/{po_id}/kakao")
+def po_kakao(request: Request, po_id: int):
+    """발주서를 카카오톡으로 공유한 것을 '발송됨(카톡)'으로 기록 — 메일 발송처럼 이력에 남긴다."""
+    require_stock_duty(request)
+    con = connect()
+    try:
+        pr = con.execute("""SELECT COALESCE(pa.name, NULLIF(po.partner_name,''),'') nm
+            FROM purchase_order po LEFT JOIN partner pa ON pa.id=po.partner_id WHERE po.id=?""", (po_id,)).fetchone()
+        if not pr:
+            raise HTTPException(404, "발주서를 찾을 수 없습니다")
+        con.execute("UPDATE purchase_order SET sent_at=COALESCE(sent_at, datetime('now','localtime')),"
+                    " sent_to=CASE WHEN COALESCE(sent_to,'')='' THEN '카카오톡' ELSE sent_to END WHERE id=?", (po_id,))
+        audit(con, "send_po", f"발주서 #{po_id} 카카오톡 공유")
+        con.commit()
+        chat_system(f"📤 발주서 #{po_id} 카카오톡 공유" + (f" — {pr['nm']}" if pr["nm"] else ""))
+        return {"ok": True}
     finally:
         con.close()
 

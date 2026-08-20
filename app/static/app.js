@@ -6837,22 +6837,29 @@ function _poKakaoText(o) {
   if (text.length > 190) text = text.slice(0, 185) + "…\n(전체 내역은 메일/인쇄 참조)";
   return text;
 }
-async function poShareKakao(o) {
-  if (!(o.items || []).some(it => it.name)) return toast("발주 품목을 추가해주세요");
-  if (!(await _kakaoReady())) { showKakaoSetup(); return; }
+async function _kakaoOpenShare(o) {   // 카카오 공유창 열기 — 성공 시 true
+  if (!(await _kakaoReady())) { showKakaoSetup(); return false; }
   try {
     window.Kakao.Share.sendDefault({ objectType: "text", text: _poKakaoText(o),
       link: { webUrl: location.origin, mobileWebUrl: location.origin } });
-  } catch (e) { toast("카카오톡 공유를 열지 못했습니다 — 앱키·도메인 설정을 확인하세요"); showKakaoSetup(); }
+    return true;
+  } catch (e) { toast("카카오톡 공유를 열지 못했습니다 — 앱키·도메인 설정을 확인하세요"); showKakaoSetup(); return false; }
 }
-function poShareKakaoFromForm() {
+async function poShareKakaoFromForm() {
   const b = poBody();
-  const items = b.items.map(it => { const m = (M.material || []).find(x => x.id === it.material_id) || {}; return { name: m.name, unit: m.unit, qty: it.qty }; });
-  poShareKakao({ partner: $("poPartner").value.trim(), date: b.date, due: b.due, note: b.note, items });
+  const items = b.items.map(it => { const m = materialById(it.material_id) || {}; return { name: m.name, unit: m.unit, qty: it.qty }; });
+  if (!items.some(it => it.name)) return toast("발주 품목을 추가해주세요");
+  // 메일과 동일 — 저장 안 된 발주서는 자동 저장해 이력에 남긴다
+  try { if (!PO.id) { const saved = await api("/api/po", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) }); PO.id = saved.id; } }
+  catch (e) { return; }
+  if (!(await _kakaoOpenShare({ id: PO.id, partner: $("poPartner").value.trim(), date: b.date, due: b.due, note: b.note, items }))) return;
+  try { await api(`/api/po/${PO.id}/kakao`, { method: "POST" }); } catch (e) { }   // '발송됨(카톡)' 기록 + 채팅 알림
+  toast("💬 카카오톡 공유창을 열었습니다 — 발주서가 저장·기록되었습니다");
+  if (typeof loadPoHistory === "function") loadPoHistory();
 }
-function poShareKakaoFromView() {
+async function poShareKakaoFromView() {
   const h = POVIEW.h; if (!h) return;
-  poShareKakao({ id: h.id, partner: (h.partner === "거래처 미지정" ? "" : h.partner), date: h.date, due: h.due, note: h.note, items: h.items });
+  await _kakaoOpenShare({ id: h.id, partner: (h.partner === "거래처 미지정" ? "" : h.partner), date: h.date, due: h.due, note: h.note, items: h.items });
 }
 async function showKakaoSetup() {
   let key = ""; try { key = (await api("/api/kakaokey")).key || ""; } catch (e) {}
@@ -10273,6 +10280,11 @@ function _schedFieldUpdate(e) {
     const key = f === "gexp" ? "expiry" : "expiry2";
     (g.items || []).forEach(it => { it[key] = inp.value; });
   } else { g[f] = inp.value; }   // 제품군명·출고일·제품군 비고
+  // 거래처는 그 열(제품군)의 모든 항목에 동일 적용 — 한 번만 입력하면 열 전체가 같아진다(확정 시 반영).
+  if (hasI && f === "partner" && e && e.type === "change") {
+    (g.items || []).forEach(it => { it.partner = inp.value; });
+    renderSchedDoc(); return;
+  }
   // 날짜(출고일·소비기한·예정)는 선택 즉시 다시 그려 '주간 출고일' 리본·소비기한 표시를 갱신.
   // 그 외 텍스트 편집은 재렌더하지 않음 — 다음 칸으로 이동해 타이핑 중일 때 그 칸이 사라지는 것을 방지(포커스 유지).
   if (e && e.type === "change" && (f === "shipDate" || f === "gexp" || f === "gexp2")) renderSchedDoc();
