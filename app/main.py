@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.85.1"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.85.2"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -3323,6 +3323,20 @@ def po_delete(request: Request, po_id: int):
         return {"ok": True}
     finally:
         con.close()
+
+
+# ── 카카오톡 공유 앱키(회사 공통, 관리자만 설정) — 발주서 [카톡으로 보내기]에 사용 ──
+@app.get("/api/kakaokey")
+def kakao_key_get(request: Request):
+    """카카오 JavaScript 앱키 조회 — 공개용(브라우저) 키라 로그인 사용자에게 그대로 내려준다."""
+    return {"key": get_app_setting("kakao_js_key", "")}
+
+
+@app.post("/api/kakaokey")
+def kakao_key_set(request: Request, body: dict):
+    require_admin(request)
+    set_app_setting("kakao_js_key", (body.get("key") or "").strip())
+    return {"ok": True}
 
 
 # ── 메일(SMTP) 설정 (사용자별) + 발주서 메일 발송 ──────────────

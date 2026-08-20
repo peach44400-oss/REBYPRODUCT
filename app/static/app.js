@@ -6807,6 +6807,87 @@ $("poMailBtn").onclick = () => openMail("po");
 // 사이드바 [✉ 메일] · 내 설정 [✉ 새 메일 쓰기] — 발주서와 무관한 일반 메일
 $("btnCompose").onclick = () => openMail("general");
 $("meCompose").onclick = () => { closeMe(); openMail("general"); };
+
+/* ── 발주서 카카오톡 공유(Kakao JavaScript SDK) — 메일과 별개. 공유창이 떠서 대화상대를 골라 전송 ── */
+const KAKAO = { key: null };
+async function _kakaoReady() {
+  if (window.Kakao && window.Kakao.isInitialized && window.Kakao.isInitialized()) return true;
+  if (KAKAO.key === null) { try { KAKAO.key = (await api("/api/kakaokey")).key || ""; } catch (e) { KAKAO.key = ""; } }
+  if (!KAKAO.key) return false;
+  if (!window.Kakao) {
+    const ok = await new Promise(res => {
+      const s = document.createElement("script");
+      s.src = "https://t1.kakaocdn.net/kakao_js_sdk/2.7.2/kakao.min.js";
+      s.onload = () => res(true); s.onerror = () => res(false);
+      document.head.appendChild(s);
+    });
+    if (!ok || !window.Kakao) return false;
+  }
+  try { if (!window.Kakao.isInitialized()) window.Kakao.init(KAKAO.key); } catch (e) { return false; }
+  return !!(window.Kakao.isInitialized && window.Kakao.isInitialized());
+}
+function _poKakaoText(o) {
+  const NFq = v => (v == null || v === "") ? "" : Number(String(v).replace(/,/g, "")).toLocaleString("ko-KR");
+  const lines = [`[발주서] ${o.partner || "거래처"}${o.id ? " #" + o.id : ""}`,
+    `발주일 ${o.date || todayISO()}${o.due ? " · 납기 " + o.due : ""}`];
+  (o.items || []).forEach(it => { if (it.name) lines.push(`· ${esc(it.name)} ${NFq(it.qty)}${it.unit || ""}`.trim()); });
+  if (o.note) lines.push(`비고: ${o.note}`);
+  lines.push("— 리바이프로덕트");
+  let text = lines.join("\n");
+  if (text.length > 190) text = text.slice(0, 185) + "…\n(전체 내역은 메일/인쇄 참조)";
+  return text;
+}
+async function poShareKakao(o) {
+  if (!(o.items || []).some(it => it.name)) return toast("발주 품목을 추가해주세요");
+  if (!(await _kakaoReady())) { showKakaoSetup(); return; }
+  try {
+    window.Kakao.Share.sendDefault({ objectType: "text", text: _poKakaoText(o),
+      link: { webUrl: location.origin, mobileWebUrl: location.origin } });
+  } catch (e) { toast("카카오톡 공유를 열지 못했습니다 — 앱키·도메인 설정을 확인하세요"); showKakaoSetup(); }
+}
+function poShareKakaoFromForm() {
+  const b = poBody();
+  const items = b.items.map(it => { const m = (M.material || []).find(x => x.id === it.material_id) || {}; return { name: m.name, unit: m.unit, qty: it.qty }; });
+  poShareKakao({ partner: $("poPartner").value.trim(), date: b.date, due: b.due, note: b.note, items });
+}
+function poShareKakaoFromView() {
+  const h = POVIEW.h; if (!h) return;
+  poShareKakao({ id: h.id, partner: (h.partner === "거래처 미지정" ? "" : h.partner), date: h.date, due: h.due, note: h.note, items: h.items });
+}
+async function showKakaoSetup() {
+  let key = ""; try { key = (await api("/api/kakaokey")).key || ""; } catch (e) {}
+  const admin = (ROLE === "admin");
+  const ov = document.createElement("div");
+  ov.className = "overlay on"; ov.style.zIndex = 99996;
+  ov.innerHTML = `<div class="modal" style="width:min(600px,95vw);">
+    <h3>💬 카카오톡 공유 설정</h3>
+    <p class="hint" style="line-height:1.8;">'카톡으로 보내기'는 <b>카카오 개발자 앱키(JavaScript 키)</b>가 필요합니다 — 한 번만 설정하면 됩니다.<br>
+      1) <b>developers.kakao.com</b> 로그인 → <b>내 애플리케이션 → 애플리케이션 추가하기</b><br>
+      2) 만든 앱 → <b>앱 키</b>의 <b>JavaScript 키</b> 복사<br>
+      3) 그 앱의 <b>플랫폼 → Web 플랫폼 등록</b>에 사이트 도메인 추가:<br>
+      &nbsp;&nbsp;<code>${esc(location.origin)}</code> ${location.origin.includes("localhost") ? "(외부 접속을 쓰면 그 주소도 함께 등록)" : ""}<br>
+      4) 그 앱에서 <b>카카오톡 공유</b> 기능을 켜고, 아래에 JavaScript 키를 붙여넣어 저장하세요.<br>
+      <span style="color:var(--muted);">※ 보내는 사람 PC에 카카오톡(데스크톱)이 설치되어 있어야 공유창이 열립니다. 내용이 길면 요약으로 잘릴 수 있어요(카카오 정책).</span></p>
+    ${admin ? `<div style="display:flex; gap:8px; margin:6px 0 12px;">
+      <input id="kkKeyInput" value="${esc(key)}" placeholder="카카오 JavaScript 키" style="flex:1; padding:8px 10px; border:1px solid var(--line); border-radius:8px; font-family:monospace;">
+      <button class="btn primary" id="kkKeySave">저장</button></div>`
+      : `<div class="auto" style="margin:6px 0 12px;">앱키 설정은 관리자만 할 수 있습니다 — 관리자에게 요청하세요.</div>`}
+    <div class="modal-foot"><button class="btn" id="kkClose">닫기</button></div></div>`;
+  document.body.appendChild(ov);
+  ov.querySelector("#kkClose").onclick = () => ov.remove();
+  if (admin) ov.querySelector("#kkKeySave").onclick = async () => {
+    const v = ov.querySelector("#kkKeyInput").value.trim();
+    try {
+      await api("/api/kakaokey", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: v }) });
+      KAKAO.key = v;
+      toast(v ? "카카오 앱키를 저장했습니다 — 다시 [💬 카톡으로 보내기]를 눌러 주세요" : "앱키를 지웠습니다");
+      ov.remove();
+    } catch (e) { /* api 토스트 */ }
+  };
+}
+const _poKB = $("poKakaoBtn"); if (_poKB) _poKB.onclick = poShareKakaoFromForm;
+const _poVK = $("poViewKakao"); if (_poVK) _poVK.onclick = poShareKakaoFromView;
+
 function openMail(mode) {
   POMAIL.mode = mode;
   // 자동완성 목록: 이메일이 저장된 거래처 전부 — 이름으로 검색해 주소 선택
