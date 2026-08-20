@@ -6811,12 +6811,16 @@ $("meCompose").onclick = () => { closeMe(); openMail("general"); };
 /* ── 발주서 카톡으로 보내기 — 발주 내용을 클립보드에 복사 → 카카오톡 대화방에 붙여넣기(Ctrl+V). 앱키·설정 불필요 ── */
 function _poKakaoText(o) {
   const NFq = v => (v == null || v === "") ? "" : Number(String(v).replace(/,/g, "")).toLocaleString("ko-KR");
-  const head = `📋 발주서${o.id ? " #" + o.id : ""}${o.partner ? "  " + o.partner : ""}`;
-  const lines = [head, `발주일 ${o.date || todayISO()}${o.due ? "  ·  납기 " + o.due : ""}`, "────────────"];
+  const lines = [`발주서${o.id ? " #" + o.id : ""}${o.partner ? "  " + o.partner : ""}`,
+    `발주일 ${o.date || todayISO()}`];
+  if (o.due) lines.push(`납기 ${o.due}`);
+  lines.push("");
   (o.items || []).forEach((it, i) => { if (it.name) lines.push(`${i + 1}. ${it.name}  ${NFq(it.qty)}${it.unit || ""}`); });
-  lines.push("────────────");
-  if (o.note) lines.push(`비고: ${o.note}`);
-  lines.push("— 리바이프로덕트 (REBYPRODUCT)");
+  lines.push("");
+  if (o.note) { lines.push(`비고: ${o.note}`); lines.push(""); }
+  lines.push("리바이프로덕트 (REBYPRODUCT)");
+  lines.push("");
+  lines.push("부탁드립니다.");
   return lines.join("\n");
 }
 async function _copyToClipboard(text) {
@@ -6831,19 +6835,23 @@ async function poShareKakaoFromForm() {
   const b = poBody();
   const items = b.items.map(it => { const m = materialById(it.material_id) || {}; return { name: m.name, unit: m.unit, qty: it.qty }; });
   if (!items.some(it => it.name)) return toast("발주 품목을 추가해주세요");
-  // 메일과 동일 — 저장 안 된 발주서는 자동 저장해 이력에 남기고 '발송됨(카톡)'으로 기록
+  // 1) 발주 진행 확인 — 진행하면 저장·기록되고, 이후 발주 현황에서 입고 처리
+  if (!confirm("발주를 진행하시겠습니까?\n\n· 발주서가 저장되어 이력에 남습니다.\n· 물건이 도착하면 [발주 현황]에서 '입고 처리'하세요.")) return;
   try {
     if (!PO.id) { const saved = await api("/api/po", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) }); PO.id = saved.id; }
     await api(`/api/po/${PO.id}/kakao`, { method: "POST" });
   } catch (e) { return; }
+  // 2) 복사 후 안내 — 대화방에 붙여넣어 거래처에 전달
   const ok = await _copyToClipboard(_poKakaoText({ id: PO.id, partner: $("poPartner").value.trim(), date: b.date, due: b.due, note: b.note, items }));
-  toast(ok ? "💬 발주 내용을 복사했습니다 — 카카오톡 대화방에서 Ctrl+V로 붙여넣으세요" : "복사에 실패했습니다 — 인쇄/메일을 이용해주세요");
+  if (ok) alert("발주 내용이 복사되었습니다.\n\n카카오톡 등 대화방에 붙여넣기(Ctrl+V) 하여 거래처에 보내세요.");
+  else toast("복사에 실패했습니다 — 인쇄/메일을 이용해주세요");
   if (typeof loadPoHistory === "function") loadPoHistory();
 }
 async function poShareKakaoFromView() {
   const h = POVIEW.h; if (!h) return;
   const ok = await _copyToClipboard(_poKakaoText({ id: h.id, partner: (h.partner === "거래처 미지정" ? "" : h.partner), date: h.date, due: h.due, note: h.note, items: h.items }));
-  toast(ok ? "💬 발주 내용을 복사했습니다 — 카카오톡 대화방에서 Ctrl+V로 붙여넣으세요" : "복사에 실패했습니다");
+  if (ok) alert("발주 내용이 복사되었습니다.\n\n카카오톡 등 대화방에 붙여넣기(Ctrl+V) 하여 거래처에 보내세요.");
+  else toast("복사에 실패했습니다");
 }
 const _poKB = $("poKakaoBtn"); if (_poKB) _poKB.onclick = poShareKakaoFromForm;
 const _poVK = $("poViewKakao"); if (_poVK) _poVK.onclick = poShareKakaoFromView;
