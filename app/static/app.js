@@ -6808,89 +6808,42 @@ $("poMailBtn").onclick = () => openMail("po");
 $("btnCompose").onclick = () => openMail("general");
 $("meCompose").onclick = () => { closeMe(); openMail("general"); };
 
-/* ── 발주서 카카오톡 공유(Kakao JavaScript SDK) — 메일과 별개. 공유창이 떠서 대화상대를 골라 전송 ── */
-const KAKAO = { key: null };
-async function _kakaoReady() {
-  if (window.Kakao && window.Kakao.isInitialized && window.Kakao.isInitialized()) return true;
-  if (KAKAO.key === null) { try { KAKAO.key = (await api("/api/kakaokey")).key || ""; } catch (e) { KAKAO.key = ""; } }
-  if (!KAKAO.key) return false;
-  if (!window.Kakao) {
-    const ok = await new Promise(res => {
-      const s = document.createElement("script");
-      s.src = "https://t1.kakaocdn.net/kakao_js_sdk/2.7.2/kakao.min.js";
-      s.onload = () => res(true); s.onerror = () => res(false);
-      document.head.appendChild(s);
-    });
-    if (!ok || !window.Kakao) return false;
-  }
-  try { if (!window.Kakao.isInitialized()) window.Kakao.init(KAKAO.key); } catch (e) { return false; }
-  return !!(window.Kakao.isInitialized && window.Kakao.isInitialized());
-}
+/* ── 발주서 카톡으로 보내기 — 발주 내용을 클립보드에 복사 → 카카오톡 대화방에 붙여넣기(Ctrl+V). 앱키·설정 불필요 ── */
 function _poKakaoText(o) {
   const NFq = v => (v == null || v === "") ? "" : Number(String(v).replace(/,/g, "")).toLocaleString("ko-KR");
-  const lines = [`[발주서] ${o.partner || "거래처"}${o.id ? " #" + o.id : ""}`,
-    `발주일 ${o.date || todayISO()}${o.due ? " · 납기 " + o.due : ""}`];
-  (o.items || []).forEach(it => { if (it.name) lines.push(`· ${esc(it.name)} ${NFq(it.qty)}${it.unit || ""}`.trim()); });
+  const head = `📋 발주서${o.id ? " #" + o.id : ""}${o.partner ? "  " + o.partner : ""}`;
+  const lines = [head, `발주일 ${o.date || todayISO()}${o.due ? "  ·  납기 " + o.due : ""}`, "────────────"];
+  (o.items || []).forEach((it, i) => { if (it.name) lines.push(`${i + 1}. ${it.name}  ${NFq(it.qty)}${it.unit || ""}`); });
+  lines.push("────────────");
   if (o.note) lines.push(`비고: ${o.note}`);
-  lines.push("— 리바이프로덕트");
-  let text = lines.join("\n");
-  if (text.length > 190) text = text.slice(0, 185) + "…\n(전체 내역은 메일/인쇄 참조)";
-  return text;
+  lines.push("— 리바이프로덕트 (REBYPRODUCT)");
+  return lines.join("\n");
 }
-async function _kakaoOpenShare(o) {   // 카카오 공유창 열기 — 성공 시 true
-  if (!(await _kakaoReady())) { showKakaoSetup(); return false; }
-  try {
-    window.Kakao.Share.sendDefault({ objectType: "text", text: _poKakaoText(o),
-      link: { webUrl: location.origin, mobileWebUrl: location.origin } });
-    return true;
-  } catch (e) { toast("카카오톡 공유를 열지 못했습니다 — 앱키·도메인 설정을 확인하세요"); showKakaoSetup(); return false; }
+async function _copyToClipboard(text) {
+  try { if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText(text); return true; } } catch (e) { }
+  try {   // 폴백(비보안 컨텍스트 등): 임시 textarea + execCommand
+    const ta = document.createElement("textarea"); ta.value = text;
+    ta.style.cssText = "position:fixed; left:-9999px; top:0;"; document.body.appendChild(ta);
+    ta.focus(); ta.select(); const ok = document.execCommand("copy"); ta.remove(); return ok;
+  } catch (e) { return false; }
 }
 async function poShareKakaoFromForm() {
   const b = poBody();
   const items = b.items.map(it => { const m = materialById(it.material_id) || {}; return { name: m.name, unit: m.unit, qty: it.qty }; });
   if (!items.some(it => it.name)) return toast("발주 품목을 추가해주세요");
-  // 메일과 동일 — 저장 안 된 발주서는 자동 저장해 이력에 남긴다
-  try { if (!PO.id) { const saved = await api("/api/po", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) }); PO.id = saved.id; } }
-  catch (e) { return; }
-  if (!(await _kakaoOpenShare({ id: PO.id, partner: $("poPartner").value.trim(), date: b.date, due: b.due, note: b.note, items }))) return;
-  try { await api(`/api/po/${PO.id}/kakao`, { method: "POST" }); } catch (e) { }   // '발송됨(카톡)' 기록 + 채팅 알림
-  toast("💬 카카오톡 공유창을 열었습니다 — 발주서가 저장·기록되었습니다");
+  // 메일과 동일 — 저장 안 된 발주서는 자동 저장해 이력에 남기고 '발송됨(카톡)'으로 기록
+  try {
+    if (!PO.id) { const saved = await api("/api/po", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) }); PO.id = saved.id; }
+    await api(`/api/po/${PO.id}/kakao`, { method: "POST" });
+  } catch (e) { return; }
+  const ok = await _copyToClipboard(_poKakaoText({ id: PO.id, partner: $("poPartner").value.trim(), date: b.date, due: b.due, note: b.note, items }));
+  toast(ok ? "💬 발주 내용을 복사했습니다 — 카카오톡 대화방에서 Ctrl+V로 붙여넣으세요" : "복사에 실패했습니다 — 인쇄/메일을 이용해주세요");
   if (typeof loadPoHistory === "function") loadPoHistory();
 }
 async function poShareKakaoFromView() {
   const h = POVIEW.h; if (!h) return;
-  await _kakaoOpenShare({ id: h.id, partner: (h.partner === "거래처 미지정" ? "" : h.partner), date: h.date, due: h.due, note: h.note, items: h.items });
-}
-async function showKakaoSetup() {
-  let key = ""; try { key = (await api("/api/kakaokey")).key || ""; } catch (e) {}
-  const admin = (ROLE === "admin");
-  const ov = document.createElement("div");
-  ov.className = "overlay on"; ov.style.zIndex = 99996;
-  ov.innerHTML = `<div class="modal" style="width:min(600px,95vw);">
-    <h3>💬 카카오톡 공유 설정</h3>
-    <p class="hint" style="line-height:1.8;">'카톡으로 보내기'는 <b>카카오 개발자 앱키(JavaScript 키)</b>가 필요합니다 — 한 번만 설정하면 됩니다.<br>
-      1) <b>developers.kakao.com</b> 로그인 → <b>내 애플리케이션 → 애플리케이션 추가하기</b><br>
-      2) 만든 앱 → <b>앱 키</b>의 <b>JavaScript 키</b> 복사<br>
-      3) 그 앱의 <b>플랫폼 → Web 플랫폼 등록</b>에 사이트 도메인 추가:<br>
-      &nbsp;&nbsp;<code>${esc(location.origin)}</code> ${location.origin.includes("localhost") ? "(외부 접속을 쓰면 그 주소도 함께 등록)" : ""}<br>
-      4) 그 앱에서 <b>카카오톡 공유</b> 기능을 켜고, 아래에 JavaScript 키를 붙여넣어 저장하세요.<br>
-      <span style="color:var(--muted);">※ 보내는 사람 PC에 카카오톡(데스크톱)이 설치되어 있어야 공유창이 열립니다. 내용이 길면 요약으로 잘릴 수 있어요(카카오 정책).</span></p>
-    ${admin ? `<div style="display:flex; gap:8px; margin:6px 0 12px;">
-      <input id="kkKeyInput" value="${esc(key)}" placeholder="카카오 JavaScript 키" style="flex:1; padding:8px 10px; border:1px solid var(--line); border-radius:8px; font-family:monospace;">
-      <button class="btn primary" id="kkKeySave">저장</button></div>`
-      : `<div class="auto" style="margin:6px 0 12px;">앱키 설정은 관리자만 할 수 있습니다 — 관리자에게 요청하세요.</div>`}
-    <div class="modal-foot"><button class="btn" id="kkClose">닫기</button></div></div>`;
-  document.body.appendChild(ov);
-  ov.querySelector("#kkClose").onclick = () => ov.remove();
-  if (admin) ov.querySelector("#kkKeySave").onclick = async () => {
-    const v = ov.querySelector("#kkKeyInput").value.trim();
-    try {
-      await api("/api/kakaokey", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key: v }) });
-      KAKAO.key = v;
-      toast(v ? "카카오 앱키를 저장했습니다 — 다시 [💬 카톡으로 보내기]를 눌러 주세요" : "앱키를 지웠습니다");
-      ov.remove();
-    } catch (e) { /* api 토스트 */ }
-  };
+  const ok = await _copyToClipboard(_poKakaoText({ id: h.id, partner: (h.partner === "거래처 미지정" ? "" : h.partner), date: h.date, due: h.due, note: h.note, items: h.items }));
+  toast(ok ? "💬 발주 내용을 복사했습니다 — 카카오톡 대화방에서 Ctrl+V로 붙여넣으세요" : "복사에 실패했습니다");
 }
 const _poKB = $("poKakaoBtn"); if (_poKB) _poKB.onclick = poShareKakaoFromForm;
 const _poVK = $("poViewKakao"); if (_poVK) _poVK.onclick = poShareKakaoFromView;
@@ -9983,12 +9936,6 @@ function _schedMD(iso) {
   return `${d.getMonth() + 1}/${d.getDate()}(${_SCHED_DOW[d.getDay()]})`;
 }
 function _schedBlankItem() { return { product_id: null, label: "", qty: "", pack: "", boxes: "", boxesAuto: true, expiry: "", expiry2: "", partner: "", memo: "" }; }
-// 이 제품군(열)의 대표 거래처 — 가장 최근(아래쪽) 입력된 거래처. 항목 추가·복사 시 자동 상속용.
-function _schedGroupPartner(g) {
-  const its = (g && g.items) || [];
-  for (let i = its.length - 1; i >= 0; i--) { if ((its[i].partner || "").trim()) return its[i].partner; }
-  return "";
-}
 function _schedBlank(week) {
   const dates = []; for (let i = 0; i < 6; i++) dates.push(_schedAddDays(week, i));
   return { title: "주간 생산·출고 스케줄", note: "※ 스케줄은 현장 상황에 맞게 변경될 수 있음",
@@ -10011,11 +9958,14 @@ function _schedNorm(d, week) {
   d.groups.forEach(g => {
     g.name = g.name || ""; g.shipDate = g.shipDate || ""; g.memo = g.memo || "";
     if (!(g.w > 0)) g.w = 1;   // 열 폭 가중치(기본 1)
+    if (g.partner == null) g.partner = "";   // 거래처는 제품군(열) 단위 — 열마다 하나로 통일
     if (!Array.isArray(g.items)) g.items = [];
     g.items.forEach(it => { for (const k of ["label", "boxes", "expiry", "expiry2", "partner", "memo"]) it[k] = it[k] || "";
       if (it.qty == null) it.qty = ""; if (it.pack == null) it.pack = "";
       // 박스 자동계산 여부: 명시적으로 false면 수동, 그 외엔 박스가 비었거나 숫자면 자동
       it.boxesAuto = it.boxesAuto === false ? false : !/[^0-9,\s]/.test(String(it.boxes || "")); });
+    // 옛 데이터 이월 — 예전엔 거래처를 항목별로 넣었으므로, 열 거래처가 비었으면 항목에서 가져온다
+    if (!g.partner) { const p = g.items.find(it => (it.partner || "").trim()); if (p) g.partner = p.partner; }
   });
   return d;
 }
@@ -10279,12 +10229,7 @@ function _schedFieldUpdate(e) {
     // 제품군 단위 소비기한/예정 — 그 제품군의 모든 항목에 일괄 적용
     const key = f === "gexp" ? "expiry" : "expiry2";
     (g.items || []).forEach(it => { it[key] = inp.value; });
-  } else { g[f] = inp.value; }   // 제품군명·출고일·제품군 비고
-  // 거래처는 그 열(제품군)의 모든 항목에 동일 적용 — 한 번만 입력하면 열 전체가 같아진다(확정 시 반영).
-  if (hasI && f === "partner" && e && e.type === "change") {
-    (g.items || []).forEach(it => { it.partner = inp.value; });
-    renderSchedDoc(); return;
-  }
+  } else { g[f] = inp.value; }   // 제품군명·출고일·거래처(열 공통)·제품군 비고
   // 날짜(출고일·소비기한·예정)는 선택 즉시 다시 그려 '주간 출고일' 리본·소비기한 표시를 갱신.
   // 그 외 텍스트 편집은 재렌더하지 않음 — 다음 칸으로 이동해 타이핑 중일 때 그 칸이 사라지는 것을 방지(포커스 유지).
   if (e && e.type === "change" && (f === "shipDate" || f === "gexp" || f === "gexp2")) renderSchedDoc();
@@ -10295,7 +10240,7 @@ function _schedClick(e) {
   if (gac) {
     const gs = SCHED.data.groups, prevPack = gs.length ? ((gs[gs.length - 1].items[0] || {}).pack || "") : "";
     const it = _schedBlankItem(); it.pack = prevPack;
-    gs.push({ name: "", shipDate: "", memo: "", items: [it] });
+    gs.push({ name: "", shipDate: "", partner: "", memo: "", items: [it] });
     renderSchedDoc(); return;
   }
   const gcp = e.target.closest("[data-schedgcopy]");
@@ -10336,14 +10281,10 @@ function _schedClick(e) {
   const gd = e.target.closest("[data-schedgdel]");
   if (gd) { const gi = +gd.dataset.schedgdel; if (confirm("이 제품군을 삭제할까요?")) { SCHED.data.groups.splice(gi, 1); renderSchedDoc(); } return; }
   const icp = e.target.closest("[data-schedicopy]");
-  if (icp) {   // 항목 복사 — 바로 아래에 같은 내용으로 추가(거래처가 비었으면 열 거래처 상속)
+  if (icp) {   // 항목 복사 — 바로 아래에 같은 내용으로 추가
     const [gi, ii] = icp.dataset.schedicopy.split(":").map(Number);
     const g = SCHED.data.groups[gi], src = g && g.items[ii];
-    if (src) {
-      const cp = JSON.parse(JSON.stringify(src));
-      if (!(cp.partner || "").trim()) cp.partner = _schedGroupPartner(g);
-      g.items.splice(ii + 1, 0, cp); renderSchedDoc();
-    }
+    if (src) { g.items.splice(ii + 1, 0, JSON.parse(JSON.stringify(src))); renderSchedDoc(); }
     return;
   }
   const ia = e.target.closest("[data-schediadd]");
@@ -10351,9 +10292,8 @@ function _schedClick(e) {
     const g = SCHED.data.groups[+ia.dataset.schediadd];
     const first = g.items[0] || {};
     const ni = _schedBlankItem();
-    // 개입수·소비기한·예정 소비기한·거래처는 이 열을 따라간다 (반복 입력 방지 · 통일)
+    // 개입수·소비기한·예정 소비기한은 첫 항목을 따라간다 (거래처는 열 공통이라 항목엔 없음)
     ni.pack = first.pack || ""; ni.expiry = first.expiry || ""; ni.expiry2 = first.expiry2 || "";
-    ni.partner = _schedGroupPartner(g);   // 열에 이미 등록된 거래처를 자동 상속(사용자가 바꿀 수 있음)
     g.items.push(ni);
     renderSchedDoc(); return;
   }
@@ -10415,6 +10355,7 @@ function buildScheduleDoc(d, week) {
   ).join("") || `<span class="auto" style="font-size:${S(12)}px; color:#bbb;">출고일 미입력</span>`;
   const nameRow = groups.map(g => `<th style="${TD} text-align:center; font-weight:800; font-size:${nameFs}px; background:#e7e4dd;">${esc(g.name || "—")}</th>`).join("");
   const shipRow = groups.map(g => `<td style="${TD} text-align:center; font-weight:800; font-size:${dateSize}px; color:${ec("date", "inherit")};">${g.shipDate ? _schedMD(g.shipDate) : "—"}</td>`).join("");
+  const partnerRow = groups.map(g => `<td style="${TD} text-align:center; font-weight:700; color:#2f3fa0;">${esc(g.partner || "") || "—"}</td>`).join("");
   // 발주량: '항목=표의 한 행'으로 렌더 → 같은 행(가로줄)의 칸들은 높이가 같아 열끼리 위치가 정확히 맞는다.
   const maxItems = Math.max(1, ...groups.map(g => (g.items || []).length));
   const rowWFn = k => (d.rowW && d.rowW[k] > 0) ? d.rowW[k] : 1;   // 행(줄) 높이 가중치(기본 1)
@@ -10428,7 +10369,7 @@ function buildScheduleDoc(d, week) {
     return `<td style="${TD} ${P}">
       <div style="font-weight:700; font-size:${labelSize}px; color:${ec("label", "inherit")};">${esc(it.label || "") || "&nbsp;"}</div>
       <div style="font-size:${qtySize}px; font-weight:900; line-height:1.05; margin:1px 0; color:${ec("qty", "inherit")};">${NFq(it.qty) ? NFq(it.qty) + '<span style="font-size:' + Math.round(qtySize * 0.6) + 'px; font-weight:700;">개</span>' : "&nbsp;"}</div>
-      ${(pb || it.partner) ? `<div style="font-size:${subSize}px;"><span style="color:${ec("sub", "#c26a1f")}; font-weight:700;">${esc(pb)}</span>${it.partner ? ` <span style="color:#2f3fa0;">· ${esc(it.partner)}</span>` : ""}</div>` : ""}
+      ${pb ? `<div style="font-size:${subSize}px;"><span style="color:${ec("sub", "#c26a1f")}; font-weight:700;">${esc(pb)}</span></div>` : ""}
       ${it.memo ? `<div style="color:#888; font-size:${subSize}px;">${esc(it.memo)}</div>` : ""}</td>`;
   };
   const orderRows = Array.from({ length: maxItems }, (_, k) =>
@@ -10456,6 +10397,7 @@ function buildScheduleDoc(d, week) {
       ${colgroup}
       <thead><tr><th style="${LB}">제품</th>${nameRow}</tr></thead>
       <tbody>
+        <tr><td style="${LB}">거래처</td>${partnerRow}</tr>
         <tr><td style="${LB}">출고일</td>${shipRow}</tr>
         ${orderRows}
         <tr><td style="${LB}">소비기한</td>${expRow}</tr>
@@ -10500,6 +10442,7 @@ function buildScheduleDocEdit(d, week) {
   const nameRow = groups.map((g, gi) => `<th class="sched-celledit" style="${TD} text-align:center; font-weight:800; font-size:${nameFs}px; background:#e7e4dd; position:relative;">${g_(gi, "name", g.name, "", ` placeholder="제품군명" style="text-align:center; font-weight:800;"`)}${gctl(gi)}</th>`).join("")
     + `<th style="${TD} text-align:center; background:#f2f1ec;"><button class="sched-addbtn" data-schedgaddcol="1" title="제품군(열) 추가" style="padding:6px 8px; font-size:${labelFs}px;">＋<br>제품군</button></th>`;
   const shipRow = groups.map((g, gi) => `<td style="${TD} text-align:center; font-weight:800; font-size:${dateSize}px; color:${ec("date", "inherit")};">${g_(gi, "shipDate", g.shipDate, "datepick", ` readonly placeholder="📅 출고일" style="text-align:center; font-weight:800; cursor:pointer;"`)}</td>`).join("") + `<td style="${TD}"></td>`;
+  const partnerRow = groups.map((g, gi) => `<td style="${TD} text-align:center; font-weight:700; color:#2f3fa0;">${g_(gi, "partner", g.partner, "", ` list="schedPartnerDl" placeholder="거래처(열 공통)" style="text-align:center; font-weight:700; color:#2f3fa0;"`)}</td>`).join("") + `<td style="${TD}"></td>`;
   // 발주량: '항목=표의 한 행' — 같은 행 칸들은 높이가 같아 열끼리 위치가 맞는다. 항목 없는 칸은 빈 칸.
   const maxItems = Math.max(1, ...groups.map(g => (g.items || []).length));
   const rowWFn = k => (d.rowW && d.rowW[k] > 0) ? d.rowW[k] : 1;   // 행(줄) 높이 가중치(기본 1)
@@ -10521,7 +10464,6 @@ function buildScheduleDocEdit(d, week) {
         ${it_(gi, ii, "pack", it.pack, "", ` inputmode="numeric" placeholder="개입" style="width:40px; text-align:right; color:${ec("sub", "#c26a1f")}; font-weight:700;"`)}<span style="color:${ec("sub", "#c26a1f")};">개입/</span>
         ${it_(gi, ii, "boxes", it.boxes, "", ` inputmode="numeric" placeholder="자동" style="width:40px; text-align:right; color:${ec("sub", "#c26a1f")}; font-weight:700;"`)}<span style="color:${ec("sub", "#c26a1f")};">박스</span></div>
       <div style="display:flex; gap:2px; font-size:${subSize}px;">
-        ${it_(gi, ii, "partner", it.partner, "", ` list="schedPartnerDl" placeholder="거래처" style="flex:1 1 0; color:#2f3fa0;"`)}
         ${it_(gi, ii, "memo", it.memo, "", ` placeholder="비고" style="flex:1 1 0; color:#888;"`)}</div>
       <div class="sched-ectl" style="display:flex; gap:3px; justify-content:flex-end; margin-top:4px; font-size:${Math.max(11, S(11))}px;">
         <button data-schedicopy="${gi}:${ii}" title="이 항목을 복사해 바로 아래에 추가" style="padding:1px 6px;">복사</button>
@@ -10553,6 +10495,7 @@ function buildScheduleDocEdit(d, week) {
       ${colgroup}
       <thead><tr><th style="${LB}">제품</th>${nameRow}</tr></thead>
       <tbody>
+        <tr><td style="${LB}">거래처</td>${partnerRow}</tr>
         <tr><td style="${LB}">출고일</td>${shipRow}</tr>
         ${orderRows}
         <tr><td style="${LB}">소비기한</td>${expRow}</tr>
@@ -10701,7 +10644,7 @@ function schedExportCsv() {
   (d.groups || []).forEach(g => {
     const real = (g.items || []).filter(it => !it.spacer);   // 빈 칸(공백)은 엑셀에 내보내지 않음
     const its = real.length ? real : [{}];
-    its.forEach(it => lines.push([g.name, g.shipDate, it.label, it.qty, it.pack, it.boxes, it.expiry, it.expiry2, it.partner, it.memo].map(_csvCell).join(",")));
+    its.forEach(it => lines.push([g.name, g.shipDate, it.label, it.qty, it.pack, it.boxes, it.expiry, it.expiry2, g.partner || "", it.memo].map(_csvCell).join(",")));
   });
   const csv = "﻿" + lines.join("\r\n");   // BOM → 엑셀에서 한글 안 깨짐
   const a = document.createElement("a");
@@ -10740,11 +10683,12 @@ function schedImportCsv(text) {
   rows.forEach(r => {
     const [gname, ship, label, qty, pack, boxes, exp, exp2, partner, memo] = r.map(x => (x == null ? "" : String(x).trim()));
     const key = gname || "(제품군 없음)";
-    if (!(key in idx)) { idx[key] = groups.length; groups.push({ name: gname, shipDate: ship || "", memo: "", items: [] }); }
+    if (!(key in idx)) { idx[key] = groups.length; groups.push({ name: gname, shipDate: ship || "", partner: "", memo: "", items: [] }); }
     const g = groups[idx[key]]; if (ship && !g.shipDate) g.shipDate = ship;
+    if (partner && !g.partner) g.partner = partner;   // 거래처는 열(제품군) 공통 — 첫 행 값을 사용
     const it = _schedBlankItem();
     it.label = label; it.qty = (qty || "").replace(/,/g, ""); it.pack = (pack || "").replace(/,/g, "");
-    it.boxes = boxes; it.boxesAuto = boxes === ""; it.expiry = exp; it.expiry2 = exp2; it.partner = partner; it.memo = memo;
+    it.boxes = boxes; it.boxesAuto = boxes === ""; it.expiry = exp; it.expiry2 = exp2; it.memo = memo;
     const p = (M.product || []).find(x => x.name === label); it.product_id = p ? p.id : null;
     g.items.push(it);
   });
@@ -10899,7 +10843,7 @@ function _schedUnlockPrompt() {
     // 새 제품군의 첫 항목 개입수는 직전 제품군을 따라간다 (예: 45개입 통일)
     const gs = SCHED.data.groups, prevPack = gs.length ? ((gs[gs.length - 1].items[0] || {}).pack || "") : "";
     const it = _schedBlankItem(); it.pack = prevPack;
-    gs.push({ name: "", shipDate: "", memo: "", items: [it] });
+    gs.push({ name: "", shipDate: "", partner: "", memo: "", items: [it] });
     renderSchedDoc();
   });
   on("schedSave", saveSchedule);
