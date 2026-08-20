@@ -10280,6 +10280,12 @@ function _schedClick(e) {
     gs.push({ name: "", shipDate: "", memo: "", items: [it] });
     renderSchedDoc(); return;
   }
+  const gcp = e.target.closest("[data-schedgcopy]");
+  if (gcp) {   // 제품군 복사 — 항목·설정까지 그대로 복제해 바로 오른쪽에 추가
+    const gi = +gcp.dataset.schedgcopy, src = SCHED.data.groups[gi];
+    if (src) { SCHED.data.groups.splice(gi + 1, 0, JSON.parse(JSON.stringify(src))); renderSchedDoc(); toast("제품군을 복사했습니다"); }
+    return;
+  }
   const ib = e.target.closest("[data-schediblank]");
   if (ib) {   // 이 항목 위에 '빈 칸(공백)' 삽입 → 한 칸 아래로 띄움. 항목이 아니라 공백(spacer)이다.
     const [gi, ii] = ib.dataset.schediblank.split(":").map(Number);
@@ -10456,9 +10462,10 @@ function buildScheduleDocEdit(d, week) {
   const ribbon = Object.keys(_shipMap).sort().map(x =>
     `<span style="display:inline-block; min-width:84px; text-align:center; border:1px solid #999; border-radius:5px; padding:2px 9px; margin:2px; font-size:${S(13)}px; line-height:1.25;">${_schedMD(x)}<br><b style="color:#0a7a2f;">${_shipMap[x]}개</b></span>`
   ).join("") || `<span class="auto" style="font-size:${S(12)}px; color:#bbb;">출고일 미입력</span>`;
-  const gctl = gi => `<div class="sched-ectl" style="position:absolute; top:1px; right:1px; display:flex; gap:2px; font-size:${Math.max(13, S(14))}px;">
+  const gctl = gi => `<div class="sched-ectl" style="position:absolute; top:1px; right:1px; display:flex; gap:2px; font-size:${Math.max(12, S(13))}px;">
     <button data-schedgmove="${gi}:-1" title="왼쪽으로" ${gi === 0 ? "disabled" : ""} style="padding:2px 6px;">◀</button>
     <button data-schedgmove="${gi}:1" title="오른쪽으로" ${gi === groups.length - 1 ? "disabled" : ""} style="padding:2px 6px;">▶</button>
+    <button data-schedgcopy="${gi}" title="이 제품군을 복사해 오른쪽에 추가" style="padding:2px 6px;">복사</button>
     <button data-schedgdel="${gi}" title="제품군 삭제" style="padding:2px 7px; color:#c0392b;">×</button></div>`;
   const nameRow = groups.map((g, gi) => `<th class="sched-celledit" style="${TD} text-align:center; font-weight:800; font-size:${nameFs}px; background:#e7e4dd; position:relative;">${g_(gi, "name", g.name, "", ` placeholder="제품군명" style="text-align:center; font-weight:800;"`)}${gctl(gi)}</th>`).join("")
     + `<th style="${TD} text-align:center; background:#f2f1ec;"><button class="sched-addbtn" data-schedgaddcol="1" title="제품군(열) 추가" style="padding:6px 8px; font-size:${labelFs}px;">＋<br>제품군</button></th>`;
@@ -10486,11 +10493,11 @@ function buildScheduleDocEdit(d, week) {
       <div style="display:flex; gap:2px; font-size:${subSize}px;">
         ${it_(gi, ii, "partner", it.partner, "", ` list="schedPartnerDl" placeholder="거래처" style="flex:1 1 0; color:#2f3fa0;"`)}
         ${it_(gi, ii, "memo", it.memo, "", ` placeholder="비고" style="flex:1 1 0; color:#888;"`)}</div>
-      <div class="sched-ectl" style="position:absolute; top:0; right:0; display:flex; gap:2px; font-size:${Math.max(13, S(13))}px;">
-        <button data-schediblank="${gi}:${ii}" title="이 항목 위에 빈 칸 삽입 (한 칸 아래로 띄움)" style="padding:2px 6px;">␣</button>
-        <button data-schedimove="${gi}:${ii}:-1" title="위로" ${ii === 0 ? "disabled" : ""} style="padding:2px 6px;">▲</button>
-        <button data-schedimove="${gi}:${ii}:1" title="아래로" ${ii === (g.items.length - 1) ? "disabled" : ""} style="padding:2px 6px;">▼</button>
-        <button data-schedidel="${gi}:${ii}" title="항목 삭제" style="padding:2px 7px; color:#c0392b;">×</button></div>
+      <div class="sched-ectl" style="display:flex; gap:3px; justify-content:flex-end; margin-top:4px; font-size:${Math.max(11, S(11))}px;">
+        <button data-schediblank="${gi}:${ii}" title="이 항목 위에 빈 칸을 넣어 한 칸 아래로 내림" style="padding:1px 6px;">＋빈칸</button>
+        <button data-schedimove="${gi}:${ii}:-1" title="위로 이동" ${ii === 0 ? "disabled" : ""} style="padding:1px 7px;">▲</button>
+        <button data-schedimove="${gi}:${ii}:1" title="아래로 이동" ${ii === (g.items.length - 1) ? "disabled" : ""} style="padding:1px 7px;">▼</button>
+        <button data-schedidel="${gi}:${ii}" title="항목 삭제" style="padding:1px 7px; color:#c0392b;">✕</button></div>
     </div></td>`;
   };
   // 행 높이 맞춤은 렌더 후 실측해서 가장 높은 줄에 맞춘다(_schedEqualizeRows). '발주량' 라벨은 rowspan 병합.

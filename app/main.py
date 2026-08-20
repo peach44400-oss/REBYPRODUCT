@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.85.2"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.85.3"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -6016,6 +6016,27 @@ def ledger(request: Request, date: str = ""):
                     out.append(e)
             return out
 
+        def fefo_instock_exps(mid):
+            """지금 '재고로 남아 있는' 배치들의 소비기한 전부 (FEFO: 이른 기한부터 소진되므로
+            보유량을 소비기한 늦은 배치부터 채워 남은 배치들의 기한을 모은다). 예: 옛 재고+새 입고가
+            서로 다른 기한이면 둘 다 표시. 보유량이 기록 배치 합보다 크면(초기재고) 빈 목록 → 폴백에 맡김."""
+            bs = batches.get(mid)
+            rq = onhand.get(mid)
+            if rq is None or rq <= 1e-4 or not bs:
+                return []
+            bs_sorted = sorted(bs, key=lambda b: (b["exp"] or b["in"], b["in"]))
+            if rq > sum(b["qty"] for b in bs_sorted) + 1e-4:
+                return []
+            remaining, exps = rq, []
+            for b in reversed(bs_sorted):             # 소비기한 늦은 배치부터 채움 = 남아있는 재고
+                if remaining <= 1e-4:
+                    break
+                take = min(remaining, b["qty"])
+                if take > 1e-4 and b["exp"]:
+                    exps.append(b["exp"])
+                remaining -= take
+            return exps
+
         def est_expiry(base, sd):
             try:
                 return (dt.date.fromisoformat(base) + dt.timedelta(days=int(sd))).isoformat()
@@ -6067,8 +6088,15 @@ def ledger(request: Request, date: str = ""):
                     exp = ", ".join(keep)
                     if not exp:
                         exp_est = False
-            if len(exps_today) > 1:
-                exp = ", ".join(exps_today)
+            # 소비기한 열 = 지금 재고로 남은 배치들의 기한 + 당일 소진 배치 기한을 모두 표시(폐기분 제외).
+            #  두 가지 이상 소비기한(옛 재고 + 새 입고 등)이 있으면 전부 콤마로 보여준다.
+            allexp = []
+            for e in (fefo_instock_exps(m["id"]) + exps_today):
+                e = (e or "").strip()
+                if e and (not dset or e not in dset) and e not in allexp:
+                    allexp.append(e)
+            if allexp:
+                exp = ", ".join(sorted(allexp))       # 소비기한 이른 순
                 exp_est = False
             elif len(exps_today) == 1 and not exp:
                 exp = exps_today[0]
