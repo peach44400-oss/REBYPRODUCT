@@ -9976,6 +9976,12 @@ function _schedMD(iso) {
   return `${d.getMonth() + 1}/${d.getDate()}(${_SCHED_DOW[d.getDay()]})`;
 }
 function _schedBlankItem() { return { product_id: null, label: "", qty: "", pack: "", boxes: "", boxesAuto: true, expiry: "", expiry2: "", partner: "", memo: "" }; }
+// 이 제품군(열)의 대표 거래처 — 가장 최근(아래쪽) 입력된 거래처. 항목 추가·복사 시 자동 상속용.
+function _schedGroupPartner(g) {
+  const its = (g && g.items) || [];
+  for (let i = its.length - 1; i >= 0; i--) { if ((its[i].partner || "").trim()) return its[i].partner; }
+  return "";
+}
 function _schedBlank(week) {
   const dates = []; for (let i = 0; i < 6; i++) dates.push(_schedAddDays(week, i));
   return { title: "주간 생산·출고 스케줄", note: "※ 스케줄은 현장 상황에 맞게 변경될 수 있음",
@@ -10317,13 +10323,25 @@ function _schedClick(e) {
   }
   const gd = e.target.closest("[data-schedgdel]");
   if (gd) { const gi = +gd.dataset.schedgdel; if (confirm("이 제품군을 삭제할까요?")) { SCHED.data.groups.splice(gi, 1); renderSchedDoc(); } return; }
+  const icp = e.target.closest("[data-schedicopy]");
+  if (icp) {   // 항목 복사 — 바로 아래에 같은 내용으로 추가(거래처가 비었으면 열 거래처 상속)
+    const [gi, ii] = icp.dataset.schedicopy.split(":").map(Number);
+    const g = SCHED.data.groups[gi], src = g && g.items[ii];
+    if (src) {
+      const cp = JSON.parse(JSON.stringify(src));
+      if (!(cp.partner || "").trim()) cp.partner = _schedGroupPartner(g);
+      g.items.splice(ii + 1, 0, cp); renderSchedDoc();
+    }
+    return;
+  }
   const ia = e.target.closest("[data-schediadd]");
   if (ia) {
     const g = SCHED.data.groups[+ia.dataset.schediadd];
     const first = g.items[0] || {};
     const ni = _schedBlankItem();
-    // 개입수·소비기한·예정 소비기한은 첫 항목을 따라간다 (반복 입력 방지 · 통일)
+    // 개입수·소비기한·예정 소비기한·거래처는 이 열을 따라간다 (반복 입력 방지 · 통일)
     ni.pack = first.pack || ""; ni.expiry = first.expiry || ""; ni.expiry2 = first.expiry2 || "";
+    ni.partner = _schedGroupPartner(g);   // 열에 이미 등록된 거래처를 자동 상속(사용자가 바꿀 수 있음)
     g.items.push(ni);
     renderSchedDoc(); return;
   }
@@ -10494,6 +10512,7 @@ function buildScheduleDocEdit(d, week) {
         ${it_(gi, ii, "partner", it.partner, "", ` list="schedPartnerDl" placeholder="거래처" style="flex:1 1 0; color:#2f3fa0;"`)}
         ${it_(gi, ii, "memo", it.memo, "", ` placeholder="비고" style="flex:1 1 0; color:#888;"`)}</div>
       <div class="sched-ectl" style="display:flex; gap:3px; justify-content:flex-end; margin-top:4px; font-size:${Math.max(11, S(11))}px;">
+        <button data-schedicopy="${gi}:${ii}" title="이 항목을 복사해 바로 아래에 추가" style="padding:1px 6px;">복사</button>
         <button data-schediblank="${gi}:${ii}" title="이 항목 위에 빈 칸을 넣어 한 칸 아래로 내림" style="padding:1px 6px;">＋빈칸</button>
         <button data-schedimove="${gi}:${ii}:-1" title="위로 이동" ${ii === 0 ? "disabled" : ""} style="padding:1px 7px;">▲</button>
         <button data-schedimove="${gi}:${ii}:1" title="아래로 이동" ${ii === (g.items.length - 1) ? "disabled" : ""} style="padding:1px 7px;">▼</button>
