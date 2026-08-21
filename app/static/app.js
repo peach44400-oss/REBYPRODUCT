@@ -9994,23 +9994,175 @@ async function loadSchedule(dateOpt) {
   if ($("schedDate")) $("schedDate").value = SCHED.week;
   renderSchedule();
 }
-// 지난주(이전에 저장된 가장 최근 주) 스케줄을 이번 주로 복제 — 날짜는 주 차이만큼 이동. 이후 일부만 수정해 저장.
-async function schedLoadPrev() {
+// ── 지난주 불러오기 (선택형) ─────────────────────────────────────────────
+// 이전에 저장된 주를 골라, 전체를 덮어쓰거나 필요한 제품군(열)·행·제품만 골라 이번 주에 추가.
+// 날짜(출고일·소비기한·예정)는 불러오는 주→이번 주 차이만큼 자동 이동한다.
+const _SPREV = { week: "", src: null, sel: new Set() };
+// 내용이 있는(선택 가능한) 항목인지 — 빈 칸/스페이서/완전 공백은 선택 대상에서 제외
+function _sprevSelectable(it) { return !!(it && !it.spacer && (String(it.label || "").trim() || String(it.qty || "").trim())); }
+function _sprevGroupIdx(g) { return (g.items || []).map((it, ii) => _sprevSelectable(it) ? ii : -1).filter(ii => ii >= 0); }
+
+async function schedLoadPrev() {   // 버튼 핸들러 — 모달을 연다
   if (!SCHED.data) return;
-  const prev = (SCHED.weeks || []).filter(w => w < SCHED.week).sort().pop();
-  if (!prev) { toast("불러올 이전 주 스케줄이 없습니다"); return; }
-  if ((SCHED.data.groups || []).length && !confirm(`이번 주(${SCHED.week}) 편집 내용을 ${prev} 스케줄로 덮어쓸까요?\n(저장 전이라 되돌릴 수 없습니다)`)) return;
+  const prevs = (SCHED.weeks || []).filter(w => w < SCHED.week).sort().reverse();
+  if (!prevs.length) { toast("불러올 이전 주 스케줄이 없습니다"); return; }
+  _sprevEnsureDom();
+  const sel = $("sprevWeek");
+  sel.innerHTML = prevs.map(w => `<option value="${w}">${w} (${_schedMD(w)}~ 주)</option>`).join("");
+  $("schedPrevOverlay").classList.add("on");
+  await _sprevLoadWeek(prevs[0]);
+}
+
+function _sprevEnsureDom() {
+  if ($("schedPrevOverlay")) return;
+  const ov = document.createElement("div");
+  ov.className = "overlay"; ov.id = "schedPrevOverlay";
+  ov.innerHTML = `
+    <div class="modal" style="width:min(1100px,97vw);">
+      <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:6px;">
+        <h3 style="margin:0;">📋 지난주 불러오기</h3>
+        <label style="margin-left:auto; font-size:13px; color:var(--muted);">불러올 주
+          <select id="sprevWeek" class="inp sm" style="margin-left:6px;"></select></label>
+      </div>
+      <div style="font-size:12.5px; color:var(--muted); margin-bottom:8px; line-height:1.55;">
+        전체를 이번 주로 <b>덮어쓰거나</b>, 필요한 <b>제품군(열)·행·제품</b>만 골라 이번 주에 <b>추가</b>할 수 있습니다.
+        열/행 머리의 체크로 한 번에 선택하고, 칸을 개별로 켜고 끌 수도 있습니다.
+        날짜는 이번 주로 자동 이동됩니다.</div>
+      <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px; align-items:center;">
+        <button class="btn ghost sm" id="sprevSelAll">전체 선택</button>
+        <button class="btn ghost sm" id="sprevSelNone">전체 해제</button>
+        <span id="sprevCount" style="font-size:12px; color:var(--muted); margin-left:4px;"></span>
+      </div>
+      <div id="sprevGrid" style="overflow:auto; max-height:54vh; border:1px solid var(--line); border-radius:8px;"></div>
+      <div class="modal-foot">
+        <button class="btn" id="sprevCancel">닫기</button>
+        <button class="btn ghost" id="sprevOverwrite" title="이번 주 편집 내용을 이 주 전체로 덮어씁니다">전체 덮어쓰기</button>
+        <button class="btn primary" id="sprevImport">선택 불러오기</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  ov.addEventListener("click", e => { if (e.target === ov) _sprevClose(); });   // 바깥 클릭 닫기
+  $("sprevWeek").addEventListener("change", e => _sprevLoadWeek(e.target.value));
+  $("sprevSelAll").onclick = () => _sprevSetAll(true);
+  $("sprevSelNone").onclick = () => _sprevSetAll(false);
+  $("sprevCancel").onclick = _sprevClose;
+  $("sprevOverwrite").onclick = _sprevOverwrite;
+  $("sprevImport").onclick = _sprevImport;
+  $("sprevGrid").addEventListener("change", _sprevGridChange);
+}
+function _sprevClose() { const ov = $("schedPrevOverlay"); if (ov) ov.classList.remove("on"); _SPREV.src = null; _SPREV.sel.clear(); }
+
+async function _sprevLoadWeek(week) {
+  _SPREV.week = week; _SPREV.src = null; _SPREV.sel.clear();
+  $("sprevGrid").innerHTML = `<div style="padding:24px; text-align:center; color:var(--muted);">불러오는 중…</div>`;
   try {
-    const r = await api("/api/schedule?week=" + prev);
-    if (!r.data || !Object.keys(r.data).length) { toast(`${prev} 스케줄이 비어 있습니다`); return; }
-    const src = _schedNorm(JSON.parse(JSON.stringify(r.data)), prev);
-    const shift = _schedDayDiff(prev, SCHED.week);   // 예: 지난주→이번주 = +7일
-    _schedShiftDates(src, shift);
-    SCHED.data = _schedNorm(src, SCHED.week);
-    SCHED.saved = `${prev} 불러옴 — 수정 후 저장하세요 (아직 저장 안 됨)`;
-    renderSchedule();
-    toast(`${prev} 스케줄을 불러왔습니다 (날짜 ${shift >= 0 ? "+" : ""}${shift}일 이동). 필요한 부분만 수정 후 💾 저장하세요`);
-  } catch (e) { /* api 토스트 */ }
+    const r = await api("/api/schedule?week=" + week);
+    if (!r.data || !Object.keys(r.data).length) { $("sprevGrid").innerHTML = `<div style="padding:24px; text-align:center; color:var(--muted);">${week} 스케줄이 비어 있습니다</div>`; _sprevRenderCount(); return; }
+    const src = _schedNorm(JSON.parse(JSON.stringify(r.data)), week);
+    _schedShiftDates(src, _schedDayDiff(week, SCHED.week));   // 날짜를 이번 주로 이동
+    _SPREV.src = src;
+    // 기본값: 전체 선택
+    src.groups.forEach((g, gi) => _sprevGroupIdx(g).forEach(ii => _SPREV.sel.add(gi + ":" + ii)));
+    _sprevRenderGrid();
+  } catch (e) { $("sprevGrid").innerHTML = `<div style="padding:24px; text-align:center; color:var(--crit);">불러오지 못했습니다</div>`; }
+}
+
+function _sprevRenderGrid() {
+  const src = _SPREV.src, grid = $("sprevGrid"); if (!src) { _sprevRenderCount(); return; }
+  const groups = src.groups, sel = _SPREV.sel;
+  const maxItems = Math.max(0, ...groups.map(g => (g.items || []).length));
+  const allIdx = groups.flatMap((g, gi) => _sprevGroupIdx(g).map(ii => gi + ":" + ii));
+  const allOn = allIdx.length > 0 && allIdx.every(k => sel.has(k));
+  const th = groups.map((g, gi) => {
+    const idx = _sprevGroupIdx(g), on = idx.length > 0 && idx.every(ii => sel.has(gi + ":" + ii));
+    return `<th style="padding:5px 8px; border-left:1px solid var(--line); vertical-align:bottom; min-width:120px;">
+      <label style="display:flex; align-items:center; gap:5px; cursor:pointer; font-weight:800;">
+        <input type="checkbox" data-scol="${gi}" ${on ? "checked" : ""} ${idx.length ? "" : "disabled"}>
+        <span>${esc(g.name || "(이름 없음)")}</span></label>
+      ${g.partner ? `<div style="font-size:11px; color:#2f3fa0; font-weight:600; margin-left:20px;">${esc(g.partner)}</div>` : ""}
+      ${g.shipDate ? `<div style="font-size:11px; color:var(--muted); margin-left:20px;">출고 ${_schedMD(g.shipDate)}</div>` : ""}</th>`;
+  }).join("");
+  let body = "";
+  for (let k = 0; k < maxItems; k++) {
+    const rowIdx = groups.map((g, gi) => _sprevSelectable((g.items || [])[k]) ? gi : -1).filter(gi => gi >= 0);
+    const rowOn = rowIdx.length > 0 && rowIdx.every(gi => sel.has(gi + ":" + k));
+    const cells = groups.map((g, gi) => {
+      const it = (g.items || [])[k];
+      if (!_sprevSelectable(it)) return `<td style="border-left:1px solid var(--line-soft); background:rgba(0,0,0,.015);"></td>`;
+      const key = gi + ":" + k, on = sel.has(key);
+      const q = NFq(it.qty);
+      return `<td style="padding:3px 8px; border-left:1px solid var(--line-soft);">
+        <label style="display:flex; align-items:center; gap:5px; cursor:pointer;">
+          <input type="checkbox" data-si="${key}" ${on ? "checked" : ""}>
+          <span style="font-weight:700;">${esc(it.label || "")}</span>
+          ${q ? `<span style="margin-left:auto; font-weight:800; color:#1e5f2f;">${q}</span>` : ""}</label>
+        ${(it.partner || it.memo) ? `<div style="font-size:11px; color:var(--muted); margin-left:20px;">${esc([it.partner, it.memo].filter(Boolean).join(" · "))}</div>` : ""}</td>`;
+    }).join("");
+    body += `<tr>
+      <td style="padding:3px 8px; white-space:nowrap; position:sticky; left:0; background:var(--surface); border-right:1px solid var(--line);">
+        <label style="display:flex; align-items:center; gap:5px; cursor:pointer; color:var(--muted); font-size:12px;">
+          <input type="checkbox" data-srow="${k}" ${rowOn ? "checked" : ""} ${rowIdx.length ? "" : "disabled"}>행 ${k + 1}</label></td>
+      ${cells}</tr>`;
+  }
+  grid.innerHTML = `<table style="border-collapse:collapse; width:100%; font-size:13px;">
+    <thead><tr style="position:sticky; top:0; background:var(--surface); z-index:2; box-shadow:0 1px 0 var(--line);">
+      <th style="padding:5px 8px; text-align:left; position:sticky; left:0; background:var(--surface); z-index:3; border-right:1px solid var(--line);">
+        <label style="display:flex; align-items:center; gap:5px; cursor:pointer; font-weight:800;">
+          <input type="checkbox" data-sall ${allOn ? "checked" : ""} ${allIdx.length ? "" : "disabled"}>전체</label></th>
+      ${th}</tr></thead>
+    <tbody>${body || `<tr><td style="padding:20px; color:var(--muted);">표시할 제품이 없습니다</td></tr>`}</tbody></table>`;
+  _sprevRenderCount();
+}
+function _sprevRenderCount() {
+  const n = _SPREV.sel.size, imp = $("sprevImport"), c = $("sprevCount");
+  if (c) c.textContent = n ? `${n}개 제품 선택됨` : "선택된 제품 없음";
+  if (imp) { imp.textContent = n ? `선택 불러오기 (${n})` : "선택 불러오기"; imp.disabled = !n; imp.style.opacity = n ? "" : ".5"; }
+}
+function _sprevGridChange(e) {
+  const t = e.target; if (!t || t.type !== "checkbox" || !_SPREV.src) return;
+  const src = _SPREV.src, sel = _SPREV.sel, groups = src.groups;
+  const setKey = (k, on) => { if (on) sel.add(k); else sel.delete(k); };
+  if (t.dataset.si != null) { setKey(t.dataset.si, t.checked); }
+  else if (t.dataset.scol != null) { const gi = +t.dataset.scol; _sprevGroupIdx(groups[gi]).forEach(ii => setKey(gi + ":" + ii, t.checked)); }
+  else if (t.dataset.srow != null) { const k = +t.dataset.srow; groups.forEach((g, gi) => { if (_sprevSelectable((g.items || [])[k])) setKey(gi + ":" + k, t.checked); }); }
+  else if (t.dataset.sall != null) { _sprevSetAll(t.checked); return; }
+  _sprevRenderGrid();
+}
+function _sprevSetAll(on) {
+  const src = _SPREV.src; if (!src) return;
+  _SPREV.sel.clear();
+  if (on) src.groups.forEach((g, gi) => _sprevGroupIdx(g).forEach(ii => _SPREV.sel.add(gi + ":" + ii)));
+  _sprevRenderGrid();
+}
+
+function _sprevOverwrite() {
+  const src = _SPREV.src; if (!src) { toast("먼저 불러올 주를 선택하세요"); return; }
+  if ((SCHED.data.groups || []).length && !confirm(`이번 주(${SCHED.week}) 편집 내용을 ${_SPREV.week} 스케줄 전체로 덮어쓸까요?\n(저장 전이라 되돌릴 수 없습니다)`)) return;
+  SCHED.data = _schedNorm(JSON.parse(JSON.stringify(src)), SCHED.week);
+  SCHED.saved = `${_SPREV.week} 전체 불러옴 — 수정 후 저장하세요 (아직 저장 안 됨)`;
+  _sprevClose(); renderSchedule();
+  toast(`${_SPREV.week} 스케줄 전체를 불러왔습니다. 필요한 부분만 수정 후 💾 저장하세요`);
+}
+function _sprevImport() {
+  const src = _SPREV.src, sel = _SPREV.sel; if (!src || !sel.size) { toast("불러올 제품을 선택하세요"); return; }
+  // 선택된 항목을 원본 제품군별로 모아 이번 주에 추가 — 같은 이름의 제품군이 있으면 그 열에 항목을 덧붙이고, 없으면 새 열을 만든다
+  const byGroup = new Map();
+  sel.forEach(k => { const [gi, ii] = k.split(":").map(Number); (byGroup.get(gi) || byGroup.set(gi, []).get(gi)).push(ii); });
+  let addedItems = 0, newCols = 0;
+  const cur = SCHED.data.groups;
+  [...byGroup.keys()].sort((a, b) => a - b).forEach(gi => {
+    const sg = src.groups[gi]; if (!sg) return;
+    const items = byGroup.get(gi).sort((a, b) => a - b).map(ii => JSON.parse(JSON.stringify(sg.items[ii])));
+    const nm = (sg.name || "").trim();
+    const tgt = nm ? cur.find(g => (g.name || "").trim() === nm) : null;
+    if (tgt) { tgt.items.push(...items); if (!tgt.partner && sg.partner) tgt.partner = sg.partner; }
+    else { cur.push({ name: sg.name, shipDate: sg.shipDate, partner: sg.partner, memo: sg.memo, w: sg.w || 1, items }); newCols++; }
+    addedItems += items.length;
+  });
+  SCHED.data = _schedNorm(SCHED.data, SCHED.week);
+  SCHED.saved = `${_SPREV.week}에서 ${addedItems}개 제품 불러옴 — 수정 후 저장하세요 (아직 저장 안 됨)`;
+  _sprevClose(); renderSchedule();
+  toast(`${addedItems}개 제품을 이번 주에 추가했습니다${newCols ? ` (새 제품군 ${newCols}개 포함)` : ""}. 필요한 부분 수정 후 💾 저장하세요`);
 }
 // 저장된 표시 설정(폰트·크기·색상·요소별)을 스케줄 데이터에 적용
 function _applySchedStyle(d, st) {
@@ -10473,10 +10625,10 @@ function buildScheduleDocEdit(d, week) {
     const P = `padding-top:${pad}px; padding-bottom:${pad}px;`;
     const it = (g.items || [])[ii];
     if (!it) return `<td style="${TD} ${P}"></td>`;
-    if (it.spacer) return `<td style="${TD} ${P}"><div class="sched-celledit" style="position:relative; min-height:${Math.round(qtySize)}px; display:flex; align-items:center; justify-content:center; color:#c4c4c4; font-size:${subSize}px;">· 빈 칸 ·<div class="sched-ectl" style="position:absolute; top:0; right:0; display:flex; gap:2px; font-size:${Math.max(13, S(13))}px;">
-      <button data-schedimove="${gi}:${ii}:-1" title="위로" ${ii === 0 ? "disabled" : ""} style="padding:2px 6px;">▲</button>
-      <button data-schedimove="${gi}:${ii}:1" title="아래로" ${ii === (g.items.length - 1) ? "disabled" : ""} style="padding:2px 6px;">▼</button>
-      <button data-schedidel="${gi}:${ii}" title="빈 칸 삭제" style="padding:2px 7px; color:#c0392b;">×</button></div></div></td>`;
+    if (it.spacer) return `<td style="${TD} ${P}"><div class="sched-celledit" style="position:relative; min-height:${Math.round(qtySize)}px; display:flex; align-items:center; justify-content:center; color:#c4c4c4; font-size:${subSize}px;">· 빈 칸 ·<div class="sched-ectl" style="position:absolute; top:0; right:0;">
+      <button data-schedimove="${gi}:${ii}:-1" title="위로" ${ii === 0 ? "disabled" : ""}>▲</button>
+      <button data-schedimove="${gi}:${ii}:1" title="아래로" ${ii === (g.items.length - 1) ? "disabled" : ""}>▼</button>
+      <button class="danger" data-schedidel="${gi}:${ii}" title="빈 칸 삭제">✕</button></div></div></td>`;
     const icol = (it.color || "").trim();  // 제품별 개별 글자색(비우면 전체 색)
     return `<td style="${TD} ${P}"><div class="sched-celledit" style="position:relative;">
       ${it_(gi, ii, "label", it.label, "", ` list="schedProdDl" placeholder="제품/품목" style="font-weight:700; font-size:${labelSize}px; color:${icol || ec("label", "inherit")};"`)}
@@ -10489,14 +10641,16 @@ function buildScheduleDocEdit(d, week) {
       <div style="display:flex; gap:2px; font-size:${subSize}px;">
         ${it_(gi, ii, "partner", it.partner, "", ` list="schedPartnerDl" placeholder="거래처(개별·비우면 열 공통)" title="비우면 위 '거래처' 줄(열 공통)을 씁니다. 이 항목만 다르면 여기 입력하세요." style="flex:1 1 0; color:#2f3fa0;"`)}
         ${it_(gi, ii, "memo", it.memo, "", ` placeholder="비고" style="flex:1 1 0; color:#888;"`)}</div>
-      <div class="sched-ectl" style="display:flex; gap:3px; align-items:center; justify-content:flex-end; margin-top:4px; font-size:${Math.max(11, S(11))}px;">
-        <input type="color" data-g="${gi}" data-i="${ii}" data-f="color" value="${esc(icol || d.textColor || '#111111')}" title="이 제품 글자색(개별) — 비우려면 옆 '색기본'" style="width:22px; height:20px; padding:0; border:1px solid #ccc; border-radius:4px; cursor:pointer; background:none;">
-        <button data-schedicolorclr="${gi}:${ii}" title="이 제품 글자색을 전체(표시 설정) 색으로 되돌림" style="padding:1px 6px;${icol ? '' : ' color:#aaa;'}">색기본</button>
-        <button data-schedicopy="${gi}:${ii}" title="이 항목을 복사해 바로 아래에 추가" style="padding:1px 6px;">복사</button>
-        <button data-schediblank="${gi}:${ii}" title="이 항목 위에 빈 칸을 넣어 한 칸 아래로 내림" style="padding:1px 6px;">＋빈칸</button>
-        <button data-schedimove="${gi}:${ii}:-1" title="위로 이동" ${ii === 0 ? "disabled" : ""} style="padding:1px 7px;">▲</button>
-        <button data-schedimove="${gi}:${ii}:1" title="아래로 이동" ${ii === (g.items.length - 1) ? "disabled" : ""} style="padding:1px 7px;">▼</button>
-        <button data-schedidel="${gi}:${ii}" title="항목 삭제" style="padding:1px 7px; color:#c0392b;">✕</button></div>
+      <div style="display:flex; justify-content:flex-end;"><div class="sched-ectl">
+        <input type="color" data-g="${gi}" data-i="${ii}" data-f="color" value="${esc(icol || d.textColor || '#111111')}" title="이 제품 글자색(개별) — 비우려면 옆 '기본'">
+        <button data-schedicolorclr="${gi}:${ii}" title="이 제품 글자색을 전체(표시 설정) 색으로 되돌림"${icol ? "" : ' style="color:#aab;"'}>기본</button>
+        <span class="sep"></span>
+        <button data-schedicopy="${gi}:${ii}" title="이 항목을 복사해 바로 아래에 추가">복사</button>
+        <button data-schediblank="${gi}:${ii}" title="이 항목 위에 빈 칸을 넣어 한 칸 아래로 내림">빈칸</button>
+        <button data-schedimove="${gi}:${ii}:-1" title="위로 이동" ${ii === 0 ? "disabled" : ""}>▲</button>
+        <button data-schedimove="${gi}:${ii}:1" title="아래로 이동" ${ii === (g.items.length - 1) ? "disabled" : ""}>▼</button>
+        <span class="sep"></span>
+        <button class="danger" data-schedidel="${gi}:${ii}" title="항목 삭제">✕</button></div></div>
     </div></td>`;
   };
   // 행 높이 맞춤은 렌더 후 실측해서 가장 높은 줄에 맞춘다(_schedEqualizeRows). '발주량' 라벨은 rowspan 병합.

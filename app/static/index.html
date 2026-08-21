@@ -51,13 +51,21 @@
   .sched-ei:focus{ outline:none; border-color:#4C7FE0; background:rgba(90,140,230,.10); }
   .sched-ei::-webkit-outer-spin-button, .sched-ei::-webkit-inner-spin-button{ -webkit-appearance:none; margin:0; }
   input.sched-ei[type=number]{ -moz-appearance:textfield; }
-  .sched-ectl{ opacity:0; transition:opacity .12s; }
+  /* 편집 항목 도구모음 — 칸 선택(hover/focus) 때만 뜨는 떠 있는 툴바. 표를 살짝 침범해도 됨 */
+  .sched-ectl{ opacity:0; transition:opacity .12s; display:inline-flex; align-items:center; gap:1px;
+    background:#fff; border:1px solid #d7dde8; border-radius:9px; padding:2px; margin-top:4px;
+    box-shadow:0 3px 10px rgba(30,50,90,.18); }
   .sched-celledit:hover .sched-ectl, .sched-ectl:focus-within{ opacity:1; }
   .sched-addbtn{ border:1px dashed #b9b9b9; background:rgba(0,0,0,.02); border-radius:6px; cursor:pointer; color:#666; font:inherit; }
   .sched-addbtn:hover{ border-color:#4C7FE0; color:#2f6bd6; }
-  .sched-ectl button{ border:1px solid #bbb; background:#fff; border-radius:5px; cursor:pointer; line-height:1.15; font-weight:700; box-shadow:0 1px 2px rgba(0,0,0,.12); }
-  .sched-ectl button:hover:not([disabled]){ background:#eef3ff; border-color:#4C7FE0; }
-  .sched-ectl button[disabled]{ opacity:.4; cursor:default; }
+  .sched-ectl button{ border:0; background:transparent; border-radius:6px; cursor:pointer; line-height:1;
+    font-weight:700; color:#42506b; padding:4px 7px; font-size:12px; letter-spacing:-.2px; }
+  .sched-ectl button:hover:not([disabled]){ background:#eef3ff; color:#2b5cd0; }
+  .sched-ectl button[disabled]{ opacity:.32; cursor:default; }
+  .sched-ectl button.danger{ color:#c0392b; }
+  .sched-ectl button.danger:hover:not([disabled]){ background:#fdecea; color:#a5281b; }
+  .sched-ectl .sep{ width:1px; align-self:stretch; margin:2px 2px; background:#e4e9f2; }
+  .sched-ectl input[type=color]{ width:22px; height:22px; padding:0; border:1px solid #d7dde8; border-radius:6px; cursor:pointer; background:none; }
   @media print{ .sched-ectl, .sched-addbtn{ display:none !important; } .sched-ei{ border-color:transparent !important; background:transparent !important; } }
   .num{font-variant-numeric:tabular-nums;}
   button{font:inherit; cursor:pointer;}
@@ -1457,7 +1465,7 @@
             <input type="text" id="schedDate" class="datepick" readonly placeholder="📅 주 선택" style="width:150px; text-align:center;">
             <button class="btn ghost sm" id="schedNext" title="다음 주">▶</button>
             <button class="btn ghost sm" id="schedThis">이번 주</button>
-            <button class="btn ghost sm" id="schedLoadPrev" title="이전에 저장된 가장 최근 주 스케줄을 이번 주로 불러옵니다 (날짜 자동 이동) — 일부만 수정 후 저장하세요">📋 지난주 불러오기</button>
+            <button class="btn ghost sm" id="schedLoadPrev" title="지난 주를 골라 전체를 덮어쓰거나, 필요한 제품군(열)·행·제품만 골라 이번 주에 추가합니다 (날짜 자동 이동)">📋 지난주 불러오기</button>
             <span style="flex:1;"></span>
             <button class="btn sm" id="schedEditToggle" title="미리보기에서 바로 편집합니다. 편집을 마치면 다시 눌러 인쇄와 똑같은 미리보기로 돌아갑니다." style="background:var(--solid); color:var(--solid-ink);">✏️ 편집</button>
             <button class="btn ghost sm" id="schedExport" title="현재 스케줄을 엑셀(CSV)로 내보냅니다 — 엑셀에서 열어 수정한 뒤 다시 불러올 수 있습니다">⬇ 엑셀</button>
