@@ -10640,12 +10640,11 @@ function buildScheduleDocEdit(d, week) {
     `<span style="display:inline-block; min-width:84px; text-align:center; border:1px solid #999; border-radius:5px; padding:2px 9px; margin:2px; font-size:${S(13)}px; line-height:1.25;">${_schedMD(x)}<br><b style="color:#0a7a2f;">${_shipMap[x]}개</b></span>`
   ).join("") || `<span class="auto" style="font-size:${S(12)}px; color:#bbb;">출고일 미입력</span>`;
   const _gclip = _schedClipGet();   // 복사해 둔 제품군이 있으면 '붙여넣기'를 복사 옆에 표시
-  const _gclipNm = _gclip ? ((_gclip.group.name || "제품군").slice(0, 10)) : "";
-  const gctl = gi => `<div class="sched-ectl" style="position:absolute; top:1px; right:1px;">
+  const gctl = gi =>`<div class="sched-ectl" style="position:absolute; top:1px; right:1px;">
     <button data-schedgmove="${gi}:-1" title="왼쪽으로" ${gi === 0 ? "disabled" : ""}>◀</button>
     <button data-schedgmove="${gi}:1" title="오른쪽으로" ${gi === groups.length - 1 ? "disabled" : ""}>▶</button>
     <button data-schedgcopy="${gi}" title="이 제품군을 복사 — 오른쪽에 추가되고, 다른 주에서도 붙여넣을 수 있습니다">복사</button>
-    ${_gclip ? `<button data-schedgpaste="${gi}" title="복사한 '${esc(_gclip.group.name || "제품군")}'을(를) 이 열 오른쪽에 붙여넣기 (날짜 자동 이동)" style="color:#1e5f2f;">📋${esc(_gclipNm)}</button>` : ""}
+    ${_gclip ? `<button data-schedgpaste="${gi}" title="복사한 '${esc(_gclip.group.name || "제품군")}'을(를) 이 열 오른쪽에 붙여넣기 (날짜 자동 이동)" style="color:#1e5f2f;">📋붙여넣기</button>` : ""}
     <span class="sep"></span>
     <button class="danger" data-schedgdel="${gi}" title="제품군 삭제">✕</button></div>`;
   const nameRow = groups.map((g, gi) => `<th class="sched-celledit" style="${TD} text-align:center; font-weight:800; font-size:${nameFs}px; background:#e7e4dd; position:relative;">${g_(gi, "name", g.name, "", ` placeholder="제품군명" style="text-align:center; font-weight:800;"`)}${gctl(gi)}</th>`).join("")
@@ -10697,7 +10696,9 @@ function buildScheduleDocEdit(d, week) {
   const expRow = groups.map((g, gi) => `<td style="${TD} text-align:center; font-weight:700; font-size:${dateSize}px; color:${ec("date", "inherit")};">${g_(gi, "gexp", gExp(g, "expiry"), "datepick", ` readonly placeholder="📅 소비기한" style="text-align:center; font-weight:700; cursor:pointer;"`)}</td>`).join("") + `<td style="${TD}"></td>`;
   const exp2Row = groups.map((g, gi) => `<td style="${TD} text-align:center; font-size:${dateSize}px; color:${ec("date", "#666")};">${g_(gi, "gexp2", gExp(g, "expiry2"), "datepick", ` readonly placeholder="📅 예정" style="text-align:center; cursor:pointer;"`)}</td>`).join("") + `<td style="${TD}"></td>`;
   const memoRow = groups.map((g, gi) => `<td style="${TD} text-align:center; color:#444;">${g_(gi, "memo", g.memo, "", ` placeholder="비고" style="text-align:center;"`)}</td>`).join("") + `<td style="${TD}"></td>`;
-  const empty = groups.length ? "" : `<div style="text-align:center; color:#999; padding:34px;"><button class="sched-addbtn" data-schedgaddcol="1" style="padding:10px 16px; font-size:${S(15)}px;">＋ 제품군 추가</button></div>`;
+  const empty = groups.length ? "" : `<div style="text-align:center; color:#999; padding:34px; display:flex; gap:10px; justify-content:center; align-items:center; flex-wrap:wrap;">
+    <button class="sched-addbtn" data-schedgaddcol="1" style="padding:10px 16px; font-size:${S(15)}px;">＋ 제품군 추가</button>
+    ${_gclip ? `<button class="sched-addbtn" data-schedgpaste="-1" title="복사한 '${esc(_gclip.group.name || "제품군")}'을(를) 붙여넣기 (날짜 자동 이동)" style="padding:10px 16px; font-size:${S(15)}px; border-style:solid; border-color:#bcd9bc; background:#eef6ee; color:#1e5f2f;">📋 '${esc((_gclip.group.name || "제품군").slice(0, 14))}' 붙여넣기</button>` : ""}</div>`;
   return `<div class="sched-doc" style="color:${ink}; font-family:${fam}; display:flex; flex-direction:column;">
     <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:2px;">
       <div style="width:220px; font-size:${S(12)}px; color:#555;">${week} ~ ${_schedAddDays(week, 5)}<br>작성자 : ${g_("", "author", d.author, "", ` placeholder="작성자" style="font-weight:700; width:120px; color:#333;"`)}</div>

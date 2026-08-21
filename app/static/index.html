@@ -53,12 +53,15 @@
   input.sched-ei[type=number]{ -moz-appearance:textfield; }
   /* 편집 항목 도구모음 — 칸 선택(hover/focus) 때만 뜨는 떠 있는 툴바. 표를 살짝 침범해도 됨 */
   .sched-ectl{ opacity:0; transition:opacity .12s; display:inline-flex; align-items:center; gap:1px;
+    flex-wrap:nowrap; white-space:nowrap; z-index:40;
     background:#fff; border:1px solid #d7dde8; border-radius:9px; padding:2px; margin-top:4px;
     box-shadow:0 3px 10px rgba(30,50,90,.18); }
   .sched-celledit:hover .sched-ectl, .sched-ectl:focus-within{ opacity:1; }
+  /* 도구모음이 뜬 칸을 다른 열보다 위로 올려 버튼(✕ 등)이 옆 칸 클릭에 가리지 않게 함 */
+  .sched-celledit:hover, .sched-celledit:focus-within{ z-index:40; }
   .sched-addbtn{ border:1px dashed #b9b9b9; background:rgba(0,0,0,.02); border-radius:6px; cursor:pointer; color:#666; font:inherit; }
   .sched-addbtn:hover{ border-color:#4C7FE0; color:#2f6bd6; }
-  .sched-ectl button{ border:0; background:transparent; border-radius:6px; cursor:pointer; line-height:1;
+  .sched-ectl button{ border:0; background:transparent; border-radius:6px; cursor:pointer; line-height:1; white-space:nowrap;
     font-weight:700; color:#42506b; padding:4px 7px; font-size:12px; letter-spacing:-.2px; }
   .sched-ectl button:hover:not([disabled]){ background:#eef3ff; color:#2b5cd0; }
   .sched-ectl button[disabled]{ opacity:.32; cursor:default; }
