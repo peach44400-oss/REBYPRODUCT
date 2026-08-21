@@ -9943,7 +9943,7 @@ function _schedMD(iso) {
   const d = new Date(iso + "T00:00:00"); if (isNaN(d)) return esc(iso);
   return `${d.getMonth() + 1}/${d.getDate()}(${_SCHED_DOW[d.getDay()]})`;
 }
-function _schedBlankItem() { return { product_id: null, label: "", qty: "", pack: "", boxes: "", boxesAuto: true, expiry: "", expiry2: "", partner: "", memo: "" }; }
+function _schedBlankItem() { return { product_id: null, label: "", qty: "", pack: "", boxes: "", boxesAuto: true, expiry: "", expiry2: "", partner: "", memo: "", color: "" }; }
 function _schedBlank(week) {
   const dates = []; for (let i = 0; i < 6; i++) dates.push(_schedAddDays(week, i));
   return { title: "주간 생산·출고 스케줄", note: "※ 스케줄은 현장 상황에 맞게 변경될 수 있음",
@@ -9968,7 +9968,7 @@ function _schedNorm(d, week) {
     if (!(g.w > 0)) g.w = 1;   // 열 폭 가중치(기본 1)
     if (g.partner == null) g.partner = "";   // 거래처는 제품군(열) 단위 — 열마다 하나로 통일
     if (!Array.isArray(g.items)) g.items = [];
-    g.items.forEach(it => { for (const k of ["label", "boxes", "expiry", "expiry2", "partner", "memo"]) it[k] = it[k] || "";
+    g.items.forEach(it => { for (const k of ["label", "boxes", "expiry", "expiry2", "partner", "memo", "color"]) it[k] = it[k] || "";
       if (it.qty == null) it.qty = ""; if (it.pack == null) it.pack = "";
       // 박스 자동계산 여부: 명시적으로 false면 수동, 그 외엔 박스가 비었거나 숫자면 자동
       it.boxesAuto = it.boxesAuto === false ? false : !/[^0-9,\s]/.test(String(it.boxes || "")); });
@@ -10243,7 +10243,7 @@ function _schedFieldUpdate(e) {
   } else { g[f] = inp.value; }   // 제품군명·출고일·거래처(열 공통)·제품군 비고
   // 날짜(출고일·소비기한·예정)는 선택 즉시 다시 그려 '주간 출고일' 리본·소비기한 표시를 갱신.
   // 그 외 텍스트 편집은 재렌더하지 않음 — 다음 칸으로 이동해 타이핑 중일 때 그 칸이 사라지는 것을 방지(포커스 유지).
-  if (e && e.type === "change" && (f === "shipDate" || f === "gexp" || f === "gexp2")) renderSchedDoc();
+  if (e && e.type === "change" && (f === "shipDate" || f === "gexp" || f === "gexp2" || f === "color")) renderSchedDoc();
 }
 function _schedClick(e) {
   if (!SCHED.data) return;
@@ -10291,6 +10291,13 @@ function _schedClick(e) {
   }
   const gd = e.target.closest("[data-schedgdel]");
   if (gd) { const gi = +gd.dataset.schedgdel; if (confirm("이 제품군을 삭제할까요?")) { SCHED.data.groups.splice(gi, 1); renderSchedDoc(); } return; }
+  const iclr = e.target.closest("[data-schedicolorclr]");
+  if (iclr) {   // 이 제품 글자색을 전체(표시 설정) 색으로 되돌림
+    const [gi, ii] = iclr.dataset.schedicolorclr.split(":").map(Number);
+    const it = (SCHED.data.groups[gi] || {}).items[ii];
+    if (it) { it.color = ""; renderSchedDoc(); }
+    return;
+  }
   const icp = e.target.closest("[data-schedicopy]");
   if (icp) {   // 항목 복사 — 바로 아래에 같은 내용으로 추가
     const [gi, ii] = icp.dataset.schedicopy.split(":").map(Number);
@@ -10377,11 +10384,13 @@ function buildScheduleDoc(d, week) {
     const pb = _schedPackBox(it);
     // 항목 거래처가 열 공통과 다를 때만 개별 표시(같으면 열 거래처 줄로 충분)
     const ovp = (it.partner && it.partner.trim() && it.partner.trim() !== (gpartner || "").trim()) ? it.partner : "";
+    // 제품별 개별 글자색 — 비우면 전체(표시 설정) 색을 그대로 사용
+    const icol = (it.color || "").trim();
     const isBlank = !(it.label || NFq(it.qty) || pb || ovp || it.memo);
     if (isBlank) return `<td style="${TD} ${P}">&nbsp;</td>`;
     return `<td style="${TD} ${P}">
-      <div style="font-weight:700; font-size:${labelSize}px; color:${ec("label", "inherit")};">${esc(it.label || "") || "&nbsp;"}</div>
-      <div style="font-size:${qtySize}px; font-weight:900; line-height:1.05; margin:1px 0; color:${ec("qty", "inherit")};">${NFq(it.qty) ? NFq(it.qty) + '<span style="font-size:' + Math.round(qtySize * 0.6) + 'px; font-weight:700;">개</span>' : "&nbsp;"}</div>
+      <div style="font-weight:700; font-size:${labelSize}px; color:${icol || ec("label", "inherit")};">${esc(it.label || "") || "&nbsp;"}</div>
+      <div style="font-size:${qtySize}px; font-weight:900; line-height:1.05; margin:1px 0; color:${icol || ec("qty", "inherit")};">${NFq(it.qty) ? NFq(it.qty) + '<span style="font-size:' + Math.round(qtySize * 0.6) + 'px; font-weight:700;">개</span>' : "&nbsp;"}</div>
       ${(pb || ovp) ? `<div style="font-size:${subSize}px;"><span style="color:${ec("sub", "#c26a1f")}; font-weight:700;">${esc(pb)}</span>${ovp ? ` <span style="color:#2f3fa0;">· ${esc(ovp)}</span>` : ""}</div>` : ""}
       ${it.memo ? `<div style="color:#888; font-size:${subSize}px;">${esc(it.memo)}</div>` : ""}</td>`;
   };
@@ -10468,10 +10477,11 @@ function buildScheduleDocEdit(d, week) {
       <button data-schedimove="${gi}:${ii}:-1" title="위로" ${ii === 0 ? "disabled" : ""} style="padding:2px 6px;">▲</button>
       <button data-schedimove="${gi}:${ii}:1" title="아래로" ${ii === (g.items.length - 1) ? "disabled" : ""} style="padding:2px 6px;">▼</button>
       <button data-schedidel="${gi}:${ii}" title="빈 칸 삭제" style="padding:2px 7px; color:#c0392b;">×</button></div></div></td>`;
+    const icol = (it.color || "").trim();  // 제품별 개별 글자색(비우면 전체 색)
     return `<td style="${TD} ${P}"><div class="sched-celledit" style="position:relative;">
-      ${it_(gi, ii, "label", it.label, "", ` list="schedProdDl" placeholder="제품/품목" style="font-weight:700; font-size:${labelSize}px; color:${ec("label", "inherit")};"`)}
+      ${it_(gi, ii, "label", it.label, "", ` list="schedProdDl" placeholder="제품/품목" style="font-weight:700; font-size:${labelSize}px; color:${icol || ec("label", "inherit")};"`)}
       <div style="display:flex; align-items:baseline; gap:2px; margin:1px 0;">
-        ${it_(gi, ii, "qty", it.qty, "", ` inputmode="numeric" placeholder="수량" style="font-size:${qtySize}px; font-weight:900; text-align:right; flex:1 1 auto; color:${ec("qty", "inherit")};"`)}
+        ${it_(gi, ii, "qty", it.qty, "", ` inputmode="numeric" placeholder="수량" style="font-size:${qtySize}px; font-weight:900; text-align:right; flex:1 1 auto; color:${icol || ec("qty", "inherit")};"`)}
         <span style="font-size:${Math.round(qtySize * 0.6)}px; font-weight:700;">개</span></div>
       <div style="display:flex; align-items:center; gap:1px; font-size:${subSize}px; flex-wrap:wrap;">
         ${it_(gi, ii, "pack", it.pack, "", ` inputmode="numeric" placeholder="개입" style="width:40px; text-align:right; color:${ec("sub", "#c26a1f")}; font-weight:700;"`)}<span style="color:${ec("sub", "#c26a1f")};">개입/</span>
@@ -10479,7 +10489,9 @@ function buildScheduleDocEdit(d, week) {
       <div style="display:flex; gap:2px; font-size:${subSize}px;">
         ${it_(gi, ii, "partner", it.partner, "", ` list="schedPartnerDl" placeholder="거래처(개별·비우면 열 공통)" title="비우면 위 '거래처' 줄(열 공통)을 씁니다. 이 항목만 다르면 여기 입력하세요." style="flex:1 1 0; color:#2f3fa0;"`)}
         ${it_(gi, ii, "memo", it.memo, "", ` placeholder="비고" style="flex:1 1 0; color:#888;"`)}</div>
-      <div class="sched-ectl" style="display:flex; gap:3px; justify-content:flex-end; margin-top:4px; font-size:${Math.max(11, S(11))}px;">
+      <div class="sched-ectl" style="display:flex; gap:3px; align-items:center; justify-content:flex-end; margin-top:4px; font-size:${Math.max(11, S(11))}px;">
+        <input type="color" data-g="${gi}" data-i="${ii}" data-f="color" value="${esc(icol || d.textColor || '#111111')}" title="이 제품 글자색(개별) — 비우려면 옆 '색기본'" style="width:22px; height:20px; padding:0; border:1px solid #ccc; border-radius:4px; cursor:pointer; background:none;">
+        <button data-schedicolorclr="${gi}:${ii}" title="이 제품 글자색을 전체(표시 설정) 색으로 되돌림" style="padding:1px 6px;${icol ? '' : ' color:#aaa;'}">색기본</button>
         <button data-schedicopy="${gi}:${ii}" title="이 항목을 복사해 바로 아래에 추가" style="padding:1px 6px;">복사</button>
         <button data-schediblank="${gi}:${ii}" title="이 항목 위에 빈 칸을 넣어 한 칸 아래로 내림" style="padding:1px 6px;">＋빈칸</button>
         <button data-schedimove="${gi}:${ii}:-1" title="위로 이동" ${ii === 0 ? "disabled" : ""} style="padding:1px 7px;">▲</button>
