@@ -2797,8 +2797,11 @@ async function undoMatDispose(did) {
 }
 
 /* ── 자재 현황 화면 — 전체 원부자재 재고·유통기한(FEFO)·부족을 한눈에 + 확정폐기·발주·이력 ── */
-const MATSTAT = { date: "", data: null, filter: "all", q: "" };
+const MATSTAT = { date: "", data: null, filter: "all", q: "", sel: new Set() };
+// 현재 발주 가능한(부족·미발주) 자재면 그 자재 객체를, 아니면 null — 일괄 발주 선택 대상 판정
+function msOrderable(mid) { const it = (MATSTAT.data && MATSTAT.data.items || []).find(x => x.id === mid); return (it && it.low && !it.ordered) ? it : null; }
 async function loadMatStatus() {
+  MATSTAT.sel = new Set();   // 새로 불러올 때 선택 초기화
   MATSTAT.date = todayISO();   // 항상 현재 기준 (만료·임박·부족·폐기 내역을 전체 날짜로 표시)
   $("msDate").value = MATSTAT.date;
   try { MATSTAT.data = await api("/api/matstatus?date=" + encodeURIComponent(MATSTAT.date)); }
@@ -2832,7 +2835,10 @@ function renderMatStatus() {
   const disposals = d.disposals || [], lowEvents = d.low_events || [], items = d.items || [];
   $("msFilters").innerHTML = chip("all", "전체") + chip("expired", "만료") + chip("soon", "임박") + chip("low", "부족")
     + chip("disp", `폐기 내역${disposals.length ? " " + disposals.length : ""}`) + chip("stock", "재고 목록")
-    + (canStock && s.low && MATSTAT.filter === "low" ? `<button type="button" class="btn sm" id="msBulkOrder" style="margin-left:6px;">부족 ${s.low}종 → 발주서</button>` : "");
+    + (canStock && s.low && MATSTAT.filter === "low" ? `<button type="button" class="btn sm" id="msBulkOrder" style="margin-left:6px;">부족 ${s.low}종 → 발주서</button>` : "")
+    + (canStock && MATSTAT.sel.size ? `<button type="button" class="btn sm" id="msSelOrder" style="margin-left:6px; background:var(--solid); color:var(--solid-ink);">✅ 선택 ${MATSTAT.sel.size}종 발주서</button><button type="button" class="btn ghost sm" id="msSelClear">선택 해제</button>` : "");
+  // 부족·미발주 자재 앞에 붙는 일괄 발주 선택 체크박스 (자재별 1개, material_id로 중복 제거)
+  const selChk = m => msOrderable(m) ? `<input type="checkbox" data-mssel="${m}" ${MATSTAT.sel.has(m) ? "checked" : ""} title="일괄 발주 선택" style="width:15px; height:15px; margin-right:6px; vertical-align:middle; cursor:pointer;">` : "";
   const q = MATSTAT.q ? MATSTAT.q.toLowerCase() : "";
   const kindTxt = k => k === "sub" ? "부재료" : "원재료";
   // ── 폐기 내역 뷰 — 자동/수동 폐기를 폐기일과 함께, [취소]로 되돌림 ──
@@ -2872,7 +2878,7 @@ function renderMatStatus() {
         <td style="padding:6px 8px;">${exp}</td>
         <td style="padding:6px 8px; text-align:right;">${saf}</td>
         <td style="padding:6px 8px; text-align:center; font-size:11.5px; color:var(--muted);">${esc(it.last_in || "—")}</td>
-        <td style="padding:6px 8px; text-align:center;">${canStock && it.low && !it.ordered ? `<button class="btn ghost sm" data-msorder="${it.id}" style="padding:1px 8px;">발주</button>` : "—"}</td></tr>`;
+        <td style="padding:6px 8px; text-align:center; white-space:nowrap;">${canStock && it.low && !it.ordered ? `${selChk(it.id)}<button class="btn ghost sm" data-msorder="${it.id}" style="padding:1px 8px;">발주</button>` : "—"}</td></tr>`;
     }).join("") : `<tr><td colspan="7" class="auto" style="padding:16px; text-align:center;">해당하는 자재가 없습니다</td></tr>`;
     return;
   }
@@ -2906,7 +2912,7 @@ function renderMatStatus() {
     <td style="padding:6px 8px; text-align:center;"><span class="chip cat" style="font-size:10.5px;">${kindTxt(e.kind)}</span></td>
     <td style="padding:6px 8px; text-align:center;">${stChip(e.type)}</td>
     <td style="padding:6px 8px; text-align:left; font-size:11.5px; color:${e.color};">${e.content}</td>
-    <td style="padding:6px 8px; text-align:center;">${e.act || '<span class="auto">—</span>'}</td></tr>`).join("")
+    <td style="padding:6px 8px; text-align:center; white-space:nowrap;">${e.type === "부족" ? selChk(e.material_id) : ""}${e.act || '<span class="auto">—</span>'}</td></tr>`).join("")
     : `<tr><td colspan="6" class="auto" style="padding:16px; text-align:center;">해당 이벤트가 없습니다</td></tr>`;
 }
 function msDispose(mid) {
@@ -2921,6 +2927,12 @@ function msOrderItems(list) {
   if (!items.length) return toast("발주할 부족 자재가 없습니다");
   poBulkFromItems(items);
 }
+// 체크로 고른 자재만 일괄 발주 (거래처별로 묶어 발주서 초안 생성)
+function msOrderSelected() {
+  const items = (MATSTAT.data.items || []).filter(x => MATSTAT.sel.has(x.id) && x.low && !x.ordered);
+  if (!items.length) return toast("선택한 발주 가능 자재가 없습니다");
+  msOrderItems(items);
+}
 $("msReload").onclick = () => loadMatStatus();
 $("msDate").addEventListener("change", () => {
   const v = $("msDate").value.trim();
@@ -2931,9 +2943,19 @@ $("msSummary").addEventListener("click", e => { const b = e.target.closest("[dat
 $("msFilters").addEventListener("click", e => {
   const b = e.target.closest("[data-msfilter]");
   if (b) { MATSTAT.filter = b.dataset.msfilter; renderMatStatus(); return; }
-  if (e.target.closest("#msBulkOrder")) msOrderItems(MATSTAT.data.items || []);
+  if (e.target.closest("#msBulkOrder")) { msOrderItems(MATSTAT.data.items || []); return; }
+  if (e.target.closest("#msSelOrder")) { msOrderSelected(); return; }
+  if (e.target.closest("#msSelClear")) { MATSTAT.sel.clear(); renderMatStatus(); return; }
+});
+// 일괄 발주 선택 체크박스 — 자재별로 토글, 화면 갱신해 같은 자재의 다른 행도 함께 반영
+$("msBody").addEventListener("change", e => {
+  const cb = e.target.closest("[data-mssel]"); if (!cb) return;
+  const mid = +cb.dataset.mssel;
+  if (cb.checked) MATSTAT.sel.add(mid); else MATSTAT.sel.delete(mid);
+  renderMatStatus();
 });
 $("msBody").addEventListener("click", async e => {
+  if (e.target.closest("[data-mssel]")) return;   // 체크박스 클릭은 change 핸들러가 처리
   const dz = e.target.closest("[data-msdispose]"); if (dz) { msDispose(+dz.dataset.msdispose); return; }
   const od = e.target.closest("[data-msorder]"); if (od) { const it = (MATSTAT.data.items || []).find(x => x.id === +od.dataset.msorder); if (it) msOrderItems([it]); return; }
   const un = e.target.closest("[data-mdundo]");
