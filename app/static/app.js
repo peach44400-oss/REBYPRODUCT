@@ -2797,11 +2797,9 @@ async function undoMatDispose(did) {
 }
 
 /* ── 자재 현황 화면 — 전체 원부자재 재고·유통기한(FEFO)·부족을 한눈에 + 확정폐기·발주·이력 ── */
-const MATSTAT = { date: "", data: null, filter: "all", q: "", sel: new Set() };
-// 현재 발주 가능한(부족·미발주) 자재면 그 자재 객체를, 아니면 null — 일괄 발주 선택 대상 판정
-function msOrderable(mid) { const it = (MATSTAT.data && MATSTAT.data.items || []).find(x => x.id === mid); return (it && it.low && !it.ordered) ? it : null; }
+const MATSTAT = { date: "", data: null, filter: "all", q: "", sel: new Map() };  // sel: material_id → {material_id,name,unit,qty}
 async function loadMatStatus() {
-  MATSTAT.sel = new Set();   // 새로 불러올 때 선택 초기화
+  MATSTAT.sel = new Map();   // 새로 불러올 때 선택 초기화
   MATSTAT.date = todayISO();   // 항상 현재 기준 (만료·임박·부족·폐기 내역을 전체 날짜로 표시)
   $("msDate").value = MATSTAT.date;
   try { MATSTAT.data = await api("/api/matstatus?date=" + encodeURIComponent(MATSTAT.date)); }
@@ -2837,8 +2835,8 @@ function renderMatStatus() {
     + chip("disp", `폐기 내역${disposals.length ? " " + disposals.length : ""}`) + chip("stock", "재고 목록")
     + (canStock && s.low && MATSTAT.filter === "low" ? `<button type="button" class="btn sm" id="msBulkOrder" style="margin-left:6px;">부족 ${s.low}종 → 발주서</button>` : "")
     + (canStock && MATSTAT.sel.size ? `<button type="button" class="btn sm" id="msSelOrder" style="margin-left:6px; background:var(--solid); color:var(--solid-ink);">✅ 선택 ${MATSTAT.sel.size}종 발주서</button><button type="button" class="btn ghost sm" id="msSelClear">선택 해제</button>` : "");
-  // 부족·미발주 자재 앞에 붙는 일괄 발주 선택 체크박스 (자재별 1개, material_id로 중복 제거)
-  const selChk = m => msOrderable(m) ? `<input type="checkbox" data-mssel="${m}" ${MATSTAT.sel.has(m) ? "checked" : ""} title="일괄 발주 선택" style="width:15px; height:15px; margin-right:6px; vertical-align:middle; cursor:pointer;">` : "";
+  // 부족 자재 앞에 붙는 일괄 발주 선택 체크박스 — 부족 행마다(발주 버튼이 있는 곳마다) 표시. 같은 자재는 material_id로 1종만 담긴다.
+  const selChk = (mid, nm, un, q) => (canStock && q > 0) ? `<input type="checkbox" data-mssel="${mid}" data-q="${q}" data-nm="${esc(nm || "")}" data-un="${esc(un || "")}" ${MATSTAT.sel.has(mid) ? "checked" : ""} title="일괄 발주 선택" style="width:15px; height:15px; margin-right:6px; vertical-align:middle; cursor:pointer;">` : "";
   const q = MATSTAT.q ? MATSTAT.q.toLowerCase() : "";
   const kindTxt = k => k === "sub" ? "부재료" : "원재료";
   // ── 폐기 내역 뷰 — 자동/수동 폐기를 폐기일과 함께, [취소]로 되돌림 ──
@@ -2878,7 +2876,7 @@ function renderMatStatus() {
         <td style="padding:6px 8px;">${exp}</td>
         <td style="padding:6px 8px; text-align:right;">${saf}</td>
         <td style="padding:6px 8px; text-align:center; font-size:11.5px; color:var(--muted);">${esc(it.last_in || "—")}</td>
-        <td style="padding:6px 8px; text-align:center; white-space:nowrap;">${canStock && it.low && !it.ordered ? `${selChk(it.id)}<button class="btn ghost sm" data-msorder="${it.id}" style="padding:1px 8px;">발주</button>` : "—"}</td></tr>`;
+        <td style="padding:6px 8px; text-align:center; white-space:nowrap;">${canStock && it.low && !it.ordered ? `${selChk(it.id, it.name, it.unit, Math.ceil((it.shortage || 0) * 100) / 100)}<button class="btn ghost sm" data-msorder="${it.id}" data-q="${Math.ceil((it.shortage || 0) * 100) / 100}" data-nm="${esc(it.name || "")}" data-un="${esc(it.unit || "")}" style="padding:1px 8px;">발주</button>` : "—"}</td></tr>`;
     }).join("") : `<tr><td colspan="7" class="auto" style="padding:16px; text-align:center;">해당하는 자재가 없습니다</td></tr>`;
     return;
   }
@@ -2893,9 +2891,9 @@ function renderMatStatus() {
   });
   items.filter(x => x.soon).forEach(x => events.push({ date: isoPlus(x.exp, -(d.soon_days || 7)) || x.exp, type: "임박", material_id: x.id, name: x.name, unit: x.unit, kind: x.kind,
     content: `유통기한 ${esc(x.exp)} (D-${x.soon.days}) · 현재고 ${NF(x.onhand)}${x.unit || ""}`, color: "#B45309", act: "" }));
-  lowEvents.forEach(x => events.push({ date: x.date, type: "부족", material_id: x.material_id, name: x.name, unit: x.unit, kind: x.kind,
+  lowEvents.forEach(x => { const q = Math.ceil((x.shortage || 0) * 100) / 100; events.push({ date: x.date, type: "부족", material_id: x.material_id, name: x.name, unit: x.unit, kind: x.kind, qty: q,
     content: `${NF(x.shortage)}${x.unit || ""} 부족 (그날 재고 ${NF(x.onhand)}${x.unit || ""} / 안전 ${NF(x.safety)}${x.unit || ""})`, color: "#B45309",
-    act: canStock ? `<button class="btn ghost sm" data-msorder="${x.material_id}" style="padding:1px 8px;">발주</button>` : "" }));
+    act: canStock ? `<button class="btn ghost sm" data-msorder="${x.material_id}" data-q="${q}" data-nm="${esc(x.name || "")}" data-un="${esc(x.unit || "")}" style="padding:1px 8px;">발주</button>` : "" }); });
   let evs = events;
   if (MATSTAT.filter === "expired") evs = events.filter(e => e.type === "만료");
   else if (MATSTAT.filter === "soon") evs = events.filter(e => e.type === "임박");
@@ -2912,7 +2910,7 @@ function renderMatStatus() {
     <td style="padding:6px 8px; text-align:center;"><span class="chip cat" style="font-size:10.5px;">${kindTxt(e.kind)}</span></td>
     <td style="padding:6px 8px; text-align:center;">${stChip(e.type)}</td>
     <td style="padding:6px 8px; text-align:left; font-size:11.5px; color:${e.color};">${e.content}</td>
-    <td style="padding:6px 8px; text-align:center; white-space:nowrap;">${e.type === "부족" ? selChk(e.material_id) : ""}${e.act || '<span class="auto">—</span>'}</td></tr>`).join("")
+    <td style="padding:6px 8px; text-align:center; white-space:nowrap;">${e.type === "부족" ? selChk(e.material_id, e.name, e.unit, e.qty) : ""}${e.act || '<span class="auto">—</span>'}</td></tr>`).join("")
     : `<tr><td colspan="6" class="auto" style="padding:16px; text-align:center;">해당 이벤트가 없습니다</td></tr>`;
 }
 function msDispose(mid) {
@@ -2927,11 +2925,11 @@ function msOrderItems(list) {
   if (!items.length) return toast("발주할 부족 자재가 없습니다");
   poBulkFromItems(items);
 }
-// 체크로 고른 자재만 일괄 발주 (거래처별로 묶어 발주서 초안 생성)
+// 체크로 고른 자재만 일괄 발주 (거래처별로 묶어 발주서 초안 생성). 부족 행에서 담은 그대로(수량 포함) 사용.
 function msOrderSelected() {
-  const items = (MATSTAT.data.items || []).filter(x => MATSTAT.sel.has(x.id) && x.low && !x.ordered);
-  if (!items.length) return toast("선택한 발주 가능 자재가 없습니다");
-  msOrderItems(items);
+  const items = Array.from(MATSTAT.sel.values()).filter(x => x.qty > 0);
+  if (!items.length) return toast("선택한 자재가 없습니다");
+  poBulkFromItems(items);
 }
 $("msReload").onclick = () => loadMatStatus();
 $("msDate").addEventListener("change", () => {
@@ -2947,17 +2945,23 @@ $("msFilters").addEventListener("click", e => {
   if (e.target.closest("#msSelOrder")) { msOrderSelected(); return; }
   if (e.target.closest("#msSelClear")) { MATSTAT.sel.clear(); renderMatStatus(); return; }
 });
-// 일괄 발주 선택 체크박스 — 자재별로 토글, 화면 갱신해 같은 자재의 다른 행도 함께 반영
+// 일괄 발주 선택 체크박스 — 자재별로 토글(수량은 그 행 값 저장), 화면 갱신해 같은 자재의 다른 행도 함께 반영
 $("msBody").addEventListener("change", e => {
   const cb = e.target.closest("[data-mssel]"); if (!cb) return;
   const mid = +cb.dataset.mssel;
-  if (cb.checked) MATSTAT.sel.add(mid); else MATSTAT.sel.delete(mid);
+  if (cb.checked) MATSTAT.sel.set(mid, { material_id: mid, name: cb.dataset.nm || "", unit: cb.dataset.un || "", qty: Number(cb.dataset.q) || 0 });
+  else MATSTAT.sel.delete(mid);
   renderMatStatus();
 });
 $("msBody").addEventListener("click", async e => {
   if (e.target.closest("[data-mssel]")) return;   // 체크박스 클릭은 change 핸들러가 처리
   const dz = e.target.closest("[data-msdispose]"); if (dz) { msDispose(+dz.dataset.msdispose); return; }
-  const od = e.target.closest("[data-msorder]"); if (od) { const it = (MATSTAT.data.items || []).find(x => x.id === +od.dataset.msorder); if (it) msOrderItems([it]); return; }
+  const od = e.target.closest("[data-msorder]"); if (od) {
+    const q = Number(od.dataset.q) || 0;
+    if (q > 0) poBulkFromItems([{ material_id: +od.dataset.msorder, name: od.dataset.nm || "", unit: od.dataset.un || "", qty: q }]);
+    else { const it = (MATSTAT.data.items || []).find(x => x.id === +od.dataset.msorder); if (it) msOrderItems([it]); }
+    return;
+  }
   const un = e.target.closest("[data-mdundo]");
   if (un) {
     const x = (MATSTAT.data.disposals || []).find(v => v.id === +un.dataset.mdundo);
@@ -10662,7 +10666,7 @@ function buildScheduleDocEdit(d, week) {
     `<span style="display:inline-block; min-width:84px; text-align:center; border:1px solid #999; border-radius:5px; padding:2px 9px; margin:2px; font-size:${S(13)}px; line-height:1.25;">${_schedMD(x)}<br><b style="color:#0a7a2f;">${_shipMap[x]}개</b></span>`
   ).join("") || `<span class="auto" style="font-size:${S(12)}px; color:#bbb;">출고일 미입력</span>`;
   const _gclip = _schedClipGet();   // 복사해 둔 제품군이 있으면 '붙여넣기'를 복사 옆에 표시
-  const gctl = gi =>`<div class="sched-ectl" style="position:absolute; top:1px; right:1px;">
+  const gctl = gi =>`<div class="sched-ectl" style="position:absolute; top:calc(100% - 7px); left:50%; transform:translateX(-50%);">
     <button data-schedgmove="${gi}:-1" title="왼쪽으로" ${gi === 0 ? "disabled" : ""}>◀</button>
     <button data-schedgmove="${gi}:1" title="오른쪽으로" ${gi === groups.length - 1 ? "disabled" : ""}>▶</button>
     <button data-schedgcopy="${gi}" title="이 제품군을 복사 — 오른쪽에 추가되고, 다른 주에서도 붙여넣을 수 있습니다">복사</button>

@@ -51,14 +51,14 @@
   .sched-ei:focus{ outline:none; border-color:#4C7FE0; background:rgba(90,140,230,.10); }
   .sched-ei::-webkit-outer-spin-button, .sched-ei::-webkit-inner-spin-button{ -webkit-appearance:none; margin:0; }
   input.sched-ei[type=number]{ -moz-appearance:textfield; }
-  /* 편집 항목 도구모음 — 칸 선택(hover/focus) 때만 뜨는 떠 있는 툴바. 표를 살짝 침범해도 됨 */
-  .sched-ectl{ opacity:0; transition:opacity .12s; display:inline-flex; align-items:center; gap:1px;
-    flex-wrap:nowrap; white-space:nowrap; z-index:40;
+  /* 편집 항목 도구모음 — 칸 선택(hover/focus) 때만 뜨는 떠 있는 툴바. 표를 살짝 침범해도 됨.
+     · z-index로 옆 열보다 위에 그려 버튼이 가리지 않게 하고
+     · 사라질 때 0.35s 늦춰(마우스가 툴바로 이동할 여유) + 툴바 자체 hover 시 유지 → 클릭하려다 사라지는 문제 방지 */
+  .sched-ectl{ opacity:0; pointer-events:none; transition:opacity .1s linear .35s;
+    display:inline-flex; align-items:center; gap:1px; flex-wrap:nowrap; white-space:nowrap; z-index:50;
     background:#fff; border:1px solid #d7dde8; border-radius:9px; padding:2px; margin-top:4px;
     box-shadow:0 3px 10px rgba(30,50,90,.18); }
-  .sched-celledit:hover .sched-ectl, .sched-ectl:focus-within{ opacity:1; }
-  /* 도구모음이 뜬 칸을 다른 열보다 위로 올려 버튼(✕ 등)이 옆 칸 클릭에 가리지 않게 함 */
-  .sched-celledit:hover, .sched-celledit:focus-within{ z-index:40; }
+  .sched-celledit:hover .sched-ectl, .sched-ectl:hover, .sched-ectl:focus-within{ opacity:1; pointer-events:auto; transition-delay:0s; }
   .sched-addbtn{ border:1px dashed #b9b9b9; background:rgba(0,0,0,.02); border-radius:6px; cursor:pointer; color:#666; font:inherit; }
   .sched-addbtn:hover{ border-color:#4C7FE0; color:#2f6bd6; }
   .sched-ectl button{ border:0; background:transparent; border-radius:6px; cursor:pointer; line-height:1; white-space:nowrap;
