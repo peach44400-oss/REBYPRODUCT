@@ -9972,8 +9972,11 @@ function _schedNorm(d, week) {
       if (it.qty == null) it.qty = ""; if (it.pack == null) it.pack = "";
       // 박스 자동계산 여부: 명시적으로 false면 수동, 그 외엔 박스가 비었거나 숫자면 자동
       it.boxesAuto = it.boxesAuto === false ? false : !/[^0-9,\s]/.test(String(it.boxes || "")); });
-    // 옛 데이터 이월 — 예전엔 거래처를 항목별로 넣었으므로, 열 거래처가 비었으면 항목에서 가져온다
+    // 거래처: 열 공통(g.partner) + 항목별 덮어쓰기(it.partner, 비우면 열 공통 사용)
+    // 옛 데이터 이월 — 열 거래처가 비었으면 항목에서 대표값을 가져온다
     if (!g.partner) { const p = g.items.find(it => (it.partner || "").trim()); if (p) g.partner = p.partner; }
+    // 항목 거래처가 열 공통과 같으면 비운다(공통으로 흡수) — 다르면 개별(덮어쓰기)로 유지
+    g.items.forEach(it => { if ((it.partner || "").trim() && it.partner.trim() === (g.partner || "").trim()) it.partner = ""; });
   });
   return d;
 }
@@ -10368,20 +10371,22 @@ function buildScheduleDoc(d, week) {
   const maxItems = Math.max(1, ...groups.map(g => (g.items || []).length));
   const rowWFn = k => (d.rowW && d.rowW[k] > 0) ? d.rowW[k] : 1;   // 행(줄) 높이 가중치(기본 1)
   const rowPad = k => Math.max(1, Math.round(S(5) + S(10) * (rowWFn(k) - 1)));   // 가중치를 세로 여백(px)으로 — 1이면 기본, 클수록 큰 폭으로 높아짐 → 줄 높이 조절
-  const itemCell = (it, pad) => {
+  const itemCell = (it, pad, gpartner) => {
     const P = `padding-top:${pad}px; padding-bottom:${pad}px;`;
     if (!it || it.spacer) return `<td style="${TD} ${P}">${it ? "&nbsp;" : ""}</td>`;
     const pb = _schedPackBox(it);
-    const isBlank = !(it.label || NFq(it.qty) || pb || it.partner || it.memo);
+    // 항목 거래처가 열 공통과 다를 때만 개별 표시(같으면 열 거래처 줄로 충분)
+    const ovp = (it.partner && it.partner.trim() && it.partner.trim() !== (gpartner || "").trim()) ? it.partner : "";
+    const isBlank = !(it.label || NFq(it.qty) || pb || ovp || it.memo);
     if (isBlank) return `<td style="${TD} ${P}">&nbsp;</td>`;
     return `<td style="${TD} ${P}">
       <div style="font-weight:700; font-size:${labelSize}px; color:${ec("label", "inherit")};">${esc(it.label || "") || "&nbsp;"}</div>
       <div style="font-size:${qtySize}px; font-weight:900; line-height:1.05; margin:1px 0; color:${ec("qty", "inherit")};">${NFq(it.qty) ? NFq(it.qty) + '<span style="font-size:' + Math.round(qtySize * 0.6) + 'px; font-weight:700;">개</span>' : "&nbsp;"}</div>
-      ${pb ? `<div style="font-size:${subSize}px;"><span style="color:${ec("sub", "#c26a1f")}; font-weight:700;">${esc(pb)}</span></div>` : ""}
+      ${(pb || ovp) ? `<div style="font-size:${subSize}px;"><span style="color:${ec("sub", "#c26a1f")}; font-weight:700;">${esc(pb)}</span>${ovp ? ` <span style="color:#2f3fa0;">· ${esc(ovp)}</span>` : ""}</div>` : ""}
       ${it.memo ? `<div style="color:#888; font-size:${subSize}px;">${esc(it.memo)}</div>` : ""}</td>`;
   };
   const orderRows = Array.from({ length: maxItems }, (_, k) =>
-    `<tr class="order-row">${k === 0 ? `<td style="${LB}" rowspan="${maxItems}">발주량</td>` : ""}${groups.map(g => itemCell((g.items || [])[k], rowPad(k))).join("")}</tr>`
+    `<tr class="order-row">${k === 0 ? `<td style="${LB}" rowspan="${maxItems}">발주량</td>` : ""}${groups.map(g => itemCell((g.items || [])[k], rowPad(k), g.partner)).join("")}</tr>`
   ).join("");
   const expRow = groups.map(g => {
     const exps = [...new Set((g.items || []).map(it => it.expiry).filter(Boolean))];
@@ -10472,6 +10477,7 @@ function buildScheduleDocEdit(d, week) {
         ${it_(gi, ii, "pack", it.pack, "", ` inputmode="numeric" placeholder="개입" style="width:40px; text-align:right; color:${ec("sub", "#c26a1f")}; font-weight:700;"`)}<span style="color:${ec("sub", "#c26a1f")};">개입/</span>
         ${it_(gi, ii, "boxes", it.boxes, "", ` inputmode="numeric" placeholder="자동" style="width:40px; text-align:right; color:${ec("sub", "#c26a1f")}; font-weight:700;"`)}<span style="color:${ec("sub", "#c26a1f")};">박스</span></div>
       <div style="display:flex; gap:2px; font-size:${subSize}px;">
+        ${it_(gi, ii, "partner", it.partner, "", ` list="schedPartnerDl" placeholder="거래처(개별·비우면 열 공통)" title="비우면 위 '거래처' 줄(열 공통)을 씁니다. 이 항목만 다르면 여기 입력하세요." style="flex:1 1 0; color:#2f3fa0;"`)}
         ${it_(gi, ii, "memo", it.memo, "", ` placeholder="비고" style="flex:1 1 0; color:#888;"`)}</div>
       <div class="sched-ectl" style="display:flex; gap:3px; justify-content:flex-end; margin-top:4px; font-size:${Math.max(11, S(11))}px;">
         <button data-schedicopy="${gi}:${ii}" title="이 항목을 복사해 바로 아래에 추가" style="padding:1px 6px;">복사</button>
@@ -10652,7 +10658,7 @@ function schedExportCsv() {
   (d.groups || []).forEach(g => {
     const real = (g.items || []).filter(it => !it.spacer);   // 빈 칸(공백)은 엑셀에 내보내지 않음
     const its = real.length ? real : [{}];
-    its.forEach(it => lines.push([g.name, g.shipDate, it.label, it.qty, it.pack, it.boxes, it.expiry, it.expiry2, g.partner || "", it.memo].map(_csvCell).join(",")));
+    its.forEach(it => lines.push([g.name, g.shipDate, it.label, it.qty, it.pack, it.boxes, it.expiry, it.expiry2, (it.partner || g.partner || ""), it.memo].map(_csvCell).join(",")));
   });
   const csv = "﻿" + lines.join("\r\n");   // BOM → 엑셀에서 한글 안 깨짐
   const a = document.createElement("a");
@@ -10693,10 +10699,10 @@ function schedImportCsv(text) {
     const key = gname || "(제품군 없음)";
     if (!(key in idx)) { idx[key] = groups.length; groups.push({ name: gname, shipDate: ship || "", partner: "", memo: "", items: [] }); }
     const g = groups[idx[key]]; if (ship && !g.shipDate) g.shipDate = ship;
-    if (partner && !g.partner) g.partner = partner;   // 거래처는 열(제품군) 공통 — 첫 행 값을 사용
+    if (partner && !g.partner) g.partner = partner;   // 열 공통 거래처 = 첫 행 값(같은 값은 _schedNorm이 흡수, 다른 행만 개별로 남음)
     const it = _schedBlankItem();
     it.label = label; it.qty = (qty || "").replace(/,/g, ""); it.pack = (pack || "").replace(/,/g, "");
-    it.boxes = boxes; it.boxesAuto = boxes === ""; it.expiry = exp; it.expiry2 = exp2; it.memo = memo;
+    it.boxes = boxes; it.boxesAuto = boxes === ""; it.expiry = exp; it.expiry2 = exp2; it.partner = partner; it.memo = memo;
     const p = (M.product || []).find(x => x.name === label); it.product_id = p ? p.id : null;
     g.items.push(it);
   });
