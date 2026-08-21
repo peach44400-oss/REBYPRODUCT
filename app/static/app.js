@@ -9994,6 +9994,38 @@ async function loadSchedule(dateOpt) {
   if ($("schedDate")) $("schedDate").value = SCHED.week;
   renderSchedule();
 }
+// ── 제품군 클립보드 (주 사이 복사·붙여넣기) ───────────────────────────────
+// '복사'를 누르면 그 제품군을 (출처 주와 함께) 저장해 두고, 다른 주로 이동해 [제품군 붙여넣기]로 붙인다.
+// localStorage에 담아 주 이동·새로고침 후에도 유지된다.
+const _SCLIP_KEY = "ms_schedClip";
+function _schedClipSet(group) {
+  try { localStorage.setItem(_SCLIP_KEY, JSON.stringify({ week: SCHED.week, group: JSON.parse(JSON.stringify(group)) })); } catch (e) {}
+}
+function _schedClipGet() {
+  try { const c = JSON.parse(localStorage.getItem(_SCLIP_KEY) || "null"); return (c && c.group) ? c : null; } catch (e) { return null; }
+}
+// 붙여넣기 버튼 표시/숨김·라벨 갱신 — 편집 모드 + 클립보드에 내용이 있을 때만 보인다
+function _schedUpdatePasteBtn() {
+  const btn = $("schedPasteGroup"); if (!btn) return;
+  const clip = _schedClipGet();
+  const show = SCHED.editMode && !!clip;
+  btn.style.display = show ? "" : "none";
+  if (show) btn.textContent = `📋 '${(clip.group.name || "제품군").slice(0, 12)}' 붙여넣기`;
+}
+function schedPasteGroup() {
+  const clip = _schedClipGet(); if (!clip) { toast("붙여넣을 제품군이 없습니다 — 먼저 제품군의 [복사]를 누르세요"); return; }
+  if (!SCHED.data) return;
+  const g = JSON.parse(JSON.stringify(clip.group));
+  // 출처 주 → 이번 주 날짜 이동(출고일·소비기한·예정). shipDates는 건드리지 않도록 임시 래퍼로 감싼다.
+  const wrap = { shipDates: [], groups: [g] };
+  _schedShiftDates(wrap, _schedDayDiff(clip.week || SCHED.week, SCHED.week));
+  SCHED.data.groups.push(g);
+  _schedNorm(SCHED.data, SCHED.week);
+  SCHED.saved = `'${g.name || "제품군"}' 붙여넣음 — 수정 후 저장하세요 (아직 저장 안 됨)`;
+  renderSchedule();
+  toast(`'${g.name || "제품군"}'을(를) 이번 주에 붙여넣었습니다. 필요한 부분 수정 후 💾 저장하세요`);
+}
+
 // ── 지난주 불러오기 (선택형) ─────────────────────────────────────────────
 // 이전에 저장된 주를 골라, 전체를 덮어쓰거나 필요한 제품군(열)·행·제품만 골라 이번 주에 추가.
 // 날짜(출고일·소비기한·예정)는 불러오는 주→이번 주 차이만큼 자동 이동한다.
@@ -10408,9 +10440,14 @@ function _schedClick(e) {
     renderSchedDoc(); return;
   }
   const gcp = e.target.closest("[data-schedgcopy]");
-  if (gcp) {   // 제품군 복사 — 항목·설정까지 그대로 복제해 바로 오른쪽에 추가
+  if (gcp) {   // 제품군 복사 — 오른쪽에 바로 복제 + 다른 주에도 붙여넣을 수 있게 클립보드에 저장
     const gi = +gcp.dataset.schedgcopy, src = SCHED.data.groups[gi];
-    if (src) { SCHED.data.groups.splice(gi + 1, 0, JSON.parse(JSON.stringify(src))); renderSchedDoc(); toast("제품군을 복사했습니다"); }
+    if (src) {
+      SCHED.data.groups.splice(gi + 1, 0, JSON.parse(JSON.stringify(src)));
+      _schedClipSet(src);   // 주 이동 후 '제품군 붙여넣기'로 붙일 수 있도록 보관
+      renderSchedDoc(); _schedUpdatePasteBtn();
+      toast(`'${src.name || "제품군"}'을(를) 복사했습니다 — 다른 주로 이동해 [📋 제품군 붙여넣기]로 붙일 수 있습니다`);
+    }
     return;
   }
   const ib = e.target.closest("[data-schediblank]");
@@ -10810,6 +10847,7 @@ async function saveSchedule() {
 function _schedSyncEditUI() {
   const b = $("schedEditToggle"); if (b) b.textContent = SCHED.editMode ? "✔ 편집 완료" : "✏️ 편집";
   ["schedAddGroup", "schedColEqual", "schedRowEqual", "schedFillPage"].forEach(id => { const el = $(id); if (el) el.style.display = SCHED.editMode ? "" : "none"; });
+  _schedUpdatePasteBtn();   // 제품군 붙여넣기 버튼(클립보드에 내용 있을 때만)
   { const rb = $("schedRowEqual"); if (rb) rb.textContent = (SCHED.data && SCHED.data.rowsEqual) ? "↕ 행 높이 자동" : "↕ 행 높이 맞춤"; }
   { const fb = $("schedFillPage"); if (fb) fb.textContent = (SCHED.data && SCHED.data.fillPage === false) ? "⛶ 꽉 채우기" : "🎯 원래 크기"; }
   const hdr = $("schedDocHdr"); if (hdr) hdr.innerHTML = SCHED.editMode
@@ -11027,6 +11065,7 @@ function _schedUnlockPrompt() {
     gs.push({ name: "", shipDate: "", partner: "", memo: "", items: [it] });
     renderSchedDoc();
   });
+  on("schedPasteGroup", schedPasteGroup);
   on("schedSave", saveSchedule);
   on("schedPrintBtn", () => schedPrint());
   on("schedPdf", () => { toast("인쇄 창에서 대상을 'PDF로 저장'으로 선택하세요"); setTimeout(schedPrint, 400); });
