@@ -10070,6 +10070,7 @@ async function _sprevLoadWeek(week) {
 function _sprevRenderGrid() {
   const src = _SPREV.src, grid = $("sprevGrid"); if (!src) { _sprevRenderCount(); return; }
   const groups = src.groups, sel = _SPREV.sel;
+  const NFq = v => { v = String(v == null ? "" : v).replace(/,/g, ""); if (v === "") return ""; const n = Number(v); return isNaN(n) ? esc(v) : n.toLocaleString("ko-KR"); };
   const maxItems = Math.max(0, ...groups.map(g => (g.items || []).length));
   const allIdx = groups.flatMap((g, gi) => _sprevGroupIdx(g).map(ii => gi + ":" + ii));
   const allOn = allIdx.length > 0 && allIdx.every(k => sel.has(k));
