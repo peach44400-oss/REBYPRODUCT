@@ -1115,8 +1115,7 @@ function renderDailyBars(rows) {
       return `<div class="abar-row num">
         <span class="abar-name" title="${esc(r.name)}">${esc(r.name)}</span>
         <span class="abar-track"><span class="abar-fill" style="width:${Math.min(pct, 100)}%; background:${color};"></span></span>
-        <span class="abar-pct" style="color:${color}">${pct.toFixed(1)}%
-          <small>${gap >= 0 ? "+" + NF(gap) + " 초과" : NF(-gap) + " 미달"}</small></span></div>`;
+        <span class="abar-pct" style="color:${color}">${pct.toFixed(1)}% <small>생산 / ${gap >= 0 ? "+" + NF(gap) + " 초과" : NF(-gap) + " 미달"}</small></span></div>`;
     }
     return `<div class="abar-row num">
       <span class="abar-name" title="${esc(r.name)}">${esc(r.name)}</span>
