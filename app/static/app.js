@@ -104,9 +104,14 @@ let _navBypass = false;
 $("nav").addEventListener("click", e => {
   const b = e.target.closest("button[data-scr]"); if (!b) return;
   // 일일 입력에서 저장 안 한 변경이 있으면, 다른 화면으로 넘어가기 전에 확인
-  const onEntry = document.querySelector(".screen.on")?.id === "scr-entry";
-  if (!_navBypass && onEntry && b.dataset.scr !== "entry" && E.dirty) {
+  const curScr = document.querySelector(".screen.on")?.id;
+  if (!_navBypass && curScr === "scr-entry" && b.dataset.scr !== "entry" && E.dirty) {
     openLeaveGuard(b.dataset.scr);
+    return;
+  }
+  // 주간 스케줄에서 저장 안 한 변경이 있으면, 다른 화면으로 넘어가기 전에 확인
+  if (!_navBypass && curScr === "scr-sched" && b.dataset.scr !== "sched" && SCHED.dirty) {
+    _schedGuard(() => navGoScr(b.dataset.scr));
     return;
   }
   _navBypass = false;
@@ -138,6 +143,7 @@ async function saveEntryDirect() {   // 현재 탭 저장(요약 모달 없이) 
   return !E.dirty;           // 저장 성공 시 loadDay가 E.dirty=false로 만듦
 }
 function openLeaveGuard(scr) {
+  const msg = $("leaveGuardMsg"); if (msg) msg.textContent = "일일 입력에 저장하지 않은 내용이 있습니다. 저장하고 이동할까요?";
   $("leaveGuardOverlay").classList.add("on");
   $("leaveSaveGo").onclick = async () => {
     $("leaveGuardOverlay").classList.remove("on");
@@ -9946,7 +9952,16 @@ $("pwSaveBtn").onclick = async () => {
 // ══ 주간 생산·출고 스케줄 ══════════════════════════════════════════
 // 계획이 자주 바뀌므로 주(월요일 기준) 단위 JSON 한 덩어리로 편집·저장한다(느슨한 구조).
 // 편집기(제품군 카드) → SCHED.data 갱신 → 미리보기(=인쇄본) 실시간 갱신. 전체화면은 새 창(#schedfull) 재사용.
-const SCHED = { week: "", data: null, saved: "", weeks: [], gridMode: (localStorage.getItem("ms_schedGrid") || "col"), editMode: false };
+const SCHED = { week: "", data: null, saved: "", weeks: [], gridMode: (localStorage.getItem("ms_schedGrid") || "col"), editMode: false, dirty: false };
+// 저장하지 않은 변경이 있으면 확인 후 진행 — 없으면 바로 proceed(). [저장하고 이동]/[저장 안 함]/[취소]
+function _schedGuard(proceed, onCancel) {
+  if (!SCHED.dirty) { proceed(); return; }
+  const msg = $("leaveGuardMsg"); if (msg) msg.textContent = "주간 스케줄에 저장하지 않은 변경이 있습니다. 저장하고 이동할까요?";
+  $("leaveGuardOverlay").classList.add("on");
+  $("leaveSaveGo").onclick = async () => { $("leaveGuardOverlay").classList.remove("on"); if (await saveSchedule()) proceed(); else if (onCancel) onCancel(); };
+  $("leaveDiscard").onclick = () => { $("leaveGuardOverlay").classList.remove("on"); SCHED.dirty = false; proceed(); };
+  $("leaveCancel").onclick = () => { $("leaveGuardOverlay").classList.remove("on"); if (onCancel) onCancel(); };
+}
 const _SCHED_DOW = ["일", "월", "화", "수", "목", "금", "토"];
 function _schedMonday(iso) {
   const d = new Date((iso || todayISO()) + "T00:00:00");
@@ -10016,6 +10031,7 @@ async function loadSchedule(dateOpt) {
     if (!hasData && SCHED.styleDefault) _applySchedStyle(SCHED.data, SCHED.styleDefault);   // 새 주는 저장된 표시 설정으로 시작
     SCHED.saved = r.updated_at ? `저장됨 · ${String(r.updated_at).slice(0, 16)}${r.updated_by ? " · " + r.updated_by : ""}` : "아직 저장 안 됨 (새 스케줄)";
   } catch (e) { SCHED.week = week; SCHED.data = _schedNorm(_schedBlank(week), week); SCHED.saved = ""; }
+  SCHED.dirty = false;   // 막 불러온 상태 = 저장된 상태 (이후 편집하면 true)
   if ($("schedDate")) $("schedDate").value = SCHED.week;
   renderSchedule();
 }
@@ -10177,7 +10193,7 @@ function _sprevOverwrite() {
   const src = _SPREV.src; if (!src) { toast("먼저 불러올 주를 선택하세요"); return; }
   if ((SCHED.data.groups || []).length && !confirm(`이번 주(${SCHED.week}) 편집 내용을 ${_SPREV.week} 스케줄 전체로 덮어쓸까요?\n(저장 전이라 되돌릴 수 없습니다)`)) return;
   SCHED.data = _schedNorm(JSON.parse(JSON.stringify(src)), SCHED.week);
-  SCHED.saved = `${_SPREV.week} 전체 불러옴 — 수정 후 저장하세요 (아직 저장 안 됨)`;
+  SCHED.saved = `${_SPREV.week} 전체 불러옴 — 수정 후 저장하세요 (아직 저장 안 됨)`; SCHED.dirty = true;
   _sprevClose(); renderSchedule();
   toast(`${_SPREV.week} 스케줄 전체를 불러왔습니다. 필요한 부분만 수정 후 💾 저장하세요`);
 }
@@ -10198,7 +10214,7 @@ function _sprevImport() {
     addedItems += items.length;
   });
   SCHED.data = _schedNorm(SCHED.data, SCHED.week);
-  SCHED.saved = `${_SPREV.week}에서 ${addedItems}개 제품 불러옴 — 수정 후 저장하세요 (아직 저장 안 됨)`;
+  SCHED.saved = `${_SPREV.week}에서 ${addedItems}개 제품 불러옴 — 수정 후 저장하세요 (아직 저장 안 됨)`; SCHED.dirty = true;
   _sprevClose(); renderSchedule();
   toast(`${addedItems}개 제품을 이번 주에 추가했습니다${newCols ? ` (새 제품군 ${newCols}개 포함)` : ""}. 필요한 부분 수정 후 💾 저장하세요`);
 }
@@ -10396,6 +10412,7 @@ function _schedPaste(e) {
   const ORDER = ["label", "qty", "pack", "boxes", "expiry", "expiry2", "partner", "memo"];
   const startF = ORDER.indexOf(inp.dataset.f); if (startF < 0) return;
   e.preventDefault();
+  SCHED.dirty = true;
   const gi = +inp.dataset.g, ii0 = +inp.dataset.i;
   const g = SCHED.data.groups[gi]; if (!g) return;
   const rows = txt.replace(/\r/g, "").replace(/\n+$/, "").split("\n").map(r => r.split("\t"));
@@ -10409,6 +10426,7 @@ function _schedPaste(e) {
 }
 function _schedFieldUpdate(e) {
   const inp = e.target.closest("[data-f]"); if (!inp || !SCHED.data) return;
+  SCHED.dirty = true;
   const d = SCHED.data, f = inp.dataset.f;
   const hasG = inp.dataset.g != null && inp.dataset.g !== "";
   // 최상위(제목·안내·범례·작성자·참고) — data-g 없음. 입력칸이 곧 표시라 재렌더 불필요(포커스 유지).
@@ -10437,6 +10455,8 @@ function _schedFieldUpdate(e) {
 }
 function _schedClick(e) {
   if (!SCHED.data) return;
+  // 구조를 바꾸는 버튼(제품군·항목 추가/복사/붙여넣기/이동/삭제/빈칸/색기본/행높이)을 누르면 '저장 안 됨'으로 표시
+  if (e.target.closest("[data-schedgmove],[data-schedgdel],[data-schedgcopy],[data-schedgpaste],[data-schediblank],[data-schedicopy],[data-schedidel],[data-schedimove],[data-schediadd],[data-schedgaddcol],[data-schedicolorclr],[data-schedrowh]")) SCHED.dirty = true;
   const gac = e.target.closest("[data-schedgaddcol]");
   if (gac) {
     const gs = SCHED.data.groups, prevPack = gs.length ? ((gs[gs.length - 1].items[0] || {}).pack || "") : "";
@@ -10858,13 +10878,14 @@ function renderSchedDoc() {
   _fitSchedPage(docEl);
 }
 async function saveSchedule() {
-  if (!SCHED.data) return;
+  if (!SCHED.data) return false;
   try {
     await api("/api/schedule", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ week_start: SCHED.week, data: SCHED.data }) });
     toast("주간 스케줄이 저장되었습니다");
-    await loadSchedule(SCHED.week);
-  } catch (e) { /* api 토스트 */ }
+    await loadSchedule(SCHED.week);   // 재로딩 시 SCHED.dirty = false
+    return true;
+  } catch (e) { return false; /* api 토스트 */ }
 }
 // 편집/미리보기 버튼·안내문·＋제품군 버튼을 현재 editMode에 맞춰 갱신
 function _schedSyncEditUI() {
@@ -10938,7 +10959,7 @@ function schedImportCsv(text) {
   SCHED.data.groups = groups;
   _schedNorm(SCHED.data, SCHED.week);
   SCHED.editMode = true;   // 불러오면 바로 확인·수정하도록 편집 모드
-  SCHED.saved = "엑셀 불러옴 — 수정 후 💾 저장하세요 (아직 저장 안 됨)";
+  SCHED.saved = "엑셀 불러옴 — 수정 후 💾 저장하세요 (아직 저장 안 됨)"; SCHED.dirty = true;
   renderSchedule();
   toast(`엑셀에서 제품군 ${groups.length}개·항목 ${totalItems}개를 불러왔습니다`);
 }
@@ -11075,10 +11096,13 @@ function _schedUnlockPrompt() {
 // 스케줄 화면 버튼 배선 (모듈 로드 시)
 (function wireSchedule() {
   const on = (id, fn) => { const el = $(id); if (el) el.onclick = fn; };
-  on("schedPrev", () => loadSchedule(_schedAddDays(SCHED.week, -7)));
-  on("schedNext", () => loadSchedule(_schedAddDays(SCHED.week, 7)));
-  on("schedThis", () => loadSchedule(todayISO()));
+  // 주 이동 전 저장 안 한 변경이 있으면 확인 (저장/버림/취소)
+  on("schedPrev", () => _schedGuard(() => loadSchedule(_schedAddDays(SCHED.week, -7))));
+  on("schedNext", () => _schedGuard(() => loadSchedule(_schedAddDays(SCHED.week, 7))));
+  on("schedThis", () => _schedGuard(() => loadSchedule(todayISO())));
   on("schedLoadPrev", schedLoadPrev);
+  // 표시 설정(글자 크기·색·요소별) 변경도 '저장 안 됨'으로 표시 — 한 번만 배선
+  { const ss = $("schedStyle"); if (ss) { ss.addEventListener("input", () => { SCHED.dirty = true; }); ss.addEventListener("change", () => { SCHED.dirty = true; }); } }
   on("schedAddGroup", () => {
     if (!SCHED.data) return;
     // 새 제품군의 첫 항목 개입수는 직전 제품군을 따라간다 (예: 45개입 통일)
@@ -11091,7 +11115,10 @@ function _schedUnlockPrompt() {
   on("schedPrintBtn", () => schedPrint());
   on("schedPdf", () => { toast("인쇄 창에서 대상을 'PDF로 저장'으로 선택하세요"); setTimeout(schedPrint, 400); });
   on("schedFull", schedFullscreen);
-  const dd = $("schedDate"); if (dd) dd.addEventListener("change", e => { if (e.target.value) loadSchedule(e.target.value); });
+  const dd = $("schedDate"); if (dd) dd.addEventListener("change", e => {
+    const v = e.target.value; if (!v) return;
+    _schedGuard(() => loadSchedule(v), () => { dd.value = SCHED.week; });   // 취소 시 날짜칸을 현재 주로 되돌림
+  });
   on("schedEditToggle", () => { SCHED.editMode = !SCHED.editMode; _schedSyncEditUI(); renderSchedDoc(); });
   on("schedColEqual", () => {
     if (!SCHED.data) return;
