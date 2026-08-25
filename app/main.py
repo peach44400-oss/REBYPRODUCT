@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.89.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.89.1"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -6212,12 +6212,29 @@ def fin_ledger(request: Request, date: str = ""):
 
         # 생산 LOT별 개입수 — 출고분에도 재고 LOT과 동일한 개입수를 붙이기 위해 lot_plan 포장에서 유도
         pack_by_lot = {}
-        for r in con.execute("""SELECT product_id pid, made, COALESCE(expiry,'') exp, pack_mid, pack_set
+        # 같은 (생산일·소비기한)에 포장(개입)이 여러 개인 LOT — 출고분 포장을 수량으로 구분하기 위한 세그먼트 목록
+        plan_segs = {}   # (pid, made, exp) → [(qty, pack), ...]
+        for r in con.execute("""SELECT product_id pid, made, COALESCE(expiry,'') exp, qty, pack_mid, pack_set
             FROM lot_plan WHERE qty>0"""):
             pk = lot_pack({"pack_mid": r["pack_mid"], "pack_set": r["pack_set"]})
+            plan_segs.setdefault((r["pid"], r["made"], r["exp"]), []).append((float(r["qty"] or 0), pk))
             if pk:
                 pack_by_lot[(r["pid"], r["made"], r["exp"])] = pk
                 pack_by_lot.setdefault((r["pid"], r["made"]), pk)   # 소비기한 안 맞을 때 생산일만으로 보정
+
+        def ship_pack(pid, made, e, q):
+            """출고 한 건의 개입수 판정. 같은 (생산일·소비기한)에 포장이 여러 개면 수량이 맞는
+            세그먼트의 포장을 쓴다 — 그래야 30개입·135개입이 한 줄로 합쳐지지 않는다."""
+            segs = plan_segs.get((pid, made, e))
+            if segs:
+                packs = {pk for _, pk in segs if pk}
+                if len(packs) == 1:
+                    return next(iter(packs))
+                if len(packs) > 1:
+                    for sq, pk in segs:
+                        if pk and abs(sq - q) < 0.5:
+                            return pk
+            return pack_by_lot.get((pid, made, e)) or pack_by_lot.get((pid, made)) or pack_fallback(pid, made)
 
         # 오늘 출고를 제품·거래처·생산일자·소비기한별로 모아 '출고 소비기한(생산일자)' 표시에 사용
         raw_ship = {}
@@ -6228,7 +6245,8 @@ def fin_ledger(request: Request, date: str = ""):
                 (r["sp"], r["made"], r["exp"], float(r["qty"])))
 
         def ship_lots_for(pid, shelf, want=None, exclude=None):
-            """그날 출고분을 (생산일자, 소비기한)별로 합산 — 소비기한 미지정분은 생산일+제품 소비일로 추정."""
+            """그날 출고분을 (생산일자, 소비기한, 개입수)별로 합산 — 개입수가 다르면 다른 LOT이므로 따로 표시.
+            소비기한 미지정분은 생산일+제품 소비일로 추정."""
             agg = {}
             for sp, made, exp, q in raw_ship.get(pid, []):
                 if want is not None and sp != want:
@@ -6241,11 +6259,10 @@ def fin_ledger(request: Request, date: str = ""):
                         e = (dt.date.fromisoformat(made) + dt.timedelta(days=int(shelf))).isoformat()
                     except ValueError:
                         e = ""
-                key = (made, e)
+                pk = ship_pack(pid, made, e, q)   # 출고 건별 개입수(같은 생산일·소비기한이라도 포장 다르면 분리)
+                key = (made, e, pk)
                 agg[key] = agg.get(key, 0.0) + q
-            return [{"made": k[0], "expiry": k[1], "qty": round(v, 3),
-                     "pack": pack_by_lot.get((pid, k[0], k[1])) or pack_by_lot.get((pid, k[0]))
-                             or pack_fallback(pid, k[0])}
+            return [{"made": k[0], "expiry": k[1], "qty": round(v, 3), "pack": k[2]}
                     for k, v in sorted(agg.items())]
 
         tot_prev = tot_prod = tot_ship = tot_stock = 0.0   # 전체 합계
