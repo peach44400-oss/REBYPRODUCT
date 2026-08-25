@@ -2839,6 +2839,7 @@ function renderMatStatus() {
   $("msFilters").innerHTML = chip("all", "전체") + chip("expired", "만료") + chip("soon", "임박") + chip("low", "부족")
     + chip("disp", `폐기 내역${disposals.length ? " " + disposals.length : ""}`) + chip("stock", "재고 목록")
     + (canStock && s.low && MATSTAT.filter === "low" ? `<button type="button" class="btn sm" id="msBulkOrder" style="margin-left:6px;">부족 ${s.low}종 → 발주서</button>` : "")
+    + (canStock && ["all", "low", "stock"].includes(MATSTAT.filter) ? `<button type="button" class="btn ghost sm" id="msSelAll" style="margin-left:6px;">☑ 전체 선택</button>` : "")
     + (canStock && MATSTAT.sel.size ? `<button type="button" class="btn sm" id="msSelOrder" style="margin-left:6px; background:var(--solid); color:var(--solid-ink);">✅ 선택 ${MATSTAT.sel.size}종 발주서</button><button type="button" class="btn ghost sm" id="msSelClear">선택 해제</button>` : "");
   // 부족 자재 앞에 붙는 일괄 발주 선택 체크박스 — 부족 행마다(발주 버튼이 있는 곳마다) 표시. 같은 자재는 material_id로 1종만 담긴다.
   const selChk = (mid, nm, un, q) => (canStock && q > 0) ? `<input type="checkbox" data-mssel="${mid}" data-q="${q}" data-nm="${esc(nm || "")}" data-un="${esc(un || "")}" ${MATSTAT.sel.has(mid) ? "checked" : ""} title="일괄 발주 선택" style="width:15px; height:15px; margin-right:6px; vertical-align:middle; cursor:pointer;">` : "";
@@ -2930,6 +2931,14 @@ function msOrderItems(list) {
   if (!items.length) return toast("발주할 부족 자재가 없습니다");
   poBulkFromItems(items);
 }
+// 현재 화면에 보이는 모든 부족 행을 한 번에 선택 (검색·필터가 걸려 있으면 그 결과 안에서만)
+function msSelectAllVisible() {
+  const cbs = document.querySelectorAll("#msBody [data-mssel]");
+  if (!cbs.length) { toast("선택할 부족 자재가 없습니다"); return; }
+  cbs.forEach(cb => { const mid = +cb.dataset.mssel;
+    MATSTAT.sel.set(mid, { material_id: mid, name: cb.dataset.nm || "", unit: cb.dataset.un || "", qty: Number(cb.dataset.q) || 0 }); });
+  renderMatStatus();
+}
 // 체크로 고른 자재만 일괄 발주 (거래처별로 묶어 발주서 초안 생성). 부족 행에서 담은 그대로(수량 포함) 사용.
 function msOrderSelected() {
   const items = Array.from(MATSTAT.sel.values()).filter(x => x.qty > 0);
@@ -2947,6 +2956,7 @@ $("msFilters").addEventListener("click", e => {
   const b = e.target.closest("[data-msfilter]");
   if (b) { MATSTAT.filter = b.dataset.msfilter; renderMatStatus(); return; }
   if (e.target.closest("#msBulkOrder")) { msOrderItems(MATSTAT.data.items || []); return; }
+  if (e.target.closest("#msSelAll")) { msSelectAllVisible(); return; }
   if (e.target.closest("#msSelOrder")) { msOrderSelected(); return; }
   if (e.target.closest("#msSelClear")) { MATSTAT.sel.clear(); renderMatStatus(); return; }
 });
