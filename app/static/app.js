@@ -12,11 +12,30 @@ const dowOf = (iso) => DOW[new Date(iso + "T00:00:00").getDay()];
 
 let ROLE = null, USERNAME = null, DUTY = "all", MYDUTY = new Set();   // MYDUTY = 내 담당 코드 Set
 const MYSIGN = { img: "" };   // 내 사인 이미지 (발주서 서명란 — 없으면 이름 도장)
-// 금액 열람 권한: mat(자재 단가·금액) / prod(생산·출고·재고 금액) / labor(시급·노무비) / cost(원가 분석)
-// admin은 서버가 전체를 내려줌 — 나머지는 admin이 사용자 탭에서 체크한 항목만
+// 금액 열람 권한 — 항목별로 세분화. admin은 서버가 전체를 내려줌.
+// 옛 4종(mat/prod/labor/cost)은 하위 세부 키 전체로 확장(하위호환) — 기존 사용자가 권한을 잃지 않게.
+const MONEY_GROUPS = [
+  { g: "자재(원부자재)", keys: [["mat_price", "자재 단가"], ["mat_amt", "자재 사용·발주 금액"]] },
+  { g: "제품·생산·출고", keys: [["prod_price", "제품 단가"], ["prod_amt", "생산 금액"], ["ship_amt", "출고 금액"], ["stock_amt", "재고 금액"]] },
+  { g: "인건비", keys: [["wage", "시급"], ["labor_amt", "노무비"]] },
+  { g: "원가", keys: [["cost", "원가·수익성"]] },
+];
+const MONEY_COARSE = { mat: ["mat_price", "mat_amt"], prod: ["prod_price", "prod_amt", "ship_amt", "stock_amt"], labor: ["wage", "labor_amt"], cost: ["cost"] };
+const MONEY_FINE = MONEY_GROUPS.flatMap(s => s.keys.map(k => k[0]));
+const MONEY_LABELS = Object.fromEntries(MONEY_GROUPS.flatMap(s => s.keys));
 let MPERM = new Set();
-function canM(key) { return ROLE === "admin" || MPERM.has(key); }
-const MONEY_LABELS = { mat: "자재 단가·금액", prod: "생산·출고·재고 금액", labor: "시급·노무비", cost: "원가 분석" };
+// 세부 키 열람 가능? admin이거나, 그 세부 키를 가졌거나, 옛 상위 키를 가진 경우(하위호환)
+function canM(key) {
+  if (ROLE === "admin" || MPERM.has(key)) return true;
+  for (const c in MONEY_COARSE) if (MONEY_COARSE[c].includes(key) && MPERM.has(c)) return true;
+  return false;
+}
+// 사용자의 현재 권한을 세부 키 집합으로 펼침 (옛 상위 키 → 하위 전체) — 팝업 체크 표시·저장용
+function moneyExpand(perms) {
+  const set = new Set();
+  (perms || []).forEach(k => { if (MONEY_FINE.includes(k)) set.add(k); else if (MONEY_COARSE[k]) MONEY_COARSE[k].forEach(f => set.add(f)); });
+  return set;
+}
 // 담당 — 사용자마다 여러 개 지정 가능. 전부 체크하면 '전체'(앞으로 담당이 늘어도 자동 포함)
 const DUTY_LABELS = { production: "생산실적", shipment: "완제품 출고", usage: "자재 사용",
   staffing: "인원·가동", stock: "재고·입고", lot: "LOT 관리" };
@@ -399,8 +418,7 @@ async function loadDash() {
   const d = await api("/api/dashboard");
   const k = d.kpi;
   const lowTotal = k.low_raw + k.low_sub;
-  const admin = canM("prod");           // 생산·출고·재고 금액 열람
-  const canLabor = canM("labor");       // 노무비 열람
+  const canLaborAmt = canM("labor_amt");   // 노무비 열람 (가동률 카드 노무비 — 서버 미마스킹분)
 
   // ── 1) 오늘 입력 상태 배너
   const dow = dowOf(d.today);
@@ -439,19 +457,22 @@ async function loadDash() {
     <div class="delta">양품 ${NF(good)} · 불량률 ${dRate.toFixed(1)}%</div></div>`);
   kpis.push(`<div class="kpi ${d.prod_low_cnt ? "warn-kpi" : ""}"><div class="lbl"><span class="ki">🏭</span>완제품 재고</div>
     <div class="val num">${NF(Math.round(d.prod_stock_qty))}<small>개</small></div>
-    <div class="delta">${d.prod_low_cnt ? "부족 " + d.prod_low_cnt + "종" : "안전재고 이상"}${admin && d.prod_stock_amt != null ? " · ₩" + NF(Math.round(d.prod_stock_amt)) : ""}</div></div>`);
-  if (admin && d.money) {
+    <div class="delta">${d.prod_low_cnt ? "부족 " + d.prod_low_cnt + "종" : "안전재고 이상"}${d.prod_stock_amt != null ? " · ₩" + NF(Math.round(d.prod_stock_amt)) : ""}</div></div>`);
+  // 금액 카드 — 항목별 권한에 따라 서버가 null로 내려준 값은 빼고 표시
+  if (d.money && d.money.prod != null) {
     kpis.push(`<div class="kpi"><div class="lbl"><span class="ki">💰</span>이번달 생산금액 <span class="sub" style="font-weight:500">${d.money.label}</span></div>
       <div class="val num">₩${NF(Math.round(d.money.prod))}</div>
-      <div class="delta">출고금액 ₩${NF(Math.round(d.money.ship))}</div></div>`);
+      <div class="delta">${d.money.ship != null ? "출고금액 ₩" + NF(Math.round(d.money.ship)) : ""}</div></div>`);
+  }
+  if (d.money && (d.money.buy != null || d.month_labor != null)) {
     // 이번달 매입·노무비 요약 (매입액 = 발주 입고 + 일일 입고 단가 입력분 · 노무비는 권한 있을 때만)
     kpis.push(`<div class="kpi"><div class="lbl"><span class="ki">🧾</span>이번달 매입·노무 <span class="sub" style="font-weight:500">${d.money.label}</span></div>
-      <div class="val num">₩${NF(Math.round(d.money.buy || 0))}</div>
+      <div class="val num">${d.money.buy != null ? "₩" + NF(Math.round(d.money.buy)) : "—"}</div>
       <div class="delta">매입액${d.month_labor != null ? ` · 노무비 ₩${NF(d.month_labor)}` : ""}</div></div>`);
   }
   kpis.push(`<div class="kpi" title="가동률 = 실가동 시간 합 ÷ 정상가동 시간 합 (물리 라인 기준 · 공정은 대표 라인으로 묶어 최대값)"><div class="lbl"><span class="ki">👷</span>가동률 <span class="sub" style="font-weight:500">최근일</span></div>
     <div class="val num">${util.rate != null ? util.rate + "<small>%</small>" : "—"}</div>
-    <div class="delta">투입 ${NF(util.headcount)}명 · ${util.lines}라인${canLabor && util.labor != null ? " · 노무비 ₩" + NF(Math.round(util.labor)) : ""}</div></div>`);
+    <div class="delta">투입 ${NF(util.headcount)}명 · ${util.lines}라인${canLaborAmt && util.labor != null ? " · 노무비 ₩" + NF(Math.round(util.labor)) : ""}</div></div>`);
   kpis.push(`<div class="kpi"><div class="lbl"><span class="ki">🗓️</span>누적 기록</div>
     <div class="val num">${NF(k.days)}<small>일</small></div>
     <div class="delta">활성 제품 ${k.products}종</div></div>`);
@@ -1471,7 +1492,7 @@ function recipeImportSel(pid) {
     ${opts.join("")}</select>`;
 }
 function usageGroupHtml(pid, title, sub, buttons, addBar) {
-  const admin = canM("mat");   // 자재 금액 열람
+  const admin = canM("mat_amt");   // 자재 금액 열람
   const nCols = admin ? 5 : 4;
   let gAmt = 0, gMiss = 0;
   const items = E.usage.map((u, ui) => ({ u, ui })).filter(x => x.u.product_id === pid);
@@ -1594,7 +1615,7 @@ function renderUsage() {
   // 기타 사용 (생산 외) — 제품 없이 쓴 자재. 생산실적과 무관하게 항상 입력 가능
   h += usageGroupHtml(null, "기타 사용 (생산 외)",
     "빵 생산과 무관한 사용 — 테스트·청소·타용도 등", "", true);
-  if (canM("mat")) {
+  if (canM("mat_amt")) {
     let tot = 0;
     E.usage.forEach(u => {
       const m = materialById(u.material_id);
@@ -1620,7 +1641,7 @@ $("eUsage").addEventListener("input", e => {
     ? (e.target.value ? +e.target.value : null)
     : e.target.value;
   if (e.target.tagName === "SELECT") { renderUsage(); return; }
-  if (f === "qty" && canM("mat") && tr.cells[3]) {   // 금액 제자리 갱신 (포커스 유지)
+  if (f === "qty" && canM("mat_amt") && tr.cells[3]) {   // 금액 제자리 갱신 (포커스 유지)
     const m = materialById(u.material_id) || {};
     tr.cells[3].textContent = Number(u.qty) > 0 && m.unit_price > 0
       ? NF(Math.round(Number(u.qty) * m.unit_price))
@@ -3028,7 +3049,7 @@ function timeDD(prefix, key, val) {
   return `<select class="mini-sel tsel" data-${prefix}h="${key}" title="${prefix[1] === "s" ? "출근" : "퇴근"} 시">${h}</select><span class="auto" style="font-size:10px">:</span><select class="mini-sel tsel" data-${prefix}m="${key}" title="${prefix[1] === "s" ? "출근" : "퇴근"} 분">${m}</select>`;
 }
 function renderStaff() {
-  const admin = canM("labor");   // 시급 입력칸 노출 여부
+  const admin = canM("wage");   // 시급 입력칸 노출 여부
   $("eStaff").innerHTML = E.staff.map((r, i) => {
     const line = M.line.find(l => l.id === r.line_id);
     const rate = staffRate(r);
@@ -3883,8 +3904,8 @@ function renderMHealth() {
   const act = (M[mTab] || []).filter(mActive);
   const items = checks.map(([f, label, why]) => {
     if (f === "bom" && !BOMALL) return null;                       // 로딩 중엔 생략
-    if (f === "unit_price" && !canM(mTab === "product" ? "prod" : "mat")) return null;   // 권한 마스킹 필드는 열람 권한자만 점검
-    if (f === "wage" && !canM("labor")) return null;
+    if (f === "unit_price" && !canM(mTab === "product" ? "prod_price" : "mat_price")) return null;   // 권한 마스킹 필드는 열람 권한자만 점검
+    if (f === "wage" && !canM("wage")) return null;
     const n = act.filter(r => mIsMissing(r, f)).length;
     return n > 0 ? { f, label, why, n } : null;
   }).filter(Boolean);
@@ -3935,6 +3956,13 @@ function renderMasters() {
   if (mTab === "users") { renderUsersTab(); return; }
   if (mTab === "audit") { renderAuditTab(); return; }
   const cfg = MCOLS[mTab];
+  // 금액 열람 권한 없는 금액 열(단가·시급)은 표에서 아예 숨긴다 (값 마스킹이 아니라 열 제거)
+  const _priceKey = mTab === "product" ? "prod_price" : "mat_price";
+  const hideIdx = new Set();
+  cfg.cols.forEach((c, idx) => {
+    if (c === "단가(원)" && !canM(_priceKey)) hideIdx.add(idx);
+    if (c === "시급(원)" && !canM("wage")) hideIdx.add(idx);
+  });
   renderMHealth();
   // 빠른 편집 버튼: 대상 탭 + 쓰기 권한일 때만
   const qeMap = QE_COLS[mTab];
@@ -3951,7 +3979,7 @@ function renderMasters() {
   $("mFilterList").innerHTML = full.map(r => `<option value="${esc(r.name)}">`).join("");
   $("mFilterCnt").textContent = (mFilter || mMissing) ? `${list.length}건 / 전체 ${full.length}건` : "";
   $("mHead").innerHTML = "<tr>" + (reorder ? '<th style="width:64px">순서</th>' : "")
-    + cfg.cols.map(c => `<th>${c}</th>`).join("") + "<th></th></tr>";
+    + cfg.cols.map((c, idx) => hideIdx.has(idx) ? "" : `<th>${c}</th>`).join("") + "<th></th></tr>";
   $("mBody").innerHTML = list.map((r, i) => {
     const cells = cfg.row(r);
     if (mQuick && qeMap) {
@@ -3965,8 +3993,8 @@ function renderMasters() {
           continue;
         }
         if (r[f] === null && !(ROLE === "admin"
-          || (f === "unit_price" && canM(mTab === "product" ? "prod" : "mat"))
-          || (f === "wage" && canM("labor")))) continue;   // 권한 마스킹 필드는 열람 권한 없으면 입력 불가 — 권한자의 null은 '미입력'
+          || (f === "unit_price" && canM(mTab === "product" ? "prod_price" : "mat_price"))
+          || (f === "wage" && canM("wage")))) continue;   // 권한 마스킹 필드는 열람 권한 없으면 입력 불가 — 권한자의 null은 '미입력'
         cells[idx] = `<input class="qe-input" data-qe="${f}" data-qid="${r.id}" inputmode="decimal"
           value="${Number(r[f]) > 0 ? r[f] : ""}" placeholder="${cfg.cols[idx]}">`;
       }
@@ -3976,10 +4004,10 @@ function renderMasters() {
         <span class="ord-grip" data-grip title="드래그해서 위치 이동">⠿</span>
         <button class="ord-btn" data-moveup="${r.id}" ${i === 0 ? "disabled" : ""} title="위로">▲</button>
         <button class="ord-btn" data-movedn="${r.id}" ${i === list.length - 1 ? "disabled" : ""} title="아래로">▼</button></td>` : "";
-    return `<tr ${reorder ? `draggable="true" data-rid="${r.id}"` : ""}>${handleCell}${cells.map(c => `<td>${c}</td>`).join("")}
+    return `<tr ${reorder ? `draggable="true" data-rid="${r.id}"` : ""}>${handleCell}${cells.map((c, idx) => hideIdx.has(idx) ? "" : `<td>${c}</td>`).join("")}
      <td style="white-space:nowrap"><button class="btn ghost sm" data-edit="${r.id}">수정</button><button class="btn ghost sm" style="color:var(--crit)" data-delm="${r.id}">삭제</button></td></tr>`;
   }).join("")
-    || `<tr><td colspan="${cfg.cols.length + (reorder ? 2 : 1)}" class="auto">${mMissing ? "미등록 항목이 없습니다 👍" : "등록된 항목이 없습니다"}</td></tr>`;
+    || `<tr><td colspan="${cfg.cols.length - hideIdx.size + (reorder ? 2 : 1)}" class="auto">${mMissing ? "미등록 항목이 없습니다 👍" : "등록된 항목이 없습니다"}</td></tr>`;
   $("mHint").textContent = mQuick
     ? (reorder ? "⚡ 빠른 편집: 노란 칸=즉시 저장 · ⠿ 드래그 또는 ▲▼로 순서를 바꾸면 목록·검색이 그 순서를 따릅니다"
        : "⚡ 빠른 편집: 노란 칸에 값을 입력하면 즉시 저장됩니다 · 순서를 바꾸려면 검색을 해제하세요")
@@ -4041,7 +4069,61 @@ $("mBody").addEventListener("click", e => {
   if (up) { moveRow(+up.dataset.moveup, -1); return; }
   const dn = e.target.closest("[data-movedn]");
   if (dn) { moveRow(+dn.dataset.movedn, 1); return; }
+  const mp = e.target.closest("[data-moneyperm]");
+  if (mp) { openMoneyPerm(mp.dataset.moneyperm, mp.dataset.uname, mp.dataset.perms || ""); return; }
 });
+// ── 금액 열람 권한 상세 설정 팝업 (항목별 체크 → 저장) ──────────────────────
+let _mpermUid = null;
+function _moneyPermEnsureDom() {
+  if ($("moneyPermOverlay")) return;
+  const ov = document.createElement("div");
+  ov.className = "overlay"; ov.id = "moneyPermOverlay";
+  ov.innerHTML = `
+    <div class="modal" style="width:min(560px,95vw);">
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+        <h3 style="margin:0;">💰 금액 열람 권한</h3>
+        <span id="mpermUser" style="color:var(--muted); font-size:13px;"></span></div>
+      <div style="font-size:12.5px; color:var(--muted); margin-bottom:10px; line-height:1.55;">
+        체크한 항목만 이 사용자에게 보입니다(복수 선택 가능). 권한이 없는 금액 칸은 표에서 아예 숨겨집니다. admin은 항상 전체.</div>
+      <div style="display:flex; gap:6px; margin-bottom:8px;">
+        <button class="btn ghost sm" id="mpermAll">전체 선택</button>
+        <button class="btn ghost sm" id="mpermNone">전체 해제</button></div>
+      <div id="mpermBody"></div>
+      <div class="modal-foot">
+        <button class="btn" id="mpermCancel">취소</button>
+        <button class="btn primary" id="mpermSave">저장</button></div>
+    </div>`;
+  document.body.appendChild(ov);
+  ov.addEventListener("click", e => { if (e.target === ov) ov.classList.remove("on"); });
+  $("mpermCancel").onclick = () => ov.classList.remove("on");
+  $("mpermAll").onclick = () => ov.querySelectorAll("#mpermBody input[type=checkbox]").forEach(c => c.checked = true);
+  $("mpermNone").onclick = () => ov.querySelectorAll("#mpermBody input[type=checkbox]").forEach(c => c.checked = false);
+  $("mpermSave").onclick = _moneyPermSave;
+}
+function openMoneyPerm(uid, uname, permsCsv) {
+  _moneyPermEnsureDom();
+  _mpermUid = uid;
+  $("mpermUser").textContent = uname;
+  const cur = moneyExpand((permsCsv || "").split(",").filter(Boolean));
+  $("mpermBody").innerHTML = MONEY_GROUPS.map(sec => `
+    <div style="border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin-bottom:8px;">
+      <div style="font-weight:800; font-size:12.5px; color:var(--muted); margin-bottom:5px;">${esc(sec.g)}</div>
+      <div style="display:flex; flex-wrap:wrap; gap:6px 16px;">
+        ${sec.keys.map(([k, lbl]) => `<label style="display:inline-flex; align-items:center; gap:5px; cursor:pointer; font-size:13px;">
+          <input type="checkbox" data-mk="${k}" ${cur.has(k) ? "checked" : ""} style="width:16px; height:16px;">${esc(lbl)}</label>`).join("")}
+      </div></div>`).join("");
+  $("moneyPermOverlay").classList.add("on");
+}
+async function _moneyPermSave() {
+  const keys = [...document.querySelectorAll("#mpermBody input[type=checkbox]")].filter(c => c.checked).map(c => c.dataset.mk);
+  try {
+    await api("/api/users/" + _mpermUid, { method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ money_perms: keys }) });
+    $("moneyPermOverlay").classList.remove("on");
+    toast(`금액 열람 ${keys.length ? keys.length + "종 저장" : "전부 숨김"} — 접속 중이면 20초 내 적용`);
+    renderUsersTab();
+  } catch (e) { /* api 토스트 */ }
+}
 // 빠른 편집 저장 — 입력 확정(change) 시 해당 필드만 PUT, 표 재렌더 없이 제자리 반영
 $("mBody").addEventListener("change", async e => {
   const inp = e.target.closest(".qe-input"); if (!inp) return;
@@ -4323,13 +4405,13 @@ async function renderUsersTab() {
     return boxes + (tag ? ` ${tag}` : "");
   };
   $("mBody").innerHTML = list.map(u => {
-    const mp = new Set((u.money_perms || "").split(",").filter(Boolean));
+    const mpRaw = (u.money_perms || "").split(",").filter(Boolean);
+    const mpFine = moneyExpand(mpRaw);   // 옛 상위키 → 세부키로 펼친 현재 권한
+    const summary = mpFine.size ? [...mpFine].map(k => MONEY_LABELS[k]).filter(Boolean).join(", ") : "전부 숨김";
     const moneyCell = u.role === "admin"
       ? '<span class="chip cat">전체</span>'
-      : Object.entries(MONEY_LABELS).map(([k, lbl]) =>
-          `<label style="display:inline-flex; align-items:center; gap:4px; margin-right:10px; font-size:12px; cursor:pointer; white-space:nowrap;">
-            <input type="checkbox" data-umoney="${u.id}" data-mkey="${k}" data-uname="${esc(u.username)}" ${mp.has(k) ? "checked" : ""}
-              style="width:15px; height:15px;">${lbl}</label>`).join("");
+      : `<button class="btn ghost sm" data-moneyperm="${u.id}" data-uname="${esc(u.username)}" data-perms="${esc(mpRaw.join(","))}" title="${esc(summary)}" style="white-space:nowrap;">💰 금액 권한 ${mpFine.size ? `(${mpFine.size}종)` : "설정"}</button>
+         <div class="auto" style="font-size:11px; margin-top:2px; max-width:320px; white-space:normal;">${esc(summary)}</div>`;
     return `<tr>
     <td><b>${esc(u.username)}</b>${u.username === USERNAME ? ' <span class="chip ok">본인</span>' : ""}</td>
     <td>${u.role === "admin"
@@ -4345,26 +4427,10 @@ async function renderUsersTab() {
     <td class="auto">${(u.created_at || "").slice(0, 10)}</td>
     <td style="white-space:nowrap;">${u.role !== "admin" ? `<button class="btn ghost sm" data-upw="${u.id}" data-uname="${esc(u.username)}" title="이 사용자의 비밀번호를 재설정">🔑 비번</button> ` : ""}${u.username !== USERNAME ? `<button class="btn ghost sm" data-udelusr="${u.id}" data-uname="${esc(u.username)}">삭제</button>` : ""}</td></tr>`;
   }).join("");
-  $("mHint").textContent = "권한: admin=전체 · op=입력 가능 · guest=보기 전용 | 담당: 체크한 항목만 일일 입력에서 저장 가능 — 여러 개 지정 가능, 전부 체크=전체, 하나도 없으면 저장 불가 (특이사항 메모는 담당이 하나라도 있으면 가능) | 금액: 기본은 전부 숨김 — 체크한 항목만 그 사용자에게 표시. 바꾸면 접속 중인 화면에도 20초 내 적용";
+  $("mHint").textContent = "권한: admin=전체 · op=입력 가능 · guest=보기 전용 | 담당: 체크한 항목만 일일 입력에서 저장 가능 — 여러 개 지정 가능, 전부 체크=전체, 하나도 없으면 저장 불가 (특이사항 메모는 담당이 하나라도 있으면 가능) | 금액: [💰 금액 권한] 버튼을 눌러 항목별로 체크(복수) — 체크한 항목만 그 사용자에게 보이고, 권한 없는 금액 열(단가·시급 등)은 표에서 아예 숨겨집니다. 바꾸면 접속 중인 화면에도 20초 내 적용";
   $("mAdd").textContent = "+ 새 사용자";
 }
 $("mBody").addEventListener("change", async e => {
-  // 금액 열람 체크박스: 그 행의 체크 상태를 모아 한 번에 저장
-  const mc = e.target.closest("[data-umoney]");
-  if (mc) {
-    const uid = mc.dataset.umoney;
-    const keys = [...document.querySelectorAll(`[data-umoney="${uid}"]`)]
-      .filter(c => c.checked).map(c => c.dataset.mkey);
-    try {
-      await api("/api/users/" + uid, { method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ money_perms: keys }) });
-      toast(`'${mc.dataset.uname}' 금액 열람: ${keys.length ? keys.map(k => MONEY_LABELS[k]).join(", ") : "전부 숨김"} — 접속 중이면 20초 내 적용`);
-    } catch (err) {
-      renderUsersTab();   // 실패 시 원복
-    }
-    return;
-  }
   // 담당 체크박스: 그 행의 체크 상태를 모아 한 번에 저장 (여러 담당 지정 가능)
   const dc = e.target.closest("[data-uduty]");
   if (dc) {
@@ -5167,8 +5233,8 @@ function openMaster(type, row) {
     if (!row && (f === "stock_set" || f === "stock_date" || f === "price_from")) return "";   // 단가 적용일은 수정 시에만
     // 자재의 구분(원↔부)은 수정 시에만 — 신규는 탭이 곧 구분. 인원 등 다른 탭의 kind는 항상 표시
     if (!row && f === "kind" && (type === "raw" || type === "sub")) return "";
-    if (f === "wage" && !canM("labor")) return "";     // 시급 — 노무비 권한
-    if (f === "unit_price" && !canM(type === "product" ? "prod" : "mat")) return "";   // 단가 — 금액 권한
+    if (f === "wage" && !canM("wage")) return "";     // 시급 — 노무비 권한
+    if (f === "unit_price" && !canM(type === "product" ? "prod_price" : "mat_price")) return "";   // 단가 — 금액 권한
     const v = row
       ? (f === "stock_set" ? (row.stock != null ? Math.round(row.stock * 1000) / 1000 : "")
         : f === "stock_date" ? (row.stock_date || todayISO())
@@ -5224,9 +5290,9 @@ function openMaster(type, row) {
         ${kind === "num" ? 'inputmode="decimal"' : ""}></div>`;
   }).join("");
   // 제품 수정 시 — 거래처별 판매 단가 (기본 단가와 다른 곳만 입력, 비우면 기본 단가 적용)
-  if (type === "product" && row && canM("prod")) renderProdPrices(row.id);
+  if (type === "product" && row && canM("prod_price")) renderProdPrices(row.id);
   // 자재 수정 시 — 현재 적용 단가 + 기간별 단가 이력 (적용 시작일 기준)
-  if ((type === "raw" || type === "sub" || type === "semi") && row && canM("mat")) renderMatPriceBox(row.id);
+  if ((type === "raw" || type === "sub" || type === "semi") && row && canM("mat_price")) renderMatPriceBox(row.id);
   $("mstOverlay").classList.add("on");
 }
 /* 자재 단가 이력 — 자재 수정 폼에는 '현재 적용 단가' 요약 버튼만. 클릭하면 팝업(openMatPricePopup)으로 이력 보기/편집. */
@@ -5823,7 +5889,7 @@ async function loadPoStat() {
 }
 function renderPoStat() {
   const d = POSTAT.data; if (!d) return;
-  const money = canM("mat");
+  const money = canM("mat_amt");
   $("postKpis").innerHTML = [
     ["발주", NF(d.total) + "건"],
     ["입고완료", NF(d.recv_cnt) + "건"],
@@ -5943,7 +6009,7 @@ $("poCsvGo").onclick = () => {
 window.closePoSettle = () => $("poSettleOverlay").classList.remove("on");
 /* 정산서 문서 — 인라인 스타일 (화면·A4 인쇄 공용, 발주서 문서와 같은 방식) */
 function buildSettleDoc() {
-  const money = canM("mat");
+  const money = canM("mat_amt");
   const pos = SETTLE.pos;
   const showPartnerCol = !SETTLE.pname;   // 전체일 때만 거래처 열
   const TD = "border:1px solid #333; padding:4px 7px; font-size:11.5px;";
@@ -6007,7 +6073,7 @@ $("poSettlePdf").onclick = () => {
   setTimeout(settlePrint, 400);
 };
 $("poSettleCsv").onclick = () => {
-  const money = canM("mat");
+  const money = canM("mat_amt");
   const head = ["발주번호", "발주일", "거래처", "품목명", "규격", "단위", "발주수량", "입고수량",
     ...(money ? ["단가(원)", "금액(원)"] : []), "입고일", "메일발송", "작성자"];
   const cell = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
@@ -6079,7 +6145,7 @@ $("postBody").addEventListener("click", async e => {
 const PORECV = { h: null };
 function openPoRecv(h) {
   PORECV.h = h;
-  const money = canM("mat");
+  const money = canM("mat_amt");
   $("poRecvTitle").textContent = `📥 입고 처리 — 발주서 #${h.id} (${h.partner})`;
   $("poRecvDate").value = todayISO();
   $("poRecvMade").value = ""; $("poRecvExpiry").value = "";
@@ -6344,7 +6410,7 @@ $("planCalc").onclick = async () => {
 };
 function renderPlanNeeds() {
   const d = PLAN.needs;
-  const money = canM("mat");
+  const money = canM("mat_amt");
   const noBom = (d.no_bom || []).length
     ? `<div class="mh-wrap" style="margin-bottom:8px;">📋 배합비 없는 제품 ${d.no_bom.length}종은 소요량 계산에서 제외: ${d.no_bom.slice(0, 5).map(esc).join(", ")}${d.no_bom.length > 5 ? " 외" : ""}</div>` : "";
   const rows = (d.needs || []).map(n => `
@@ -8079,7 +8145,7 @@ async function loadShip() {
   renderShipStatus();
 }
 function renderShipStatus() {
-  const d = SHIP.data, admin = canM("prod");   // 출고 금액 열람
+  const d = SHIP.data, admin = canM("ship_amt");   // 출고 금액 열람
   $("shipKpis").innerHTML = [
     ["총 출고량", NF(d.total_qty)],
     ["제품 수", d.by_product.length + "종"],
@@ -8249,7 +8315,7 @@ async function loadStaff() {
 // ※ 일일 입력의 renderStaff()와 이름이 겹치면 안 됨 — 인원 관리 화면 전용
 function renderStaffMgmt() {
   const d = STAFF.data; if (!d) return;
-  const money = canM("labor");            // 노무비·시급 열람 (admin은 항상 true)
+  const money = canM("labor_amt");            // 노무비·시급 열람 (admin은 항상 true)
   const h1 = n => NF(Math.round((n || 0) * 10) / 10);
   const q = STAFF.q.toLowerCase();
   const mem = d.members.filter(r => !q || r.name.toLowerCase().includes(q));
@@ -8323,7 +8389,7 @@ document.addEventListener("click", e => {
 $("staffFilter").addEventListener("input", e => { STAFF.q = e.target.value.trim(); STAFF.page = 1; renderStaffMgmt(); });
 $("staffCsv").onclick = () => {   // 페이지와 무관하게 전체(검색 반영) 데이터를 내보냄
   const d = STAFF.data; if (!d) return;
-  const money = canM("labor");
+  const money = canM("labor_amt");
   const q = STAFF.q.toLowerCase();
   const mem = d.members.filter(r => !q || r.name.toLowerCase().includes(q));
   if (!mem.length) return toast("내보낼 데이터가 없습니다");
@@ -8351,7 +8417,7 @@ const SDAYS = { d: null, page: 1, per: 12 };
 async function openStaffDays(id) {
   const d = await api(`/api/staffdays/${id}?mode=${STAFF.mode}&date=${STAFF.date}`);
   SDAYS.d = d; SDAYS.page = 1;
-  const money = canM("labor");
+  const money = canM("labor_amt");
   const [a, b] = d.range;
   $("staffDayTitle").textContent = `${d.name} · 근무 상세`;
   $("staffDaySub").textContent = `${a} ~ ${b} · 출근 ${d.days}일 · 총 ${Math.round(d.total_hours * 10) / 10}h`
@@ -8361,7 +8427,7 @@ async function openStaffDays(id) {
 }
 function renderStaffDays() {
   const d = SDAYS.d; if (!d) return;
-  const money = canM("labor");
+  const money = canM("labor_amt");
   const h2 = n => Math.round((n || 0) * 100) / 100;
   const rows_ = pageSlice(d.rows, SDAYS.page, SDAYS.per);
   $("staffDayBody").innerHTML = d.rows.length ? `<table style="width:100%;">
@@ -8411,7 +8477,7 @@ async function loadStaffLedger() {
 }
 function renderStaffLedger() {
   const d = SLED.data; if (!d) return;
-  const money = canM("labor");
+  const money = canM("labor_amt");
   const h1 = n => NF(Math.round((n || 0) * 10) / 10);
   const dates = d.dates || [];
   const bodyEl = $(SLED.body || "staffLedgerBody");

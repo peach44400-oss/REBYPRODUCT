@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.89.3"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.90.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -697,13 +697,23 @@ def norm_duty(v) -> str:
     return "all" if ks == set(DUTY_KEYS) else ",".join(k for k in DUTY_KEYS if k in ks)
 
 
-MONEY_KEYS = ("mat", "prod", "labor", "cost")
+# 세분화된 금액 열람 권한. 옛 4종(mat/prod/labor/cost)은 하위 세부 키 전체로 확장(하위호환).
+MONEY_FINE = ("mat_price", "mat_amt", "prod_price", "prod_amt", "ship_amt", "stock_amt", "wage", "labor_amt", "cost")
+MONEY_COARSE = {"mat": ("mat_price", "mat_amt"), "prod": ("prod_price", "prod_amt", "ship_amt", "stock_amt"),
+                "labor": ("wage", "labor_amt"), "cost": ("cost",)}
+MONEY_KEYS = MONEY_FINE + tuple(MONEY_COARSE)   # 저장/입력 허용 키(세부 + 옛 상위)
 
 
 def money_set(user) -> set:
     if user["role"] == "admin":
-        return set(MONEY_KEYS)
-    return {k for k in (user.get("money_perms") or "").split(",") if k in MONEY_KEYS}
+        return set(MONEY_FINE)
+    out = set()
+    for k in (user.get("money_perms") or "").split(","):
+        if k in MONEY_FINE:
+            out.add(k)
+        elif k in MONEY_COARSE:      # 옛 상위 키 → 하위 세부 키로 펼침
+            out.update(MONEY_COARSE[k])
+    return out
 
 
 def mcan(request: Request, key: str) -> bool:
@@ -1952,7 +1962,7 @@ def latest_material_prices(con, upto=None):
 @app.get("/api/matprice/{mid}")
 def matprice(request: Request, mid: int):
     """자재 단가 추이 — 발주 입고 처리 때 입력한 실제 단가 이력 (입고 완료 발주서의 items 스냅샷)."""
-    if not mcan(request, "mat"):
+    if not mcan(request, "mat_price"):
         raise HTTPException(403, "단가 열람 권한이 없습니다")
     con = connect()
     try:
@@ -2014,7 +2024,7 @@ def _sync_material_price(con, mid):
 @app.post("/api/matprice/{mid}")
 def matprice_add(request: Request, mid: int, body: dict):
     """자재 단가 이력 한 줄 추가 — 적용 시작일 + 단가. 같은 날짜면 갱신."""
-    if not mcan(request, "mat"):
+    if not mcan(request, "mat_price"):
         raise HTTPException(403, "단가 편집 권한이 없습니다")
     fd = (body.get("from_date") or "").strip()
     if not re.match(r"^\d{4}-\d{2}-\d{2}$", fd):
@@ -2047,7 +2057,7 @@ def matprice_add(request: Request, mid: int, body: dict):
 @app.delete("/api/matprice/{mid}/{pid}")
 def matprice_delete(request: Request, mid: int, pid: int):
     """자재 단가 이력 한 줄 삭제 (직접 지정한 단가만 — 입고 단가는 대상 아님)."""
-    if not mcan(request, "mat"):
+    if not mcan(request, "mat_price"):
         raise HTTPException(403, "단가 편집 권한이 없습니다")
     con = connect()
     try:
@@ -2202,7 +2212,7 @@ def semibom_save(semi_id: int, request: Request, body: dict):
 @app.get("/api/prodprice/{pid}")
 def get_prodprice(request: Request, pid: int):
     """제품의 거래처별 판매 단가 — 미설정 거래처는 기본 단가(product.unit_price)를 쓴다."""
-    if not mcan(request, "prod"):
+    if not mcan(request, "prod_price"):
         raise HTTPException(403, "단가 열람 권한이 없습니다")
     con = connect()
     try:
@@ -2597,7 +2607,7 @@ def lot_expiry_set(request: Request, body: dict):
 @app.get("/api/lotboard")
 def lotboard(request: Request):
     """LOT 관리 화면: 전 제품의 생산일자별 재고 LOT + 요약 + 최근 폐기 이력."""
-    admin = mcan(request, "prod")   # 제품 단가·재고금액 열람 권한
+    admin = mcan(request, "stock_amt")   # 제품 단가·재고금액 열람 권한
     con = connect()
     try:
         today = dt.date.today()
@@ -2853,7 +2863,7 @@ def matstatus(request: Request, date: str = ""):
               WHERE NOT EXISTS (SELECT 1 FROM material_in mi
                                 WHERE mi.material_id=o.material_id AND mi.date>x.d AND mi.date<=?)""", (date, date)):
             ordered[r["material_id"]] = {"qty": r["order_qty"], "date": r["order_date"] or ""}
-        admin = mcan(request, "mat")
+        admin = mcan(request, "mat_price")
         items, summ = [], {"expired": 0, "soon": 0, "low": 0}
         for m in con.execute("""SELECT id, name, unit, kind, COALESCE(is_semi,0) is_semi,
                 COALESCE(safety_stock,0) safety_stock, COALESCE(shelf_days,0) shelf_days,
@@ -3101,7 +3111,7 @@ def po_status(request: Request, mode: str = "m", date: str = "", q: str = "", li
     금액 = 입고 처리 때 입력한 실제 단가 × 수량 (미입력 품목은 집계 제외, '미입력'으로 표시).
     집계는 검색·기간에 걸린 전체 기준, 목록은 최근 limit건만 (수량이 많아져도 화면 유지)."""
     require_stock_duty(request)
-    money = mcan(request, "mat")   # 자재 단가·금액 열람 권한
+    money = mcan(request, "mat_amt")   # 자재 단가·금액 열람 권한
     con = connect()
     try:
         if mode == "all":
@@ -3316,7 +3326,7 @@ def po_get(request: Request, po_id: int):
             po["items"] = json.loads(po["items"] or "[]")
         except ValueError:
             po["items"] = []
-        if not mcan(request, "mat"):
+        if not mcan(request, "mat_amt"):
             for it in po["items"]:
                 it["price"] = None
         return po
@@ -3942,13 +3952,13 @@ def masters(mtype: str, request: Request):
         else:
             raise HTTPException(404, "unknown master type")
         # 시급·단가는 금액 권한별 마스킹 (admin은 전체)
-        if mtype == "staff" and not mcan(request, "labor"):
+        if mtype == "staff" and not mcan(request, "wage"):
             for r in data:
                 r["wage"] = None
-        if mtype == "product" and not mcan(request, "prod"):
+        if mtype == "product" and not mcan(request, "prod_price"):
             for r in data:
                 r["unit_price"] = None
-        if mtype in ("raw", "sub") and not mcan(request, "mat"):
+        if mtype in ("raw", "sub") and not mcan(request, "mat_price"):
             for r in data:
                 r["unit_price"] = None
         return data
@@ -4287,8 +4297,11 @@ def dashboard(request: Request):
         mat_expired_cnt = len(mat_alerts)
         mat_soon_cnt = len(mat_soon)
 
-        admin = mcan(request, "prod")            # 생산·출고·재고 금액
-        can_labor = mcan(request, "labor")       # 노무비
+        see_prod_amt = mcan(request, "prod_amt")     # 생산 금액
+        see_ship_amt = mcan(request, "ship_amt")     # 출고 금액
+        see_stock_amt = mcan(request, "stock_amt")   # 재고 금액
+        see_buy_amt = mcan(request, "mat_amt")       # 매입(자재) 금액
+        can_labor = mcan(request, "labor_amt")       # 노무비
         base = last or today   # 데이터가 없으면 오늘 기준 (빈 값)
 
         # 1) 오늘 입력 상태
@@ -4422,10 +4435,12 @@ def dashboard(request: Request):
                 "today": today, "today_entered": bool(today_entered), "last_day": last,
                 "ach": ach, "prod_low": prod_low,
                 "prod_stock_qty": prod_stock_qty,
-                "prod_stock_amt": (prod_stock_amt if admin else None),
+                "prod_stock_amt": (prod_stock_amt if see_stock_amt else None),
                 "prod_low_cnt": len(prod_low),
-                "money": ({"prod": prod_month, "ship": ship_month, "buy": buy_month,
-                           "label": base[:7]} if admin else None),
+                "money": ({"prod": (prod_month if see_prod_amt else None),
+                           "ship": (ship_month if see_ship_amt else None),
+                           "buy": (buy_month if see_buy_amt else None),
+                           "label": base[:7]} if (see_prod_amt or see_ship_amt or see_buy_amt) else None),
                 "month_labor": (round(labor_month) if can_labor else None),
                 "ship_partner": ship_partner, "util": util, "top_prod": top_prod,
                 "week": [wa, wb], "month_label": base[:7]}
@@ -4474,7 +4489,7 @@ def prod_amounts(con, a, b):
 def prodstatus(request: Request, mode: str = "d", date: str = ""):
     con = connect()
     try:
-        admin = mcan(request, "prod")   # 생산금액·단가 열람 권한
+        admin = mcan(request, "prod_amt")   # 생산금액·단가 열람 권한
         if not date:
             date = con.execute("SELECT MAX(date) d FROM production").fetchone()["d"] \
                 or dt.date.today().isoformat()   # 기록이 없으면 오늘 (빈 현황)
@@ -4674,7 +4689,7 @@ def month_report(request: Request, ym: str = ""):
 @app.get("/api/shipstatus")
 def shipstatus(request: Request, mode: str = "d", date: str = ""):
     """출고 현황: 기간 내 출고를 개별 건 + 제품별·거래처별 집계로."""
-    admin = mcan(request, "prod")   # 출고 금액·단가 열람 권한
+    admin = mcan(request, "ship_amt")   # 출고 금액·단가 열람 권한
     con = connect()
     try:
         if not date:
@@ -4863,22 +4878,27 @@ def prodreport(request: Request, mode: str = "d", date: str = ""):
              WHERE st.date BETWEEN ? AND ? AND st.stop_reason!=''
             ORDER BY date""", (a, b, a, b, a, b)))
         # 금액 권한별 마스킹: 노무비(labor) / 자재 단가(mat) / 완제품 단가(prod)
-        if not mcan(request, "labor"):
+        if not mcan(request, "labor_amt"):
             for r in staffing:
                 r["wage_sum"] = None
                 r["labor"] = None
             for r in agency_report:
                 r["labor"] = None
-        if not mcan(request, "mat"):
+        if not mcan(request, "mat_price"):
             for r in materials:
                 r["unit_price"] = None
-        if not mcan(request, "prod"):
+        see_pprice = mcan(request, "prod_price")   # 제품 단가
+        see_samt = mcan(request, "stock_amt")      # 재고 금액
+        if not (see_pprice and see_samt):
             for r in stock:
-                r["unit_price"] = None
-                r["amount"] = None
-                for l in r.get("lots") or []:
-                    l["price"] = None
-                    l["amount"] = None
+                if not see_pprice:
+                    r["unit_price"] = None
+                    for l in r.get("lots") or []:
+                        l["price"] = None
+                if not see_samt:
+                    r["amount"] = None
+                    for l in r.get("lots") or []:
+                        l["amount"] = None
         return {"range": [a, b], "materials": materials, "staffing": staffing,
                 "agency_report": agency_report,
                 "stock": stock, "memos": memos}
@@ -5124,7 +5144,7 @@ def day_get(date: str, request: Request):
             FROM staffing st LEFT JOIN line l ON l.id=st.line_id
             LEFT JOIN line pl ON pl.id=l.parent_id
             WHERE st.date=? ORDER BY st.id""", (date,)))
-        if not mcan(request, "labor"):   # 용역 시급도 시급 — 노무비 권한
+        if not mcan(request, "wage"):   # 용역 시급도 시급 — 노무비 권한
             for r in staffing:
                 r["agency_wage"] = None
                 try:
