@@ -3380,6 +3380,11 @@ const DUTY_SECTION = { production: "production", shipment: "shipment", usage: "u
 const PROD_DUTIES = ["production", "shipment", "usage", "staffing"];   // '생산 입력' 탭이 저장하는 섹션들
 let SAVING = false;   // 내 저장 중에는 '다른 사용자가 저장함' 알림을 띄우지 않는다
 async function saveDayBody(body, label, force) {
+  // 오늘이 아닌 날짜에 저장하면 실수 방지 확인 (달력에서 과거·미래 날짜를 눌러둔 채 작성·저장하는 경우)
+  if (!force && E.date && E.date !== todayISO()) {
+    const t = todayISO();
+    if (!confirm(`⚠ 오늘(${t}, ${dowOf(t)})이 아닙니다.\n\n지금 ${E.date}(${dowOf(E.date)}) 날짜로 저장하려고 합니다 — 달력에서 다른 날짜를 선택해 둔 상태입니다.\n이 날짜에 저장할까요?`)) return;
+  }
   // 같은 날짜를 누가 보고 있으면 저장 전에 확인 — 저장하면 그 사람 화면에 갱신 알림이 뜬다
   if (!force && (E.viewers || []).length
       && !confirm(`⚠ ${E.viewers.join(", ")}님이 지금 ${E.date} 날짜를 보고 있습니다.\n\n`
