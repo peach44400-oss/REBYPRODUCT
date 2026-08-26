@@ -6460,8 +6460,8 @@ function buildFinLedgerDoc(d) {
   const lotFmt = (arr, withPack) => (arr || []).map(l => {
     const made = l.made ? esc(l.made) : "미상";
     const exp = l.expiry ? esc(l.expiry) : "—";
-    // 개입수 + 박스 수(수량 ÷ 개입수) — 예: 5,040 · 30개입 · 168Box
-    const pk = (withPack && l.pack) ? ` · ${NFv(l.pack)}개입 · ${NFv(Math.round((Number(l.qty) || 0) / l.pack))}Box` : "";
+    // 개입수 + 박스 수(수량 ÷ 개입수, 남으면 올림 — 118÷100개입 = 2Box) — 예: 5,040 · 30개입 · 168Box
+    const pk = (withPack && l.pack) ? ` · ${NFv(l.pack)}개입 · ${NFv(Math.ceil((Number(l.qty) || 0) / l.pack - 1e-6))}Box` : "";
     return `<div style="white-space:nowrap;"><b>${exp}</b>(<span style="color:#777;">${made}</span>) · ${NFv(l.qty)}${pk}</div>`;
   }).join("") || '<span style="color:#aaa;">—</span>';
   const body = rows.map(r => {
