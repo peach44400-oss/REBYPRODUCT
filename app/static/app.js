@@ -10664,8 +10664,10 @@ function buildScheduleDoc(d, week) {
   const ec = (k, def) => (EL[k] && EL[k].c) ? EL[k].c : def;
   const labelSize = em("label", fs), qtySize = em("qty", qtyFs), subSize = em("sub", S(baseFs - 1)), dateSize = em("date", fs);
   // white-space:normal 로 앱 전역 td{white-space:nowrap} 를 눌러 줄바꿈 허용 → 오른쪽 잘림 방지
-  const TD = `border:1px solid #333; padding:7px 8px; vertical-align:top; font-size:${fs}px; line-height:1.4; white-space:normal; word-break:break-word; overflow-wrap:anywhere;`;
-  const LB = `border:1px solid #333; padding:8px 4px; background:#f2f1ec; font-weight:800; text-align:center; font-size:${labelFs}px; word-break:keep-all; line-height:1.15; color:#111;`;
+  // 가로줄(행)은 실선, 세로줄(열 구분)은 점선 — 제품군 열을 점선으로 구분
+  const VBORD = "border-top:1px solid #333; border-bottom:1px solid #333; border-left:1px dashed #888; border-right:1px dashed #888;";
+  const TD = `${VBORD} padding:7px 8px; vertical-align:top; font-size:${fs}px; line-height:1.4; white-space:normal; word-break:break-word; overflow-wrap:anywhere;`;
+  const LB = `${VBORD} padding:8px 4px; background:#f2f1ec; font-weight:800; text-align:center; font-size:${labelFs}px; word-break:keep-all; line-height:1.15; color:#111;`;
   const labelW = labelFs * 4 + 16;   // '소비기한'(4자)이 배율과 무관하게 항상 들어가도록 라벨 폭 확보
   const colgroup = `<colgroup><col style="width:${labelW}px;">${_schedGroupCols(groups)}</colgroup>`;
   // 주간 출고일 리본: 각 날짜에 출고되는 물품(항목) 개수 — 제품군 출고일 기준, 없으면 0개
@@ -10748,8 +10750,10 @@ function buildScheduleDocEdit(d, week) {
   const em = (k, base) => Math.max(8, Math.round(base * ((EL[k] && EL[k].s > 0 ? EL[k].s : 100) / 100)));
   const ec = (k, def) => (EL[k] && EL[k].c) ? EL[k].c : def;
   const labelSize = em("label", fs), qtySize = em("qty", qtyFs), subSize = em("sub", S(baseFs - 1)), dateSize = em("date", fs);
-  const TD = `border:1px solid #333; padding:6px 7px; vertical-align:top; font-size:${fs}px; line-height:1.4; white-space:normal; word-break:break-word; overflow-wrap:anywhere;`;
-  const LB = `border:1px solid #333; padding:8px 4px; background:#f2f1ec; font-weight:800; text-align:center; font-size:${labelFs}px; word-break:keep-all; line-height:1.15; color:#111;`;
+  // 가로줄(행)은 실선, 세로줄(열 구분)은 점선 — 제품군 열을 점선으로 구분
+  const VBORD = "border-top:1px solid #333; border-bottom:1px solid #333; border-left:1px dashed #888; border-right:1px dashed #888;";
+  const TD = `${VBORD} padding:6px 7px; vertical-align:top; font-size:${fs}px; line-height:1.4; white-space:normal; word-break:break-word; overflow-wrap:anywhere;`;
+  const LB = `${VBORD} padding:8px 4px; background:#f2f1ec; font-weight:800; text-align:center; font-size:${labelFs}px; word-break:keep-all; line-height:1.15; color:#111;`;
   const labelW = labelFs * 4 + 16;
   const colgroup = `<colgroup><col style="width:${labelW}px;">${_schedGroupCols(groups)}<col style="width:${Math.round(labelW * 0.7)}px;"></colgroup>`;
   const g_ = (gi, f, val, cls, extra) => `<input class="sched-ei ${cls || ""}" data-g="${gi}" data-f="${f}" value="${esc(val)}"${extra || ""}>`;
