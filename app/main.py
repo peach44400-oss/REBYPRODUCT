@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.95.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.95.1"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -4175,6 +4175,41 @@ def salesreport(request: Request, frm: str = "", to: str = ""):
                 r["amount"] = round(r["amount"] or 0)
         total = {"qty": sum(r["qty"] for r in by_partner), "amount": sum(r["amount"] for r in by_partner)}
         return {"from": frm, "to": to, "by_partner": by_partner, "by_product": by_product, "by_month": by_month, "total": total}
+    finally:
+        con.close()
+
+
+# ── 매입 통계 (거래처별·자재별·월별 매입액 — 입고 기준) ──────────────────
+@app.get("/api/purchasereport")
+def purchasereport(request: Request, frm: str = "", to: str = ""):
+    if not mcan(request, "mat_amt"):
+        raise HTTPException(403, "자재 금액 열람 권한이 없습니다")
+    con = connect()
+    try:
+        today = dt.date.today()
+        frm = frm or today.replace(month=1, day=1).isoformat()
+        to = to or today.isoformat()
+        prm = (frm, to)
+        expr = "mi.qty * COALESCE(NULLIF(mi.price,0), m.unit_price)"   # 입고 단가(없으면 기준 단가)
+        by_partner = rows(con.execute(f"""
+            SELECT COALESCE(NULLIF(mi.partner,''),'거래처 미지정') name, SUM(mi.qty) qty, SUM({expr}) amount
+            FROM material_in mi JOIN material m ON m.id=mi.material_id
+            WHERE mi.date BETWEEN ? AND ? AND mi.qty>0 GROUP BY name ORDER BY amount DESC""", prm))
+        by_material = rows(con.execute(f"""
+            SELECT COALESCE(m.code,'') code, m.name, m.unit, SUM(mi.qty) qty, SUM({expr}) amount
+            FROM material_in mi JOIN material m ON m.id=mi.material_id
+            WHERE mi.date BETWEEN ? AND ? AND mi.qty>0 GROUP BY m.id ORDER BY amount DESC""", prm))
+        by_month = rows(con.execute(f"""
+            SELECT substr(mi.date,1,7) month, SUM({expr}) amount
+            FROM material_in mi JOIN material m ON m.id=mi.material_id
+            WHERE mi.date BETWEEN ? AND ? AND mi.qty>0 GROUP BY month ORDER BY month""", prm))
+        for arr in (by_partner, by_material, by_month):
+            for r in arr:
+                if "qty" in r:
+                    r["qty"] = round(r["qty"] or 0, 2)
+                r["amount"] = round(r["amount"] or 0)
+        total = {"amount": sum(r["amount"] for r in by_partner)}
+        return {"from": frm, "to": to, "by_partner": by_partner, "by_material": by_material, "by_month": by_month, "total": total}
     finally:
         con.close()
 
