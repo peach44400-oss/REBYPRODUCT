@@ -772,6 +772,10 @@
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M1.5 5.5h8v6h-8zM9.5 7.5h3l2 2.5v1.5h-5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><circle cx="4" cy="12.5" r="1.2" stroke="currentColor" stroke-width="1.2"/><circle cx="11.5" cy="12.5" r="1.2" stroke="currentColor" stroke-width="1.2"/></svg>
         <em>출고 현황</em>
       </button>
+      <button data-scr="salesorder" id="navSalesOrder" title="수주(주문) 관리 — 거래처 주문 접수·처리">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M3 2.5h7l3 3v8H3z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M9.5 2.5v3.5h3.5M5.5 8.5l1.3 1.3 2.7-2.8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <em>수주 관리</em>
+      </button>
       <button data-scr="invoice" id="navInvoice" title="거래명세서(납품서) — 거래처·기간별 출고 내역을 정식 명세서로 인쇄">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="3" y="2" width="10" height="12" rx="1.4" stroke="currentColor" stroke-width="1.4"/><path d="M5.5 5h5M5.5 7.3h5M5.5 9.6h5M5.5 11.9h3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
         <em>거래명세서</em>
@@ -1020,6 +1024,27 @@
           </div>
         </div>
         <div id="shipSections"></div>
+      </div>
+    </section>
+
+    <!-- 수주(주문) 관리 -->
+    <section class="screen" id="scr-salesorder">
+      <div class="card">
+        <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+          <h2 style="margin:0;">🧾 수주 관리</h2>
+          <span class="auto" style="font-size:12px;">거래처 주문을 접수하고 완료/취소로 처리합니다</span>
+          <div class="tabs" id="soTabs" style="border-bottom:0; margin:0 0 0 6px;">
+            <button class="on" data-sostat="">전체</button>
+            <button data-sostat="접수">접수</button>
+            <button data-sostat="완료">완료</button>
+            <button data-sostat="취소">취소</button>
+          </div>
+          <button class="btn primary sm" id="soNew" style="margin-left:auto;">＋ 새 주문</button>
+        </div>
+        <div class="tbl-wrap" style="margin-top:12px;"><table>
+          <thead><tr><th>주문일</th><th>거래처</th><th>납기</th><th>품목</th><th class="r">수량</th><th>상태</th><th>처리</th></tr></thead>
+          <tbody id="soBody"></tbody>
+        </table></div>
       </div>
     </section>
 

@@ -343,6 +343,20 @@ CREATE TABLE IF NOT EXISTS receipt (
 );
 CREATE INDEX IF NOT EXISTS idx_receipt ON receipt(partner_id, date);
 
+-- 수주(주문) — 거래처 주문 접수 → 출고로 이행
+CREATE TABLE IF NOT EXISTS sales_order (
+  id INTEGER PRIMARY KEY,
+  date TEXT NOT NULL,                  -- 주문일
+  partner_id INTEGER REFERENCES partner(id),
+  due TEXT DEFAULT '',                 -- 납기 희망일
+  status TEXT DEFAULT '접수',           -- 접수/완료/취소
+  note TEXT DEFAULT '',
+  items TEXT DEFAULT '[]',             -- [{product_id, name, qty}]
+  created_at TEXT DEFAULT (datetime('now','localtime')),
+  created_by TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_so ON sales_order(date);
+
 -- 앱 설정 (전역 키-값)
 CREATE TABLE IF NOT EXISTS app_setting (
   key TEXT PRIMARY KEY,

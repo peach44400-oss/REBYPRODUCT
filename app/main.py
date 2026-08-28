@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.95.1"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.95.2"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -4210,6 +4210,74 @@ def purchasereport(request: Request, frm: str = "", to: str = ""):
                 r["amount"] = round(r["amount"] or 0)
         total = {"amount": sum(r["amount"] for r in by_partner)}
         return {"from": frm, "to": to, "by_partner": by_partner, "by_material": by_material, "by_month": by_month, "total": total}
+    finally:
+        con.close()
+
+
+# ── 수주(주문) 관리 ──────────────────────────────────────────────────────
+@app.get("/api/salesorders")
+def salesorders(request: Request, status: str = "", limit: int = 200):
+    con = connect()
+    try:
+        wf = " AND so.status=?" if status else ""
+        prm = [status] if status else []
+        orders = rows(con.execute(f"""
+            SELECT so.*, COALESCE(pa.name,'거래처 미지정') partner
+            FROM sales_order so LEFT JOIN partner pa ON pa.id=so.partner_id
+            WHERE 1=1 {wf} ORDER BY so.date DESC, so.id DESC LIMIT ?""", (*prm, limit)))
+        for o in orders:
+            try:
+                o["items"] = json.loads(o["items"] or "[]")
+            except ValueError:
+                o["items"] = []
+            o["qty_total"] = round(sum(float(it.get("qty") or 0) for it in o["items"]), 2)
+        return orders
+    finally:
+        con.close()
+
+
+@app.post("/api/salesorder")
+def salesorder_add(request: Request, body: dict):
+    require_stock_duty(request)
+    pid = body.get("partner_id")
+    items = [it for it in (body.get("items") or []) if it.get("product_id") and float(it.get("qty") or 0) > 0]
+    if not items:
+        raise HTTPException(400, "주문 품목을 1개 이상 입력하세요")
+    con = connect()
+    try:
+        cur = con.execute("INSERT INTO sales_order(date, partner_id, due, status, note, items, created_by) VALUES(?,?,?,?,?,?,?)",
+                          (body.get("date") or dt.date.today().isoformat(), pid, body.get("due") or "",
+                           "접수", body.get("note") or "", json.dumps(items, ensure_ascii=False),
+                           request.state.user["username"]))
+        audit(con, "salesorder", f"수주 #{cur.lastrowid} 거래처#{pid} {len(items)}품목")
+        con.commit()
+        return {"id": cur.lastrowid}
+    finally:
+        con.close()
+
+
+@app.put("/api/salesorder/{oid}")
+def salesorder_update(oid: int, request: Request, body: dict):
+    require_stock_duty(request)
+    con = connect()
+    try:
+        if "status" in body and body["status"] in ("접수", "완료", "취소"):
+            con.execute("UPDATE sales_order SET status=? WHERE id=?", (body["status"], oid))
+        con.commit()
+        return {"ok": True}
+    finally:
+        con.close()
+
+
+@app.delete("/api/salesorder/{oid}")
+def salesorder_del(oid: int, request: Request):
+    require_stock_duty(request)
+    con = connect()
+    try:
+        con.execute("DELETE FROM sales_order WHERE id=?", (oid,))
+        audit(con, "salesorder_del", f"수주 삭제 #{oid}")
+        con.commit()
+        return {"ok": True}
     finally:
         con.close()
 

@@ -98,7 +98,7 @@ async function reloadMaster(t) {
 }
 
 /* ── 네비게이션 ─────────────────────── */
-const TITLES = { dash: "대시보드", prod: "생산 현황", workorder: "작업지시서", ship: "출고 현황", invoice: "거래명세서", recv: "미수금", salesrep: "매출 통계", postat: "발주 현황", purchrep: "매입 통계", entry: "일일 입력", lot: "LOT 관리", matstat: "자재 현황", sched: "주간 스케줄", items: "기준정보 관리", ana: "분석", lookup: "기록 조회", memos: "특이사항", staff: "인원 관리" };
+const TITLES = { dash: "대시보드", prod: "생산 현황", workorder: "작업지시서", ship: "출고 현황", invoice: "거래명세서", recv: "미수금", salesrep: "매출 통계", postat: "발주 현황", purchrep: "매입 통계", salesorder: "수주 관리", entry: "일일 입력", lot: "LOT 관리", matstat: "자재 현황", sched: "주간 스케줄", items: "기준정보 관리", ana: "분석", lookup: "기록 조회", memos: "특이사항", staff: "인원 관리" };
 /* 표 검색(필터)은 화면·탭을 옮기면 초기화한다.
    남아 있으면 다른 화면에서 '등록된 항목이 없습니다'만 보여 데이터가 없는 것처럼 오해하게 된다.
    ※ 행 추가용 검색(qaProd 등)은 필터가 아니라 입력칸이므로 대상 아님. */
@@ -139,7 +139,7 @@ $("nav").addEventListener("click", e => {
   $("scrTitle").textContent = TITLES[b.dataset.scr];
   resetSearches();
   const fn = { dash: loadDash, prod: loadProd, ship: loadShip, entry: openEntry, lot: loadLot, items: renderMasters, ana: loadAna, lookup: () => lkCal.render(),
-    postat: loadPoStat, memos: loadMemos, matstat: loadMatStatus, sched: () => loadSchedule(), invoice: loadInvoice, recv: loadReceivables, workorder: loadWorkorder, salesrep: loadSalesRep, purchrep: loadPurchRep,
+    postat: loadPoStat, memos: loadMemos, matstat: loadMatStatus, sched: () => loadSchedule(), invoice: loadInvoice, recv: loadReceivables, salesorder: loadSalesOrders, workorder: loadWorkorder, salesrep: loadSalesRep, purchrep: loadPurchRep,
     staff: () => { STAFF.mode = "d"; STAFF.date = todayISO();   // 진입 시 항상 일별·오늘로 초기화
       document.querySelectorAll("#staffTabs button").forEach(x => x.classList.toggle("on", x.dataset.sh === "d"));
       loadStaff(); } }[b.dataset.scr];
@@ -4151,6 +4151,90 @@ $("prTabs").addEventListener("click", e => {
 });
 $("prLoad").onclick = prQuery;
 $("prCsv").onclick = () => tableToCsv($("prHead"), $("prBody"), csvName("매입통계_" + PREP.tab, todayISO()));
+// ── 수주(주문) 관리 ────────────────────────────────────────────────────
+const SO = { list: [], stat: "" };
+async function loadSalesOrders() {
+  $("soNew").style.display = ROLE === "guest" ? "none" : "";
+  let d; try { d = await api("/api/salesorders" + (SO.stat ? "?status=" + encodeURIComponent(SO.stat) : "")); } catch (e) { return; }
+  SO.list = d;
+  const canW = ROLE !== "guest";
+  const stChip = st => `<span class="chip ${st === "완료" ? "ok" : st === "취소" ? "warn" : "cat"}" style="font-size:10.5px;">${esc(st)}</span>`;
+  $("soBody").innerHTML = d.map(o => {
+    const items = (o.items || []).map(it => `${esc(it.name)} ${NF(it.qty)}`).join(", ");
+    return `<tr>
+      <td class="num">${esc(o.date)}</td>
+      <td><b>${esc(o.partner)}</b></td>
+      <td class="num auto">${esc(o.due || "—")}</td>
+      <td style="max-width:340px; white-space:normal; font-size:12px;">${esc(items) || "—"}</td>
+      <td class="r num" style="font-weight:700;">${NF(o.qty_total)}</td>
+      <td>${stChip(o.status)}</td>
+      <td style="white-space:nowrap;">${canW ? `${o.status !== "완료" ? `<button class="btn ghost sm" data-sodone="${o.id}">완료</button>` : ""}${o.status !== "취소" ? `<button class="btn ghost sm" data-socancel="${o.id}">취소</button>` : ""}<button class="btn ghost sm" style="color:var(--crit)" data-sodel="${o.id}">삭제</button>` : "—"}</td></tr>`;
+  }).join("") || `<tr><td colspan="7" class="auto" style="padding:16px; text-align:center;">주문이 없습니다</td></tr>`;
+}
+$("soTabs").addEventListener("click", e => {
+  const b = e.target.closest("[data-sostat]"); if (!b) return;
+  SO.stat = b.dataset.sostat;
+  [...$("soTabs").children].forEach(x => x.classList.toggle("on", x === b));
+  loadSalesOrders();
+});
+$("soBody").addEventListener("click", async e => {
+  const done = e.target.closest("[data-sodone]"), can = e.target.closest("[data-socancel]"), del = e.target.closest("[data-sodel]");
+  if (done) { await api("/api/salesorder/" + done.dataset.sodone, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "완료" }) }); loadSalesOrders(); return; }
+  if (can) { await api("/api/salesorder/" + can.dataset.socancel, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "취소" }) }); loadSalesOrders(); return; }
+  if (del) { if (!confirm("이 주문을 삭제할까요?")) return; await api("/api/salesorder/" + del.dataset.sodel, { method: "DELETE" }); loadSalesOrders(); return; }
+});
+$("soNew").onclick = openSoNew;
+function _soEnsureDom() {
+  if ($("soOverlay")) return;
+  const ov = document.createElement("div"); ov.className = "overlay"; ov.id = "soOverlay";
+  ov.innerHTML = `<div class="modal" style="width:min(620px,96vw);">
+    <h3 style="margin:0 0 8px;">＋ 새 주문 접수</h3>
+    <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:8px;">
+      <label style="font-size:13px;">거래처 <select id="soPartner" class="inp sm" style="min-width:170px; margin-left:4px;"></select></label>
+      <label style="font-size:13px;">주문일 <input type="date" id="soDate" class="inp sm"></label>
+      <label style="font-size:13px;">납기 <input type="date" id="soDue" class="inp sm"></label></div>
+    <div style="font-weight:700; font-size:13px; margin:6px 0 4px;">주문 품목</div>
+    <div id="soItems"></div>
+    <button class="btn ghost sm" id="soAddItem" style="margin-top:6px;">＋ 품목 추가</button>
+    <div style="margin-top:8px;"><input id="soNote" class="inp" placeholder="비고" style="width:100%;"></div>
+    <datalist id="soProdDl">${(M.product || []).filter(p => p.status !== "단종").map(p => `<option value="${esc(p.name)}">`).join("")}</datalist>
+    <div class="modal-foot"><button class="btn" id="soCancel">취소</button><button class="btn primary" id="soSave">저장</button></div></div>`;
+  document.body.appendChild(ov);
+  ov.addEventListener("click", e => { if (e.target === ov) ov.classList.remove("on"); });
+  $("soCancel").onclick = () => ov.classList.remove("on");
+  $("soAddItem").onclick = () => _soAddRow();
+  $("soSave").onclick = _soSave;
+  $("soItems").addEventListener("click", e => { const d = e.target.closest("[data-soitemdel]"); if (d) d.closest(".so-irow").remove(); });
+}
+function _soAddRow(name, qty) {
+  const row = document.createElement("div");
+  row.className = "so-irow"; row.style.cssText = "display:flex; gap:6px; margin-bottom:5px; align-items:center;";
+  row.innerHTML = `<input class="inp sm so-prod" list="soProdDl" placeholder="제품명" value="${esc(name || "")}" style="flex:1 1 0;">
+    <input class="inp sm num so-qty" inputmode="numeric" placeholder="수량" value="${esc(qty || "")}" style="width:100px; text-align:right;">
+    <button class="btn ghost sm" data-soitemdel style="color:var(--crit);">✕</button>`;
+  $("soItems").appendChild(row);
+}
+function openSoNew() {
+  _soEnsureDom();
+  const parts = (M.partner || []).filter(p => p.status !== "중지")
+    .sort((a, b) => (pHasType(b, "판매처") - pHasType(a, "판매처")) || a.name.localeCompare(b.name, "ko"));
+  $("soPartner").innerHTML = `<option value="">거래처 선택</option>` + parts.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
+  $("soDate").value = todayISO(); $("soDue").value = ""; $("soNote").value = "";
+  $("soItems").innerHTML = ""; _soAddRow(); _soAddRow();
+  $("soOverlay").classList.add("on");
+}
+async function _soSave() {
+  const items = [...document.querySelectorAll("#soItems .so-irow")].map(r => {
+    const nm = r.querySelector(".so-prod").value.trim();
+    const p = (M.product || []).find(x => x.name === nm);
+    return { product_id: p ? p.id : null, name: nm, qty: Number((r.querySelector(".so-qty").value || "").replace(/,/g, "")) };
+  }).filter(it => it.product_id && it.qty > 0);
+  if (!items.length) { toast("제품과 수량을 입력하세요 (제품명은 목록에서 선택)"); return; }
+  const body = { partner_id: +$("soPartner").value || null, date: $("soDate").value, due: $("soDue").value, note: $("soNote").value, items };
+  try { await api("/api/salesorder", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); }
+  catch (e) { return; }
+  $("soOverlay").classList.remove("on"); toast("주문이 접수되었습니다"); loadSalesOrders();
+}
 // ── 작업지시서 ─────────────────────────────────────────────────────────
 const WO = { data: null };
 function loadWorkorder() {
