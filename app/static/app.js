@@ -135,6 +135,7 @@ $("nav").addEventListener("click", e => {
   }
   _navBypass = false;
   document.querySelectorAll("#nav button").forEach(x => x.classList.toggle("on", x === b));
+  navEnsureGroupOpen(b.dataset.scr);
   document.querySelectorAll(".screen").forEach(s => s.classList.toggle("on", s.id === "scr-" + b.dataset.scr));
   $("scrTitle").textContent = TITLES[b.dataset.scr];
   resetSearches();
@@ -151,6 +152,54 @@ document.addEventListener("click", e => {
   const nb = document.querySelector(`#nav button[data-scr="${g.dataset.goscr}"]`);
   if (nb) nb.click();
 });
+// ── 사이드 메뉴 그룹 접기/펼치기 (타이틀 클릭 → 하위 메뉴 표시) ───────────
+const NAVGRP_KEY = "navOpenGrps";
+function navOpenSet() {
+  try { return new Set(JSON.parse(localStorage.getItem(NAVGRP_KEY) || "[]")); } catch (e) { return new Set(); }
+}
+function navSaveSet(set) { try { localStorage.setItem(NAVGRP_KEY, JSON.stringify([...set])); } catch (e) {} }
+function applyNavGroups() {
+  const open = navOpenSet();
+  document.querySelectorAll('#nav .nav-sep[data-grp]').forEach(sep => {
+    const key = sep.dataset.grp, on = open.has(key);
+    const grp = document.querySelector(`#nav .nav-grp[data-grp="${key}"]`);
+    sep.classList.toggle("collapsed", !on);
+    if (grp) grp.classList.toggle("collapsed", !on);
+  });
+}
+function navToggleGroup(key) {
+  const open = navOpenSet();
+  open.has(key) ? open.delete(key) : open.add(key);
+  navSaveSet(open); applyNavGroups();
+}
+function navEnsureGroupOpen(scr) {
+  const btn = document.querySelector(`#nav .nav-grp button[data-scr="${scr}"]`);
+  const grp = btn && btn.closest(".nav-grp");
+  if (!grp) return;
+  const open = navOpenSet();
+  if (!open.has(grp.dataset.grp)) { open.add(grp.dataset.grp); navSaveSet(open); applyNavGroups(); }
+}
+$("nav").addEventListener("click", e => {
+  if ($("nav").classList.contains("pinopen")) return;   // 상시 펼침 모드에선 접기 무시
+  const sep = e.target.closest(".nav-sep[data-grp]");
+  if (sep) navToggleGroup(sep.dataset.grp);
+});
+// 상시 펼침 ↔ 접기 모드 (사용자별 저장)
+const NAVPIN_KEY = "navPinOpen";
+function navPinned() { try { return localStorage.getItem(NAVPIN_KEY) === "1"; } catch (e) { return false; } }
+function applyNavPin() {
+  const pin = navPinned();
+  $("nav").classList.toggle("pinopen", pin);
+  const lbl = $("navModeToggle") && $("navModeToggle").querySelector("span");
+  if (lbl) lbl.textContent = pin ? "그룹별 접기 모드" : "메뉴 항상 펼치기";
+  if (!pin) applyNavGroups();
+}
+if ($("navModeToggle")) $("navModeToggle").addEventListener("click", () => {
+  try { localStorage.setItem(NAVPIN_KEY, navPinned() ? "0" : "1"); } catch (e) {}
+  applyNavPin();
+});
+applyNavGroups();
+applyNavPin();
 // 일일 입력 이탈 가드 — 저장 안 한 변경이 있을 때 [저장하고 이동]/[저장 안 함]/[취소]
 function navGoScr(scr) { _navBypass = true; document.querySelector(`#nav button[data-scr="${scr}"]`).click(); }
 async function saveEntryDirect() {   // 현재 탭 저장(요약 모달 없이) → 성공 시 true

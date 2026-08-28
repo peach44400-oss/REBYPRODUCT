@@ -88,10 +88,28 @@
   .nav button svg{flex:none; opacity:.75;}
   .nav button:hover{background:rgba(255,255,255,.06); color:var(--side-ink);}
   .nav button.on{background:rgba(255,255,255,.1); color:#fff;}
-  .nav-sep{display:flex; align-items:center; gap:8px; margin:10px 4px 3px; padding:0 6px;}
+  .nav-sep{display:flex; align-items:center; gap:8px; margin:8px 4px 3px; padding:5px 6px; border-radius:7px;
+    cursor:pointer; user-select:none;}
+  .nav-sep:hover{background:rgba(255,255,255,.05);}
   .nav-sep span{font-size:10px; font-weight:800; letter-spacing:.06em; color:var(--side-muted);
     text-transform:uppercase; white-space:nowrap;}
-  .nav-sep::after{content:''; flex:1; height:1px; background:rgba(255,255,255,.08);}
+  .nav-sep .chev{flex:none; color:var(--side-muted); opacity:.7; transition:transform .18s ease; margin-left:2px;}
+  .nav-sep.collapsed .chev{transform:rotate(-90deg);}
+  .nav-sep::before{content:''; flex:1; order:3; height:1px; background:rgba(255,255,255,.08);}
+  .nav-sep .chev{order:4;}
+  .nav-grp{display:flex; flex-direction:column; gap:2px; overflow:hidden;}
+  .nav-grp.collapsed{display:none;}
+  /* 상시 펼침 모드 — 모든 그룹 열고 셰브런/접기 비활성화 */
+  .nav.pinopen .nav-grp{display:flex !important;}
+  .nav.pinopen .nav-sep{cursor:default;}
+  .nav.pinopen .nav-sep:hover{background:none;}
+  .nav.pinopen .nav-sep .chev{display:none;}
+  .nav-mode{display:flex; align-items:center; justify-content:center; gap:6px; margin:12px 4px 2px;
+    padding:7px; border:1px dashed rgba(255,255,255,.14); border-radius:8px; background:none;
+    color:var(--side-muted); font-size:11.5px; font-weight:700; cursor:pointer; width:auto;}
+  .nav-mode:hover{background:rgba(255,255,255,.05); color:var(--side-ink);}
+  .nav-mode svg{flex:none; opacity:.8; transition:transform .18s ease;}
+  .nav.pinopen .nav-mode svg{transform:rotate(180deg);}
   .nav .cnt{margin-left:auto; background:var(--crit); color:#fff; font-size:11px; font-weight:700;
     padding:1px 7px; border-radius:99px;}
   /* 발주 필요 — 상단바 배지 + 엑셀 메모 스타일 팝업 */
@@ -729,7 +747,8 @@
         <em>일일 입력</em>
       </button>
 
-      <div class="nav-sep"><span>생산관리</span></div>
+      <div class="nav-sep" data-grp="prod"><span>생산관리</span><svg class="chev" width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <div class="nav-grp" data-grp="prod">
       <button data-scr="prod">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2.5" y="2.5" width="11" height="11" rx="2" stroke="currentColor" stroke-width="1.4"/><path d="M5.5 10.5V8m2.5 2.5V5.5m2.5 5V7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
         <em>생산 현황</em>
@@ -743,7 +762,9 @@
         <em>작업지시서</em>
       </button>
 
-      <div class="nav-sep"><span>재고관리</span></div>
+      </div>
+      <div class="nav-sep" data-grp="stock"><span>재고관리</span><svg class="chev" width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <div class="nav-grp" data-grp="stock">
       <button data-scr="matstat" title="자재 현황 — 전체 원부자재 재고·유통기한(만료/임박)·부족을 한눈에 · 확정 폐기·발주">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2.5" y="3" width="11" height="10" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M2.5 6.5h11M6 3v10" stroke="currentColor" stroke-width="1.3"/></svg>
         <em>자재 현황</em><span class="cnt" id="navMatCnt" style="display:none">0</span>
@@ -757,7 +778,9 @@
         <em>수불부</em>
       </button>
 
-      <div class="nav-sep"><span>구매 · 발주</span></div>
+      </div>
+      <div class="nav-sep" data-grp="buy"><span>구매 · 발주</span><svg class="chev" width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <div class="nav-grp" data-grp="buy">
       <button data-scr="postat" id="navPoStat" style="display:none;" title="발주서 목록·검색·입고 처리·거래처별 정산">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="3" y="2.5" width="10" height="11" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M5.5 5.5h5M5.5 8h5M5.5 10.5h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M10.2 11.6l1 1 1.8-2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
         <em>발주 현황</em>
@@ -767,7 +790,9 @@
         <em>매입 통계</em>
       </button>
 
-      <div class="nav-sep"><span>판매 · 출고</span></div>
+      </div>
+      <div class="nav-sep" data-grp="sales"><span>판매 · 출고</span><svg class="chev" width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <div class="nav-grp" data-grp="sales">
       <button data-scr="ship">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M1.5 5.5h8v6h-8zM9.5 7.5h3l2 2.5v1.5h-5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><circle cx="4" cy="12.5" r="1.2" stroke="currentColor" stroke-width="1.2"/><circle cx="11.5" cy="12.5" r="1.2" stroke="currentColor" stroke-width="1.2"/></svg>
         <em>출고 현황</em>
@@ -793,7 +818,9 @@
         <em>거래처 원장</em>
       </button>
 
-      <div class="nav-sep"><span>원가 · 분석</span></div>
+      </div>
+      <div class="nav-sep" data-grp="ana"><span>원가 · 분석</span><svg class="chev" width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <div class="nav-grp" data-grp="ana">
       <button data-scr="pnl" id="navPnl" title="손익 요약 — 매출 − 매입 − 노무 = 간이 이익(월별)">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2.5 2.5v11h11" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M5 10l2.5-3 2 1.5L13 4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
         <em>손익 요약</em>
@@ -811,18 +838,27 @@
         <em>특이사항</em>
       </button>
 
-      <div class="nav-sep"><span>인사</span></div>
+      </div>
+      <div class="nav-sep" data-grp="hr"><span>인사</span><svg class="chev" width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <div class="nav-grp" data-grp="hr">
       <button data-scr="staff" id="navStaff" style="display:none;" title="관리자 전용 — 사람별 근무시간·노무비 집계">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="6" cy="5" r="2.4" stroke="currentColor" stroke-width="1.4"/><path d="M2 13c0-2.2 1.8-3.6 4-3.6S10 10.8 10 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M11 4.2c1.1.2 1.9 1.1 1.9 2.2 0 1-.7 1.9-1.7 2.1M12 9.6c1.6.3 2.7 1.4 2.7 3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
         <em>인원 관리</em>
       </button>
 
-      <div class="nav-sep"><span>설정</span></div>
+      </div>
+      <div class="nav-sep" data-grp="cfg"><span>설정</span><svg class="chev" width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <div class="nav-grp" data-grp="cfg">
       <button data-scr="items">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2.5" y="2.5" width="11" height="11" rx="2" stroke="currentColor" stroke-width="1.4"/><path d="M5.5 6h5M5.5 8.5h5M5.5 11h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
         <em>기준정보 관리</em>
       </button>
-    </nav>
+      </div>
+      <button type="button" class="nav-mode" id="navModeToggle" title="메뉴를 항상 펼쳐둘지, 그룹별로 접을지 전환">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>메뉴 항상 펼치기</span>
+      </button>
+</nav>
   </aside>
 
   <div class="main">
