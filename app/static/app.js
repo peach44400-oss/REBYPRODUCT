@@ -549,6 +549,32 @@ async function loadDash() {
   const lw = d.lot_warn || 0;
   $("navLotCnt").style.display = lw > 0 ? "" : "none"; $("navLotCnt").textContent = lw;
 
+  // ── 미수 알림 (출고 금액 권한자만) + 납기 지난 주문
+  {
+    const rb = d.receivables, ov = d.overdue_orders || [];
+    const nrc = $("navRecvCnt");
+    if (nrc) { const n = rb ? rb.count : 0; nrc.style.display = n > 0 ? "" : "none"; nrc.textContent = n; }
+    const box = $("dashRecvAlert");
+    if (box) {
+      let html = "";
+      if (rb && rb.count > 0) {
+        const top = rb.top.map(p => `<button class="chip" data-goscr="recv" style="cursor:pointer; background:#fdecea; color:#c0392b; border:0;" title="미수금 화면으로">${esc(p.name)} ₩${NF(p.balance)}</button>`).join(" ");
+        html += `<div class="alert-banner recv"><div class="ab-head">
+          <span>💰 <b>미수 거래처 ${rb.count}곳</b> · 미수 합계 <b>₩${NF(rb.total)}</b></span>
+          <button class="btn ghost sm" data-goscr="recv">미수금 관리 →</button></div>
+          <div class="ab-body">${top}</div></div>`;
+      }
+      if (ov.length) {
+        const items = ov.map(o => `<div class="feed-item">
+          <span>⏰ <b>${esc(o.partner)}</b> <span class="auto" style="font-size:11.5px">납기 ${esc(o.due.slice(5))} 지남 — ${esc(o.summary) || "—"}</span></span>
+          <button class="btn ghost sm" data-goscr="salesorder">주문 보기</button></div>`).join("");
+        html += `<div class="alert-banner overdue"><div class="ab-head"><span>📦 <b>납기 지난 미완료 주문 ${ov.length}건</b></span></div>
+          <div class="ab-body">${items}</div></div>`;
+      }
+      box.innerHTML = html;
+    }
+  }
+
   const labels = d.trend.map(r => r.date.slice(5).replace("-", "/"));
   lineChart($("dashTrend"), {
     labels,

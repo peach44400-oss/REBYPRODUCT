@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.98.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.99.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -4900,6 +4900,36 @@ def dashboard(request: Request):
             WHERE pr.date BETWEEN ? AND ? AND pr.prod_qty>0
             GROUP BY pr.product_id ORDER BY qty DESC LIMIT 5""", (wa, wb)))
 
+        # 9) 미수 알림 — 거래처별 미수 잔액(출고 누계 − 수금 누계). 출고 금액 권한자만.
+        recv_block = None
+        if see_ship_amt:
+            sb = {r["pid"]: float(r["amt"] or 0) for r in con.execute(
+                "SELECT s.partner_id pid, SUM(s.qty*CASE WHEN s.unit_price>0 THEN s.unit_price ELSE p.unit_price END) amt "
+                "FROM shipment s JOIN product p ON p.id=s.product_id "
+                "WHERE s.partner_id IS NOT NULL AND s.qty>0 GROUP BY s.partner_id")}
+            rc = {r["pid"]: float(r["amt"] or 0) for r in con.execute(
+                "SELECT partner_id pid, SUM(amount) amt FROM receipt WHERE partner_id IS NOT NULL GROUP BY partner_id")}
+            pn = {r["id"]: r["name"] for r in con.execute("SELECT id, name FROM partner")}
+            bal = []
+            for pid in (set(sb) | set(rc)):
+                b = round(sb.get(pid, 0)) - round(rc.get(pid, 0))
+                if b > 0:
+                    bal.append({"partner_id": pid, "name": pn.get(pid, "?"), "balance": b})
+            bal.sort(key=lambda x: -x["balance"])
+            recv_block = {"count": len(bal), "total": sum(x["balance"] for x in bal), "top": bal[:6]}
+
+        # 10) 납기 지난 미완료 주문 (금액 무관 — 누구나)
+        overdue_orders = []
+        for o in con.execute("SELECT so.id, so.due, so.items, COALESCE(pa.name,'거래처 미상') partner "
+                             "FROM sales_order so LEFT JOIN partner pa ON pa.id=so.partner_id "
+                             "WHERE so.status='접수' AND so.due!='' AND so.due<? ORDER BY so.due LIMIT 10", (today,)):
+            try:
+                its = json.loads(o["items"] or "[]")
+            except ValueError:
+                its = []
+            overdue_orders.append({"id": o["id"], "partner": o["partner"], "due": o["due"],
+                                   "summary": ", ".join(f"{it.get('name','')} {it.get('qty','')}" for it in its)})
+
         kpi = {
             "low_raw": sum(1 for x in low if x["kind"] == "raw"),
             "low_sub": sum(1 for x in low if x["kind"] == "sub"),
@@ -4925,6 +4955,7 @@ def dashboard(request: Request):
                            "label": base[:7]} if (see_prod_amt or see_ship_amt or see_buy_amt) else None),
                 "month_labor": (round(labor_month) if can_labor else None),
                 "ship_partner": ship_partner, "util": util, "top_prod": top_prod,
+                "receivables": recv_block, "overdue_orders": overdue_orders,
                 "week": [wa, wb], "month_label": base[:7]}
     finally:
         con.close()
