@@ -24,7 +24,7 @@ from fastapi.staticfiles import StaticFiles
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from db import (connect, init_db, chat_connect, init_chat_db, purge_old_chat,
-                CHAT_RETENTION_DAYS, BASE as DATA_BASE)
+                CHAT_RETENTION_DAYS, BASE as DATA_BASE, next_item_code)
 
 # 정적 파일: exe로 묶이면 임시 해제 폴더(_MEIPASS)에서 서빙
 if getattr(sys, "frozen", False):
@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.90.3"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.91.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -134,9 +134,9 @@ def audit(con, action, detail):
         chat_system(msg)
 
 MASTER_TABLES = {
-    "product": ("product", ["name", "category", "spec", "pack_sizes", "line_id", "unit_price",
+    "product": ("product", ["code", "name", "category", "spec", "pack_sizes", "line_id", "unit_price",
                             "shelf_days", "safety_stock", "batch_yield", "status", "note", "is_semi", "fin_split"]),
-    "material": ("material", ["kind", "name", "spec", "unit", "pack_count", "pack_set", "unit_price", "partner_id",
+    "material": ("material", ["code", "kind", "name", "spec", "unit", "pack_count", "pack_set", "unit_price", "partner_id",
                               "safety_stock", "prod_mult", "prod_per", "shelf_days", "status", "note",
                               "is_semi", "batch_yield"]),
     "partner": ("partner", ["name", "type", "phone", "contact", "note", "status", "biz_no", "ceo", "mobile", "email"]),
@@ -4017,7 +4017,7 @@ def master_create(mtype: str, body: dict):
                     by /= 1000
                 elif fu == "kg" and eu == "g":
                     by *= 1000
-                upd = {"is_semi": 1, "batch_yield": by}
+                upd = {"is_semi": 1, "batch_yield": by, "code": next_item_code(con, "semi")}   # 반제품 코드(SF) 재부여
                 for c in ("spec", "unit_price", "safety_stock", "shelf_days", "status", "note"):
                     if body.get(c) not in (None, ""):
                         upd[c] = body.get(c)
@@ -4027,6 +4027,9 @@ def master_create(mtype: str, body: dict):
                 bump_masters()
                 con.commit()
                 return {"id": exist["id"], "converted": True}
+        # 품목코드 자동 부여 (미입력 시) — 유형별 시리즈(FG/SF/RM/SM)
+        if mtype in ("product", "raw", "sub", "semi") and not str(vals.get("code") or "").strip():
+            vals["code"] = next_item_code(con, mtype)
         ks = ",".join(vals)
         qs = ",".join("?" * len(vals))
         cur = con.execute(f"INSERT INTO {table}({ks}) VALUES({qs})", list(vals.values()))

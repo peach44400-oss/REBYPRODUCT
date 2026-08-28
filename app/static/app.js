@@ -3782,24 +3782,24 @@ window.closeUse = () => $("useOverlay").classList.remove("on");
 
 /* ══ 기준정보 관리 ═════════════════════ */
 const MCOLS = {
-  product: { label: "제품", cols: ["제품명", "카테고리", "규격", "단가(원)", "소비일", "안전재고", "현재고", "상태"],
-    row: r => [`<button class="uselink" data-phist="${r.id}" style="display:inline-flex; align-items:center; gap:8px">${r.image ? `<img src="/image/${encodeURIComponent(r.image)}" style="width:30px; height:30px; object-fit:cover; border-radius:5px; border:1px solid var(--line)">` : ""}<b>${esc(r.name)}</b></button>`, esc(r.category || "—"), esc(r.spec || "—"), r.unit_price == null ? "—" : NF(r.unit_price), r.shelf_days || "—", NF(r.safety_stock), NF(r.stock), chip(r.status)],
+  product: { label: "제품", cols: ["품목코드", "제품명", "카테고리", "규격", "단가(원)", "소비일", "안전재고", "현재고", "상태"],
+    row: r => [codeCell(r), `<button class="uselink" data-phist="${r.id}" style="display:inline-flex; align-items:center; gap:8px">${r.image ? `<img src="/image/${encodeURIComponent(r.image)}" style="width:30px; height:30px; object-fit:cover; border-radius:5px; border:1px solid var(--line)">` : ""}<b>${esc(r.name)}</b></button>`, esc(r.category || "—"), esc(r.spec || "—"), r.unit_price == null ? "—" : NF(r.unit_price), r.shelf_days || "—", NF(r.safety_stock), NF(r.stock), chip(r.status)],
     hint: "제품명 클릭 = 생산일자별 재고(LOT)·생산/출고 이력 · 현재고 = 기초재고 + 생산 − 출고 − 폐기 (자동 계산)" },
-  raw: { label: "원재료", cols: ["자재명", "규격", "단위", "개입수", "단가(원)", "안전재고", "소비일", "현재고", "재고일수", "최종 기록일", "상태"],
-    row: r => [`<button class="uselink" data-mhist="${r.id}">${esc(r.name)}</button>`, esc(r.spec || "—"), esc(r.unit), r.pack_count ? NF(r.pack_count) : "—", r.unit_price == null ? "—" : NF(r.unit_price), NF(r.safety_stock), r.shelf_days || "—", stockCell(r), stockDaysCell(r), esc(r.stock_date || "—"), chip(r.status)],
+  raw: { label: "원재료", cols: ["품목코드", "자재명", "규격", "단위", "개입수", "단가(원)", "안전재고", "소비일", "현재고", "재고일수", "최종 기록일", "상태"],
+    row: r => [codeCell(r), `<button class="uselink" data-mhist="${r.id}">${esc(r.name)}</button>`, esc(r.spec || "—"), esc(r.unit), r.pack_count ? NF(r.pack_count) : "—", r.unit_price == null ? "—" : NF(r.unit_price), NF(r.safety_stock), r.shelf_days || "—", stockCell(r), stockDaysCell(r), esc(r.stock_date || "—"), chip(r.status)],
     hint: "자재명 클릭 = 입·출고 이력 · 현재고 = 마지막 기록일의 실재고 · 재고일수 = 현재고 ÷ 최근 30일 일평균 사용량 · 개입수 = 개수 자재의 1개당 포장수(소모 = 생산수량 ÷ 개입수)" },
-  sub: { label: "부재료", cols: ["자재명", "단위", "개입수", "단가(원)", "안전재고", "소비일", "현재고", "재고일수", "생산가능수량", "생산가능횟수", "최종 기록일", "상태"],
+  sub: { label: "부재료", cols: ["품목코드", "자재명", "단위", "개입수", "단가(원)", "안전재고", "소비일", "현재고", "재고일수", "생산가능수량", "생산가능횟수", "최종 기록일", "상태"],
     row: r => {
       const canQty = r.prod_mult && r.stock != null ? r.stock * r.prod_mult : null;
       const canCnt = canQty != null && r.prod_per ? canQty / r.prod_per : null;
-      return [`<button class="uselink" data-mhist="${r.id}">${esc(r.name)}</button>`, esc(r.unit), r.pack_count ? NF(r.pack_count) : "—", NF(r.unit_price), NF(r.safety_stock), r.shelf_days || "—", stockCell(r), stockDaysCell(r),
+      return [codeCell(r), `<button class="uselink" data-mhist="${r.id}">${esc(r.name)}</button>`, esc(r.unit), r.pack_count ? NF(r.pack_count) : "—", NF(r.unit_price), NF(r.safety_stock), r.shelf_days || "—", stockCell(r), stockDaysCell(r),
         canQty != null ? NF(Math.round(canQty)) : '<span class="auto">환산 미설정</span>',
         canCnt != null ? `<span style="${canCnt < 3 ? "color:var(--warn); font-weight:700" : ""}">${NF(Math.round(canCnt * 10) / 10)}회</span>` : "—",
         esc(r.stock_date || "—"), chip(r.status)];
     },
     hint: "재고일수 = 현재고 ÷ 최근 30일 일평균 사용량 · 생산가능수량 = 현재고 × 단위당 수량 · 횟수 = 수량 ÷ 1회 소요량 (환산계수는 7/7 실사 엑셀에서 갱신됨)" },
-  semi: { label: "반제품", cols: ["반제품명", "규격", "단위", "1배합당 생산량", "안전재고", "현재고", "레시피", "상태"],
-    row: r => [`<button class="uselink" data-mhist="${r.id}">${esc(r.name)}</button>`, esc(r.spec || "—"), esc(r.unit || "—"),
+  semi: { label: "반제품", cols: ["품목코드", "반제품명", "규격", "단위", "1배합당 생산량", "안전재고", "현재고", "레시피", "상태"],
+    row: r => [codeCell(r), `<button class="uselink" data-mhist="${r.id}">${esc(r.name)}</button>`, esc(r.spec || "—"), esc(r.unit || "—"),
       r.batch_yield ? NF(r.batch_yield) + (r.unit || "") : "미등록", NF(r.safety_stock), NF(r.stock),
       `<button class="btn ghost sm" data-semirecipe="${r.id}">🧪 레시피</button>`, chip(r.status)],
     hint: "반제품명 클릭 = 레시피·생산·소비 이력 팝업 · [🧪 레시피]로 원재료 구성(1배합당)과 1배합당 생산량을 등록 · 빵 배합비엔 이 반제품을 자재처럼 넣으면 됩니다 (원재료 부족은 발주, 반제품 부족은 생산)" },
@@ -3827,6 +3827,7 @@ const MCOLS = {
     hint: "공정 행은 수정 팝업의 '소속 라인'으로 대표 라인에 연결 — 연결된 공정들은 가동률·보고서에서 한 물리 라인으로 집계됩니다" },
 };
 function B(s) { return `<b>${esc(s)}</b>`; }
+function codeCell(r) { return `<span class="num" style="color:var(--muted); font-size:11.5px; letter-spacing:.3px;">${esc(r.code || "—")}</span>`; }
 function chip(s) {
   const bad = ["단종", "중지", "중단", "퇴사"].includes(s);
   return `<span class="chip ${bad ? "warn" : "ok"}">${esc(s || "—")}</span>`;
@@ -3884,9 +3885,10 @@ const MHEALTH = {
   staff: [["wage", "시급", "미등록 시 노무비 계산이 0으로 나옴"]],
 };
 const QE_COLS = {
-  product: { 3: "unit_price", 4: "shelf_days", 5: "safety_stock" },
-  raw: { 4: "unit_price", 5: "safety_stock", 6: "shelf_days" },
-  sub: { 2: "pack_count", 3: "unit_price", 4: "safety_stock", 5: "shelf_days" },
+  // ※ 맨 앞에 '품목코드' 열이 생겨 product/raw/sub 인덱스는 원래보다 +1 (staff·partner는 코드 열 없음)
+  product: { 4: "unit_price", 5: "shelf_days", 6: "safety_stock" },
+  raw: { 5: "unit_price", 6: "safety_stock", 7: "shelf_days" },
+  sub: { 3: "pack_count", 4: "unit_price", 5: "safety_stock", 6: "shelf_days" },
   partner: { 1: "type" },   // 유형 — 숫자가 아닌 선택형 (renderMasters에서 select로 렌더)
   staff: { 3: "wage" },
 };
@@ -3932,7 +3934,7 @@ $("mHealthBar").addEventListener("click", e => {
 
 function masterList() {   // 현재 탭의 표시 목록 (검색 + 미등록 필터 적용)
   const full = M[mTab] || [];
-  let list = mFilter ? full.filter(r => String(r.name || "").toLowerCase().includes(mFilter)) : full;
+  let list = mFilter ? full.filter(r => (String(r.name || "") + " " + String(r.code || "")).toLowerCase().includes(mFilter)) : full;
   if (mMissing) list = list.filter(r => mActive(r) && mIsMissing(r, mMissing));
   // 중단·단종·퇴사·중지 항목은 맨 아래로 (순서 편집 모드에서는 실제 배열 순서와 맞춰야 하므로 제외)
   const reorderMode = mQuick && QE_COLS[mTab] && !mFilter && !mMissing;
@@ -5097,13 +5099,13 @@ $("mBody").addEventListener("keydown", e => {
 
 /* 기준정보 등록/수정 모달 (탭별 폼) */
 const MFORMS = {
-  product: [["name", "제품명 *"], ["category", "카테고리"], ["spec", "규격 (예: 60g/EA)"],
+  product: [["name", "제품명 *"], ["code", "품목코드 (비우면 자동 부여 · 완제품 FG####)"], ["category", "카테고리"], ["spec", "규격 (예: 60g/EA)"],
     ["unit_price", "단가 (원)", "num"], ["shelf_days", "소비일 (일)", "num"], ["safety_stock", "안전재고", "num"],
     ["batch_yield", "1배합당 생산수량 (개)", "num"],
     ["fin_split", "완제품 수불부 거래처 분리 표시", "sel", [["0", "분리 안 함 (기본) — 합쳐서 한 행"], ["1", "분리 표시 — 거래처별 '거래처명 제품명' 행"]]],
     ["initial_stock", "초기재고 (신규만)", "num"], ["stock_set", "현재고 (수정 시 기초재고 자동 조정)", "num"],
     ["status", "상태", "sel", ["판매중", "단종"]], ["note", "비고", "full"]],
-  raw: [["name", "자재명 *"], ["kind", "구분", "sel", [["raw", "원재료"], ["sub", "부재료"]]],
+  raw: [["name", "자재명 *"], ["code", "품목코드 (비우면 자동 부여 · 원자재 RM####)"], ["kind", "구분", "sel", [["raw", "원재료"], ["sub", "부재료"]]],
     ["spec", "규격 (예: 20kg 포대)"], ["unit", "단위", "sel", ["kg", "g", "L", "개", "ea"]],
     ["pack_count", "개입수 (개수 단위일 때만 · 예: 16개입=16 → 소모=생산수량÷개입수)", "num"],
     ["pack_set", "포장 세트 (읽기 전용 — 부재료 탭의 [📦 포장 세트]에서 관리 · 여러 세트 동시 소속 가능)", "ro"],
@@ -5111,7 +5113,7 @@ const MFORMS = {
     ["safety_stock", "안전재고", "num"], ["shelf_days", "소비기한 (보관일수, 일)", "num"], ["initial_stock", "초기재고 (신규만)", "num"],
     ["stock_set", "현재고 (아래 기준일의 실사 기록으로 저장됩니다)", "num"], ["stock_date", "기준일 (이 날짜에 기록)", "date"],
     ["status", "상태", "sel", ["사용중", "중단"]], ["note", "비고", "full"]],
-  sub: [["name", "자재명 *"], ["kind", "구분", "sel", [["sub", "부재료"], ["raw", "원재료"]]],
+  sub: [["name", "자재명 *"], ["code", "품목코드 (비우면 자동 부여 · 부자재 SM####)"], ["kind", "구분", "sel", [["sub", "부재료"], ["raw", "원재료"]]],
     ["spec", "규격 (예: 500ea/롤)"], ["unit", "단위", "sel", ["개", "ea", "롤", "박스", "묶음", "매"]],
     ["pack_count", "개입수 (개수 단위일 때만 · 예: 16개입=16 → 소모=생산수량÷개입수)", "num"],
     ["pack_set", "포장 세트 (읽기 전용 — 부재료 탭의 [📦 포장 세트]에서 관리 · 여러 세트 동시 소속 가능)", "ro"],
@@ -5120,7 +5122,7 @@ const MFORMS = {
     ["stock_set", "현재고 (아래 기준일의 실사 기록으로 저장됩니다)", "num"], ["stock_date", "기준일 (이 날짜에 기록)", "date"],
     ["prod_mult", "단위당 수량 (생산가능 환산)", "num"], ["prod_per", "1회 생산 소요량", "num"],
     ["status", "상태", "sel", ["사용중", "중단"]], ["note", "비고", "full"]],
-  semi: [["name", "반제품명 * (예: 발효종)"], ["spec", "규격 (예: 발효반죽)"],
+  semi: [["name", "반제품명 * (예: 발효종)"], ["code", "품목코드 (비우면 자동 부여 · 반제품 SF####)"], ["spec", "규격 (예: 발효반죽)"],
     ["unit", "단위 (재고 단위)", "sel", ["g", "kg", "개", "ea"]],
     ["batch_yield", "1배합당 생산량 (위 단위 기준 · 예: 16800)", "num"],
     ["unit_price", "단가 (원)", "num"], ["safety_stock", "안전재고", "num"], ["shelf_days", "소비기한 (보관일수, 일)", "num"],

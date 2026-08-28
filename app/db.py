@@ -662,6 +662,45 @@ def init_chat_db() -> None:
     con.close()
 
 
+# 품목코드 — 완제품/반제품/원자재/부자재 각각 별도 시리즈. (kind → (table, where, prefix))
+#  · 완제품 = product(is_semi=0)  · 반제품 = material(is_semi=1)  · 원자재 = material(raw)  · 부자재 = material(sub)
+ITEM_CODE = {
+    "product": ("product", "COALESCE(is_semi,0)=0", "FG"),
+    "semi":    ("material", "COALESCE(is_semi,0)=1", "SF"),
+    "raw":     ("material", "kind='raw' AND COALESCE(is_semi,0)=0", "RM"),
+    "sub":     ("material", "kind='sub' AND COALESCE(is_semi,0)=0", "SM"),
+}
+
+
+def _max_code_num(con, table, where, prefix):
+    mx = 0
+    for (c,) in con.execute(f"SELECT code FROM {table} WHERE {where} AND code LIKE ?", (prefix + "%",)):
+        try:
+            mx = max(mx, int(str(c)[len(prefix):]))
+        except (ValueError, TypeError):
+            pass
+    return mx
+
+
+def next_item_code(con, kind):
+    """그 품목 유형의 다음 코드(예: RM0007). 유형 미상이면 빈 문자열."""
+    spec = ITEM_CODE.get(kind)
+    if not spec:
+        return ""
+    table, where, prefix = spec
+    return f"{prefix}{_max_code_num(con, table, where, prefix) + 1:04d}"
+
+
+def _backfill_item_codes(con):
+    """코드 없는 기존 품목에 유형별 순번 코드 부여 (sort,id 순). 이미 있으면 건너뜀 → 재실행 안전."""
+    for table, where, prefix in ITEM_CODE.values():
+        n = _max_code_num(con, table, where, prefix)
+        for (rid,) in con.execute(
+                f"SELECT id FROM {table} WHERE {where} AND COALESCE(code,'')='' ORDER BY sort, id").fetchall():
+            n += 1
+            con.execute(f"UPDATE {table} SET code=? WHERE id=?", (f"{prefix}{n:04d}", rid))
+
+
 def init_db() -> None:
     con = connect()
     con.executescript(SCHEMA)
@@ -850,6 +889,12 @@ def init_db() -> None:
         CREATE INDEX IF NOT EXISTS idx_matusage_date ON material_usage(date);
         CREATE INDEX IF NOT EXISTS idx_matusage_mat ON material_usage(material_id, date);
         """)
+    # 품목코드 컬럼 + 자동 부여 (완제품 FG / 반제품 SF / 원자재 RM / 부자재 SM · 각 4자리 순번)
+    if "code" not in [r[1] for r in con.execute("PRAGMA table_info(product)")]:
+        con.execute("ALTER TABLE product ADD COLUMN code TEXT DEFAULT ''")
+    if "code" not in [r[1] for r in con.execute("PRAGMA table_info(material)")]:
+        con.execute("ALTER TABLE material ADD COLUMN code TEXT DEFAULT ''")
+    _backfill_item_codes(con)
     con.commit()
     con.close()
 
