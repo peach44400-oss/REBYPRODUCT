@@ -7579,18 +7579,24 @@ async function loadCosts() {
     const margin = r.sell > 0 ? r.sell - cost : null;
     const rate = r.sell > 0 ? margin / r.sell * 100 : null;
     const color = rate == null ? "" : rate < 0 ? "var(--crit)" : rate < 20 ? "#B45309" : "var(--ok)";
+    const std = r.mat_std != null ? r.mat_std : r.mat_cost, act = r.mat_act != null ? r.mat_act : r.mat_cost;
+    const diff = act - std;   // 실제 − 표준 (양수 = 실입고가가 기준보다 비쌈 → 원가 상승)
+    const dpct = std > 0 ? diff / std * 100 : null;
+    const dcol = Math.abs(diff) < 0.5 ? "var(--muted)" : diff > 0 ? "var(--crit)" : "var(--ok)";
     return `<tr>
       <td><button class="uselink" data-cost="${r.id}" style="display:inline-flex; align-items:center; gap:7px;">
         ${r.image ? `<img src="/image/${encodeURIComponent(r.image)}" style="width:26px; height:26px; object-fit:cover; border-radius:5px; border:1px solid var(--line)">` : ""}
         <b>${esc(r.name)}</b></button>
         ${r.missing ? `<span class="chip warn" title="단가 미입력 자재 ${r.missing}종 — 원가가 실제보다 낮음">단가 ${r.missing}종 빠짐</span>` : ""}</td>
       <td class="r">${r.sell > 0 ? NF(r.sell) : '<span class="auto">미입력</span>'}</td>
-      <td class="r">${NF(Math.round(r.mat_cost * 10) / 10)}</td>
+      <td class="r auto">${NF(Math.round(std * 10) / 10)}</td>
+      <td class="r">${NF(Math.round(act * 10) / 10)}</td>
+      <td class="r" style="color:${dcol}; font-weight:700" title="실제 − 표준">${Math.abs(diff) < 0.5 ? "—" : (diff > 0 ? "+" : "") + NF(Math.round(diff * 10) / 10) + (dpct != null ? ` (${diff > 0 ? "+" : ""}${dpct.toFixed(1)}%)` : "")}</td>
       <td class="r">${NF(d.labor_rate)}</td>
       <td class="r" style="font-weight:700">${NF(Math.round(cost * 10) / 10)}</td>
       <td class="r" style="color:${color}">${margin == null ? "—" : NF(Math.round(margin * 10) / 10)}</td>
       <td class="r" style="color:${color}; font-weight:800">${rate == null ? "—" : rate.toFixed(1) + "%"}</td></tr>`;
-  }).join("") || '<tr><td colspan="7" class="auto">배합비가 등록된 제품이 없습니다</td></tr>';
+  }).join("") || '<tr><td colspan="9" class="auto">배합비가 등록된 제품이 없습니다</td></tr>';
 }
 $("anaCostBody").addEventListener("click", e => {
   const b = e.target.closest("[data-cost]"); if (!b || !COSTS) return;
@@ -7599,15 +7605,21 @@ $("anaCostBody").addEventListener("click", e => {
   const cost = r.mat_cost + COSTS.labor_rate;
   $("costHint").textContent = `판매가 ${r.sell > 0 ? "₩" + NF(r.sell) : "미입력"} · 원가 ₩${NF(Math.round(cost * 10) / 10)}`
     + (r.sell > 0 ? ` · 마진 ₩${NF(Math.round((r.sell - cost) * 10) / 10)}` : "");
-  $("costBody").innerHTML = r.detail.map(m => `<tr ${m.price <= 0 ? 'style="color:var(--warn)"' : ""}>
-      <td>${esc(m.name)}${m.price <= 0 ? ' <span class="chip warn">단가 미입력</span>'
+  $("costBody").innerHTML = r.detail.map(m => {
+    const sp = m.std_price != null ? m.std_price : m.price, ap = m.act_price != null ? m.act_price : m.price;
+    const up = m.src === "실입고" && sp > 0 && Math.abs(ap - sp) >= 0.5;   // 실입고가 기준과 다름
+    return `<tr ${ap <= 0 ? 'style="color:var(--warn)"' : ""}>
+      <td>${esc(m.name)}${ap <= 0 ? ' <span class="chip warn">단가 미입력</span>'
         : m.src === "기준" ? ' <span class="chip" title="실입고 단가 기록이 없어 기준 단가로 계산">기준</span>' : ""}</td>
       <td class="r">${NF(m.qty)} ${esc(m.unit)}</td>
-      <td class="r">${m.price > 0 ? NF(m.price) : "—"}</td>
-      <td class="r">${m.cost > 0 ? NF(m.cost) : "—"}</td></tr>`).join("")
-    + `<tr style="font-weight:700; background:var(--bg)"><td>자재비 합계</td><td></td><td></td><td class="r">${NF(Math.round(r.mat_cost * 10) / 10)}</td></tr>
-       <tr style="font-weight:700"><td>노무비 (개당 배분)</td><td></td><td></td><td class="r">${NF(COSTS.labor_rate)}</td></tr>
-       <tr style="font-weight:800; background:var(--bg)"><td>원가 합계</td><td></td><td></td><td class="r">${NF(Math.round(cost * 10) / 10)}</td></tr>`;
+      <td class="r auto">${sp > 0 ? NF(sp) : "—"}</td>
+      <td class="r" ${up ? `style="color:${ap > sp ? "var(--crit)" : "var(--ok)"}; font-weight:700"` : ""}>${ap > 0 ? NF(ap) : "—"}</td>
+      <td class="r">${m.cost > 0 ? NF(m.cost) : "—"}</td></tr>`;
+  }).join("")
+    + `<tr style="font-weight:700; background:var(--bg)"><td>표준 자재비 (기준단가)</td><td></td><td></td><td></td><td class="r">${NF(Math.round((r.mat_std != null ? r.mat_std : r.mat_cost) * 10) / 10)}</td></tr>
+       <tr style="font-weight:700; background:var(--bg)"><td>실제 자재비 (실입고단가)</td><td></td><td></td><td></td><td class="r">${NF(Math.round(r.mat_cost * 10) / 10)}</td></tr>
+       <tr style="font-weight:700"><td>노무비 (개당 배분)</td><td></td><td></td><td></td><td class="r">${NF(COSTS.labor_rate)}</td></tr>
+       <tr style="font-weight:800; background:var(--bg)"><td>원가 합계 (실제)</td><td></td><td></td><td></td><td class="r">${NF(Math.round(cost * 10) / 10)}</td></tr>`;
   $("costOverlay").classList.add("on");
 });
 window.closeCost = () => $("costOverlay").classList.remove("on");

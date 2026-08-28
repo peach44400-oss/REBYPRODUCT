@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.91.1"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.91.2"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -5869,30 +5869,34 @@ def costs(request: Request):
             boms.setdefault(b["product_id"], []).append(b)
 
         def mat_cost_of(rows_b):
-            """제품 배합비(원부재료)만의 1개당 원가 (mat_cost, 단가미입력 수, 상세)."""
-            mat_cost, missing, detail = 0.0, 0, []
+            """제품 배합비(원부재료) 1개당 원가 — 표준(기준단가)·실제(실입고단가) 둘 다.
+            반환: (표준원가, 실제원가, 단가미입력 수, 상세)."""
+            std_cost, act_cost, missing, detail = 0.0, 0.0, 0, []
             for b in rows_b or []:
                 m = mats.get(b["material_id"])
                 if not m:
                     continue
                 mu = (m["unit"] or "").strip()
                 qty = bom_qty_per_unit(m, b)
+                std_price = float(m["unit_price"] or 0)           # 표준 = 기준 단가
                 actual = float(latest.get(b["material_id"]) or 0)
-                price = actual if actual > 0 else float(m["unit_price"] or 0)
-                psrc = "실입고" if actual > 0 else ("기준" if price > 0 else "")
-                cost = qty * price
-                if price <= 0:
+                act_price = actual if actual > 0 else std_price   # 실제 = 실입고 단가(없으면 기준)
+                if act_price <= 0:
                     missing += 1
-                mat_cost += cost
+                std_cost += qty * std_price
+                act_cost += qty * act_price
                 detail.append({"name": m["name"], "qty": round(qty, 5), "unit": mu,
-                               "price": price, "cost": round(cost, 2), "src": psrc})
-            return mat_cost, missing, detail
+                               "price": act_price, "std_price": std_price, "act_price": act_price,
+                               "cost": round(qty * act_price, 2),
+                               "src": "실입고" if actual > 0 else ("기준" if act_price > 0 else "")})
+            return std_cost, act_cost, missing, detail
 
         # 반제품 1개당 원가 = 그 반제품의 원재료 배합비 원가 (롤업용)
         pnames = {r["id"]: r["name"] for r in con.execute("SELECT id, name FROM product")}
-        semi_unit_cost = {}
+        semi_unit_cost = {}   # sid → (표준, 실제) 1개당 원가
         for sid in [r["id"] for r in con.execute("SELECT id FROM product WHERE COALESCE(is_semi,0)=1")]:
-            semi_unit_cost[sid] = mat_cost_of(boms.get(sid))[0]
+            _sc = mat_cost_of(boms.get(sid))
+            semi_unit_cost[sid] = (_sc[0], _sc[1])
         # 완제품별 반제품 재료 구성
         semi_ings = {}
         for si in con.execute("SELECT product_id, semi_id, qty_per_unit FROM semi_ingredient"):
@@ -5906,24 +5910,27 @@ def costs(request: Request):
             if not rows_b and not ings:
                 no_bom += 1
                 continue
-            mat_cost, missing, detail = mat_cost_of(rows_b)
+            mat_std, mat_act, missing, detail = mat_cost_of(rows_b)
             # 반제품 재료 원가 롤업 — 반제품은 '완제품 1배합당' 소요량이므로 1개당 = ÷ 완제품 1배합 생산수량
             by = float(p["batch_yield"] or 0)
             for si in (ings or []):
                 q_batch = float(si["qty_per_unit"] or 0)          # 완제품 1배합당 반제품 소요량
                 q = q_batch / by if by > 0 else 0                 # 완제품 1개당 (수율 없으면 0 — 원가 계산 불가)
-                suc = float(semi_unit_cost.get(si["semi_id"], 0) or 0)
-                cost = q * suc
-                if suc <= 0 or by <= 0:
+                suc_std, suc_act = semi_unit_cost.get(si["semi_id"], (0.0, 0.0))
+                if suc_act <= 0 or by <= 0:
                     missing += 1
-                mat_cost += cost
+                mat_std += q * suc_std
+                mat_act += q * suc_act
                 detail.append({"name": "🧫 " + pnames.get(si["semi_id"], "반제품"),
-                               "qty": round(q, 5), "unit": "", "price": round(suc, 2),
-                               "cost": round(cost, 2), "src": "반제품"})
+                               "qty": round(q, 5), "unit": "", "price": round(suc_act, 2),
+                               "std_price": round(suc_std, 2), "act_price": round(suc_act, 2),
+                               "cost": round(q * suc_act, 2), "src": "반제품"})
             detail.sort(key=lambda x: -x["cost"])
             out.append({"id": p["id"], "name": p["name"], "image": p["image"],
                         "sell": float(p["unit_price"] or 0),
-                        "mat_cost": round(mat_cost, 2), "missing": missing, "detail": detail})
+                        "mat_cost": round(mat_act, 2),   # 기존 호환(실제 재료비)
+                        "mat_std": round(mat_std, 2), "mat_act": round(mat_act, 2),
+                        "missing": missing, "detail": detail})
         return {"labor_rate": round(labor_rate, 2), "labor_total": round(lab),
                 "good_total": good, "since": since, "rows": out, "no_bom": no_bom}
     finally:

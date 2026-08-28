@@ -1275,7 +1275,8 @@
         </h2>
         <div id="anaCostWarn"></div>
         <div class="tbl-wrap"><table>
-          <thead id="anaCostHead"><tr><th>제품명</th><th class="r">판매가(원)</th><th class="r">자재비(원)</th>
+          <thead id="anaCostHead"><tr><th>제품명</th><th class="r">판매가(원)</th>
+            <th class="r" title="배합비 × 기준 단가">표준 자재비</th><th class="r" title="배합비 × 실입고 단가(없으면 기준)">실제 자재비</th><th class="r" title="실제 − 표준 (실입고가가 기준보다 비싸면 +)">차이</th>
             <th class="r">노무비(원)</th><th class="r">원가(원)</th><th class="r">마진(원)</th><th class="r">마진율</th></tr></thead>
           <tbody class="num" id="anaCostBody"></tbody>
         </table></div>
@@ -2217,7 +2218,7 @@
     <h3 id="costTitle">원가 구성</h3>
     <p class="hint" id="costHint"></p>
     <div class="tbl-wrap" style="max-height:56vh; overflow-y:auto;"><table>
-      <thead><tr><th>자재</th><th class="r">1개당 소요</th><th class="r">단가(원)</th><th class="r">금액(원)</th></tr></thead>
+      <thead><tr><th>자재</th><th class="r">1개당 소요</th><th class="r" title="기준 단가">표준단가</th><th class="r" title="최근 실입고 단가">실입고단가</th><th class="r">금액(원)</th></tr></thead>
       <tbody class="num" id="costBody"></tbody>
     </table></div>
     <div class="modal-foot">
