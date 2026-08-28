@@ -4265,13 +4265,20 @@ async function openSoNew() {
   }
 }
 // ── 수주 → 완제품 출고 자동 채우기 (일일 입력) ────────────────────────────
-const SFSO = { orders: [] };
-async function openShipFromSO() {
+const SFSO = { orders: [], target: "ship" };
+async function openShipFromSO(target) {
+  SFSO.target = target === "prod" ? "prod" : "ship";
   if (typeof E === "undefined" || !E.date) { toast("먼저 일일 입력 날짜를 선택하세요"); return; }
   let orders; try { orders = await api("/api/salesorders?status=" + encodeURIComponent("접수")); } catch (e) { return; }
   if (!orders.length) { toast("접수 상태의 주문이 없습니다 (수주 관리에서 접수하세요)"); return; }
   SFSO.orders = orders;
   _sfsoEnsureDom();
+  const isProd = SFSO.target === "prod";
+  $("sfsoTitle").textContent = isProd ? "📥 수주 불러오기 → 생산 계획" : "📥 수주 불러오기 → 완제품 출고";
+  $("sfsoHint").textContent = isProd
+    ? "고른 주문의 제품·수량을 [생산실적]의 '계획'으로 채웁니다."
+    : "고른 주문의 제품·수량·거래처를 [완제품 출고] 행으로 채웁니다. 생산일자(LOT)는 채운 뒤 선택하세요.";
+  $("sfsoDoneWrap").style.display = isProd ? "none" : "";
   $("sfsoBody").innerHTML = orders.map(o => `
     <label style="display:flex; gap:8px; align-items:flex-start; padding:6px 4px; border-bottom:1px solid var(--line-soft); cursor:pointer;">
       <input type="checkbox" data-sfso="${o.id}" checked style="margin-top:3px;">
@@ -4283,10 +4290,10 @@ function _sfsoEnsureDom() {
   if ($("sfsoOverlay")) return;
   const ov = document.createElement("div"); ov.className = "overlay"; ov.id = "sfsoOverlay";
   ov.innerHTML = `<div class="modal" style="width:min(560px,95vw);">
-    <h3 style="margin:0 0 4px;">📥 수주 불러오기 → 완제품 출고</h3>
-    <p class="hint">고른 주문의 제품·수량·거래처를 아래 [완제품 출고] 행으로 채웁니다. 생산일자(LOT)는 채운 뒤 선택하세요.</p>
+    <h3 style="margin:0 0 4px;" id="sfsoTitle">📥 수주 불러오기</h3>
+    <p class="hint" id="sfsoHint"></p>
     <div id="sfsoBody" style="max-height:52vh; overflow:auto; border:1px solid var(--line); border-radius:8px; padding:4px 8px;"></div>
-    <label style="display:inline-flex; align-items:center; gap:6px; margin-top:10px; font-size:13px;">
+    <label id="sfsoDoneWrap" style="display:inline-flex; align-items:center; gap:6px; margin-top:10px; font-size:13px;">
       <input type="checkbox" id="sfsoDone" checked> 불러온 주문을 '완료'로 처리</label>
     <div class="modal-foot"><button class="btn" id="sfsoCancel">취소</button><button class="btn primary" id="sfsoApply">불러오기</button></div></div>`;
   document.body.appendChild(ov);
@@ -4301,17 +4308,23 @@ async function _sfsoApply() {
   picked.forEach(oid => {
     const o = SFSO.orders.find(x => x.id === oid); if (!o) return;
     (o.items || []).forEach(it => {
-      if (it.product_id && it.qty > 0) { E.ship.push({ product_id: it.product_id, partner_id: o.partner_id || null, qty: it.qty, prod_date: "", lotExpiry: "", lotNo: 0 }); added++; }
+      if (it.product_id && it.qty > 0) {
+        if (SFSO.target === "prod") E.prod.push({ product_id: it.product_id, line_id: null, batches: "", plan_qty: it.qty, prod_qty: "", defect_qty: "", lotSplits: [], expiry: "" });
+        else E.ship.push({ product_id: it.product_id, partner_id: o.partner_id || null, qty: it.qty, prod_date: "", lotExpiry: "", lotNo: 0 });
+        added++;
+      }
     });
   });
   if (!added) { toast("불러올 품목이 없습니다"); return; }
-  E.dirty = true; renderShip();
-  const done = $("sfsoDone").checked;
+  E.dirty = true;
+  if (SFSO.target === "prod") renderProd(); else renderShip();
+  const done = SFSO.target !== "prod" && $("sfsoDone").checked;
   if (done) for (const oid of picked) { try { await api("/api/salesorder/" + oid, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "완료" }) }); } catch (e) { } }
   $("sfsoOverlay").classList.remove("on");
-  toast(`수주 ${picked.length}건 · ${added}개 품목을 출고에 불러왔습니다${done ? " (주문 완료 처리)" : ""} — 확인 후 💾 저장하세요`);
+  toast(`수주 ${picked.length}건 · ${added}개 품목을 ${SFSO.target === "prod" ? "생산 계획" : "출고"}에 불러왔습니다${done ? " (주문 완료 처리)" : ""} — 확인 후 💾 저장하세요`);
 }
-{ const b = $("shipFromSO"); if (b) b.onclick = openShipFromSO; }
+{ const b = $("shipFromSO"); if (b) b.onclick = () => openShipFromSO("ship");
+  const b2 = $("prodFromSO"); if (b2) b2.onclick = () => openShipFromSO("prod"); }
 async function _soSave() {
   const items = [...document.querySelectorAll("#soItems .so-irow")].map(r => {
     const nm = r.querySelector(".so-prod").value.trim();
