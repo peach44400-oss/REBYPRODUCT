@@ -1016,10 +1016,8 @@ async function loadProdReport() {
         const close = r.open + r.prod - r.ship - disp;
         const amt = r.amount || 0;   // 거래처별 단가 반영 재고금액 (서버 계산)
         tO += r.open; tP += r.prod; tS += r.ship; tD += disp; tC += close; tAmt += amt;
-        const hasLots = (r.lots || []).length > 0;
-        const nameCell = hasLots
-          ? `<button class="uselink" data-plot="${i}" title="LOT·소비기한·금액 상세 보기"><b>${esc(r.name)}</b></button>`
-          : `<b>${esc(r.name)}</b>`;
+        // 제품명 클릭 → 생산·출고 이력(+현재 LOT). 재고 0(전량 출고)이어도 항상 클릭 가능.
+        const nameCell = `<button class="uselink" data-phist="${r.id}" title="생산·출고 이력·재고 LOT 보기"><b>${esc(r.name)}</b></button>`;
         // 거래처별 단가가 섞여 기본단가×수량과 다르면 금액 옆에 * 표시(제품 클릭 시 상세)
         const mixed = r.amount != null && r.unit_price && Math.abs(amt - close * r.unit_price) > 1;
         return `<tr><td>${nameCell}</td><td class="r">${NF(r.open)}</td>
@@ -1082,6 +1080,8 @@ async function loadProdReport() {
   applyProdFilter();
 }
 $("prodSections").addEventListener("click", e => {
+  const ph = e.target.closest("[data-phist]");
+  if (ph) { e.preventDefault(); openProdHistory(+ph.dataset.phist); return; }   // 제품명 → 생산·출고 이력
   const lot = e.target.closest("[data-plot]");
   if (lot) { e.preventDefault(); openStockLot(+lot.dataset.plot); return; }
   const h = e.target.closest("[data-ptoggle]");
@@ -4086,7 +4086,8 @@ async function woQuery() {
   $("woPrintBtn").style.display = (d.items || []).length ? "" : "none";
 }
 function workorderSheetHtml(d) {
-  const TD = "border:1px solid #333; padding:4px 7px; font-size:12px;";
+  const TD = "border:1px solid #333; padding:4px 7px; font-size:12px; word-break:keep-all; overflow-wrap:anywhere;";
+  const TB = "width:100%; border-collapse:collapse; table-layout:fixed;";   // 고정 폭 → 화면·인쇄 동일
   const irows = (d.items || []).map((it, i) => `<tr>
     <td style="${TD} text-align:center;">${i + 1}</td>
     <td style="${TD} text-align:center;">${esc(it.line || "—")}</td>
@@ -4094,31 +4095,33 @@ function workorderSheetHtml(d) {
     <td style="${TD} text-align:center;">${esc(it.spec || "")}</td>
     <td style="${TD} text-align:right; font-weight:700;">${NF(it.plan_qty)}</td>
     <td style="${TD} text-align:right;">${it.batches ? NF(it.batches) : "—"}</td>
-    <td style="${TD} width:70px;"></td><td style="${TD} width:64px;"></td></tr>`).join("")
+    <td style="${TD}"></td><td style="${TD}"></td></tr>`).join("")
     || `<tr><td style="${TD} text-align:center; color:#999;" colspan="8">이 날짜의 생산 계획이 없습니다 (일일 입력에서 계획수량을 넣으세요)</td></tr>`;
   const mrows = (d.materials || []).map((m, i) => `<tr>
     <td style="${TD} text-align:center;">${i + 1}</td>
     <td style="${TD}">${m.semi ? "🧫 " : ""}${esc(m.name)}</td>
     <td style="${TD} text-align:right; font-weight:700;">${NF(m.need)}</td>
     <td style="${TD} text-align:center;">${esc(m.unit)}</td>
-    <td style="${TD} width:90px;"></td></tr>`).join("")
+    <td style="${TD}"></td></tr>`).join("")
     || `<tr><td style="${TD} text-align:center; color:#999;" colspan="5">배합비가 등록된 계획 제품이 없습니다</td></tr>`;
   return `<div id="woSheet" style="background:#fff; color:#111; max-width:820px; margin:0 auto; padding:6px;">
     <div style="text-align:center; font-size:22px; font-weight:800; letter-spacing:6px; margin:4px 0 2px;">작 업 지 시 서</div>
     <div style="text-align:center; font-size:13px; color:#555; margin-bottom:10px;">작업일자 ${esc(d.date)} (${dowOf(d.date)})</div>
     <div style="font-weight:800; font-size:13px; margin:8px 0 4px;">■ 생산 지시</div>
-    <table style="width:100%; border-collapse:collapse;">
+    <table style="${TB}">
+      <colgroup><col style="width:4%"><col style="width:12%"><col style="width:31%"><col style="width:9%"><col style="width:12%"><col style="width:8%"><col style="width:14%"><col style="width:10%"></colgroup>
       <thead><tr>
-        <th style="${TD} background:#f0f0f0; width:30px;">No</th><th style="${TD} background:#f0f0f0; width:70px;">라인</th>
-        <th style="${TD} background:#f0f0f0;">제품</th><th style="${TD} background:#f0f0f0; width:80px;">규격</th>
-        <th style="${TD} background:#f0f0f0; width:80px;">계획수량</th><th style="${TD} background:#f0f0f0; width:60px;">배합수</th>
+        <th style="${TD} background:#f0f0f0;">No</th><th style="${TD} background:#f0f0f0;">라인</th>
+        <th style="${TD} background:#f0f0f0;">제품</th><th style="${TD} background:#f0f0f0;">규격</th>
+        <th style="${TD} background:#f0f0f0;">계획수량</th><th style="${TD} background:#f0f0f0;">배합수</th>
         <th style="${TD} background:#f0f0f0;">생산실적</th><th style="${TD} background:#f0f0f0;">담당</th></tr></thead>
       <tbody>${irows}</tbody></table>
     <div style="font-weight:800; font-size:13px; margin:14px 0 4px;">■ 소요 원부재료 (계획 기준)</div>
-    <table style="width:100%; border-collapse:collapse;">
+    <table style="${TB}">
+      <colgroup><col style="width:5%"><col style="width:47%"><col style="width:18%"><col style="width:10%"><col style="width:20%"></colgroup>
       <thead><tr>
-        <th style="${TD} background:#f0f0f0; width:30px;">No</th><th style="${TD} background:#f0f0f0;">자재명</th>
-        <th style="${TD} background:#f0f0f0; width:100px;">소요량</th><th style="${TD} background:#f0f0f0; width:50px;">단위</th>
+        <th style="${TD} background:#f0f0f0;">No</th><th style="${TD} background:#f0f0f0;">자재명</th>
+        <th style="${TD} background:#f0f0f0;">소요량</th><th style="${TD} background:#f0f0f0;">단위</th>
         <th style="${TD} background:#f0f0f0;">불출 확인</th></tr></thead>
       <tbody>${mrows}</tbody></table>
     <div style="display:flex; gap:20px; margin-top:16px; font-size:12px;">
@@ -4130,7 +4133,9 @@ function woPrint() {
   const w = window.open("", "_blank");
   if (!w) { toast("팝업이 차단되었습니다 — 팝업 허용 후 다시 시도하세요"); return; }
   w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>작업지시서 ${esc(WO.data.date)}</title>
-    <style>body{font-family:'맑은 고딕',sans-serif; margin:12mm;} @media print{ .noprint{display:none;} }</style></head>
+    <style>@page{ size:A4 portrait; margin:12mm; } body{font-family:'맑은 고딕',sans-serif; margin:0;}
+      table{ page-break-inside:auto; } tr{ page-break-inside:avoid; }
+      @media print{ .noprint{display:none;} }</style></head>
     <body><div class="noprint" style="text-align:center; margin-bottom:10px;"><button onclick="window.print()" style="padding:6px 16px; font-size:14px;">🖨 인쇄</button></div>
     ${workorderSheetHtml(WO.data)}</body></html>`);
   w.document.close();
