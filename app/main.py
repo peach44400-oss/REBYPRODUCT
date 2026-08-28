@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.96.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.96.1"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -4278,6 +4278,52 @@ def salesorder_del(oid: int, request: Request):
         audit(con, "salesorder_del", f"수주 삭제 #{oid}")
         con.commit()
         return {"ok": True}
+    finally:
+        con.close()
+
+
+# ── 손익 요약 (매출 − 매입 − 노무 = 간이 이익) ──────────────────────────
+_LABOR_EXPR = ("(SELECT COALESCE(SUM(s.wage * CASE WHEN sm.hours>0 THEN sm.hours ELSE st.work_hours END),0)"
+               "   FROM staffing_member sm JOIN staff s ON s.id=sm.staff_id WHERE sm.staffing_id=st.id)"
+               " + COALESCE((SELECT SUM(sa.hours * sa.wage) FROM staffing_agency sa WHERE sa.staffing_id=st.id),"
+               "            st.agency_hours * st.agency_wage)")
+
+
+@app.get("/api/pnl")
+def pnl(request: Request, frm: str = "", to: str = ""):
+    """간이 손익 — 매출(출고) − 매입(입고) − 노무비. 항목은 각 금액 권한별로 마스킹."""
+    if not mcan(request, "ship_amt"):
+        raise HTTPException(403, "출고 금액 열람 권한이 없습니다")
+    con = connect()
+    try:
+        today = dt.date.today()
+        frm = frm or today.replace(month=1, day=1).isoformat()
+        to = to or today.isoformat()
+        prm = (frm, to)
+        see_buy = mcan(request, "mat_amt")
+        see_labor = mcan(request, "labor_amt")
+        sales_m = {r["m"]: float(r["v"] or 0) for r in con.execute(f"""
+            SELECT substr(s.date,1,7) m, SUM({_SALES_EXPR}) v FROM shipment s JOIN product p ON p.id=s.product_id
+            WHERE s.date BETWEEN ? AND ? AND s.qty>0 GROUP BY m""", prm)}
+        buy_m = {r["m"]: float(r["v"] or 0) for r in con.execute(f"""
+            SELECT substr(mi.date,1,7) m, SUM(mi.qty * COALESCE(NULLIF(mi.price,0), mat.unit_price)) v
+            FROM material_in mi JOIN material mat ON mat.id=mi.material_id
+            WHERE mi.date BETWEEN ? AND ? AND mi.qty>0 GROUP BY m""", prm)} if see_buy else {}
+        labor_m = {r["m"]: float(r["v"] or 0) for r in con.execute(f"""
+            SELECT substr(st.date,1,7) m, COALESCE(SUM({_LABOR_EXPR}),0) v FROM staffing st
+            WHERE st.date BETWEEN ? AND ? GROUP BY m""", prm)} if see_labor else {}
+        months = sorted(set(sales_m) | set(buy_m) | set(labor_m))
+        rows_ = []
+        for m in months:
+            sv, bv, lv = round(sales_m.get(m, 0)), round(buy_m.get(m, 0)), round(labor_m.get(m, 0))
+            row = {"month": m, "sales": sv, "buy": (bv if see_buy else None), "labor": (lv if see_labor else None)}
+            row["profit"] = (sv - bv - lv) if (see_buy and see_labor) else None
+            rows_.append(row)
+        tot = {"sales": sum(r["sales"] for r in rows_),
+               "buy": (sum(r["buy"] for r in rows_) if see_buy else None),
+               "labor": (sum(r["labor"] for r in rows_) if see_labor else None)}
+        tot["profit"] = (tot["sales"] - tot["buy"] - tot["labor"]) if (see_buy and see_labor) else None
+        return {"from": frm, "to": to, "rows": rows_, "total": tot, "see_buy": see_buy, "see_labor": see_labor}
     finally:
         con.close()
 
