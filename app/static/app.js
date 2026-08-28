@@ -4221,12 +4221,12 @@ function _soEnsureDom() {
   ov.innerHTML = `<div class="modal" style="width:min(620px,96vw);">
     <h3 style="margin:0 0 8px;">＋ 새 주문 접수</h3>
     <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:8px;">
-      <label style="font-size:13px;">거래처 <select id="soPartner" class="inp sm" style="min-width:170px; margin-left:4px;"></select></label>
+      <label style="font-size:13px;">거래처 <input id="soPartner" class="inp sm" list="soPartnerDl" placeholder="🔍 거래처 검색·선택" autocomplete="off" style="min-width:190px; margin-left:4px;"><datalist id="soPartnerDl"></datalist></label>
       <label style="font-size:13px;">주문일 <input type="date" id="soDate" class="inp sm"></label>
       <label style="font-size:13px;">납기 <input type="date" id="soDue" class="inp sm"></label></div>
     <div style="font-weight:700; font-size:13px; margin:6px 0 4px;">주문 품목 <span id="soSrcHint" class="auto" style="font-weight:400; font-size:11px;"></span></div>
     <div id="soItems"></div>
-    <button class="btn ghost sm" id="soAddItem" style="margin-top:6px;">＋ 품목 추가</button>
+    <div style="display:flex; gap:6px; margin-top:6px;"><button class="btn ghost sm" id="soAddItem">＋ 품목 추가</button><button class="btn ghost sm" id="soLoadProd" title="최근 생산분 제품·수량을 확인하고 추가">📥 생산분 불러오기</button></div>
     <div style="margin-top:8px;"><input id="soNote" class="inp" placeholder="비고" style="width:100%;"></div>
     <datalist id="soProdDl">${(M.product || []).filter(p => p.status !== "단종").map(p => `<option value="${esc(p.name)}">`).join("")}</datalist>
     <div class="modal-foot"><button class="btn" id="soCancel">취소</button><button class="btn primary" id="soSave">저장</button></div></div>`;
@@ -4234,6 +4234,7 @@ function _soEnsureDom() {
   ov.addEventListener("click", e => { if (e.target === ov) ov.classList.remove("on"); });
   $("soCancel").onclick = () => ov.classList.remove("on");
   $("soAddItem").onclick = () => _soAddRow();
+  $("soLoadProd").onclick = _soLoadProd;
   $("soSave").onclick = _soSave;
   $("soItems").addEventListener("click", e => { const d = e.target.closest("[data-soitemdel]"); if (d) d.closest(".so-irow").remove(); });
 }
@@ -4245,24 +4246,28 @@ function _soAddRow(name, qty) {
     <button class="btn ghost sm" data-soitemdel style="color:var(--crit);">✕</button>`;
   $("soItems").appendChild(row);
 }
-async function openSoNew() {
+function openSoNew() {
   _soEnsureDom();
   const parts = (M.partner || []).filter(p => p.status !== "중지")
     .sort((a, b) => (pHasType(b, "판매처") - pHasType(a, "판매처")) || a.name.localeCompare(b.name, "ko"));
-  $("soPartner").innerHTML = `<option value="">거래처 선택</option>` + parts.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
+  $("soPartnerDl").innerHTML = parts.map(p => `<option value="${esc(p.name)}">`).join("");
+  $("soPartner").value = "";
   $("soDate").value = todayISO(); $("soDue").value = ""; $("soNote").value = "";
-  $("soItems").innerHTML = "";
+  $("soItems").innerHTML = ""; _soAddRow(); _soAddRow();
+  const h = $("soSrcHint"); if (h) h.textContent = "· 제품명은 목록에서 선택 · [📥 생산분 불러오기]로 최근 생산분을 추가할 수 있어요";
   $("soOverlay").classList.add("on");
-  // 기본값: 최근 생산분 제품·수량을 미리 채운다 (사용자가 지우거나 수정 가능)
-  let lp = null;
-  try { lp = await api("/api/lastproduced"); } catch (e) { }
-  if (lp && lp.items && lp.items.length) {
-    lp.items.forEach(it => _soAddRow(it.name, it.qty));
-    const h = $("soSrcHint"); if (h) h.textContent = `· ${lp.date} 생산분 자동 표시 (필요 없으면 ✕로 지우세요)`;
-  } else {
-    _soAddRow(); _soAddRow();
-    const h = $("soSrcHint"); if (h) h.textContent = "";
-  }
+}
+// 최근 생산분을 확인하고 주문 품목에 추가 (버튼 클릭 시)
+async function _soLoadProd() {
+  let lp; try { lp = await api("/api/lastproduced"); } catch (e) { return; }
+  if (!lp.items || !lp.items.length) { toast("최근 생산 기록이 없습니다"); return; }
+  const names = lp.items.slice(0, 6).map(it => it.name + " " + NF(it.qty)).join(", ") + (lp.items.length > 6 ? " 외 " + (lp.items.length - 6) + "종" : "");
+  if (!confirm(lp.date + " 생산분 " + lp.items.length + "종을 주문 품목에 추가할까요? (" + names + ")")) return;
+  [...document.querySelectorAll("#soItems .so-irow")].forEach(r => {
+    if (!r.querySelector(".so-prod").value.trim() && !r.querySelector(".so-qty").value.trim()) r.remove();
+  });
+  lp.items.forEach(it => _soAddRow(it.name, it.qty));
+  const h = $("soSrcHint"); if (h) h.textContent = "· " + lp.date + " 생산분 " + lp.items.length + "종 추가됨 (필요 없는 건 ✕로 지우세요)";
 }
 // ── 수주 → 완제품 출고 자동 채우기 (일일 입력) ────────────────────────────
 const SFSO = { orders: [], target: "ship" };
@@ -4332,7 +4337,9 @@ async function _soSave() {
     return { product_id: p ? p.id : null, name: nm, qty: Number((r.querySelector(".so-qty").value || "").replace(/,/g, "")) };
   }).filter(it => it.product_id && it.qty > 0);
   if (!items.length) { toast("제품과 수량을 입력하세요 (제품명은 목록에서 선택)"); return; }
-  const body = { partner_id: +$("soPartner").value || null, date: $("soDate").value, due: $("soDue").value, note: $("soNote").value, items };
+  const pnm = $("soPartner").value.trim();
+  const pp = (M.partner || []).find(x => x.name === pnm);
+  const body = { partner_id: pp ? pp.id : null, date: $("soDate").value, due: $("soDue").value, note: $("soNote").value, items };
   try { await api("/api/salesorder", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); }
   catch (e) { return; }
   $("soOverlay").classList.remove("on"); toast("주문이 접수되었습니다"); loadSalesOrders();
