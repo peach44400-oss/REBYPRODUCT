@@ -98,7 +98,7 @@ async function reloadMaster(t) {
 }
 
 /* ── 네비게이션 ─────────────────────── */
-const TITLES = { dash: "대시보드", prod: "생산 현황", workorder: "작업지시서", ship: "출고 현황", invoice: "거래명세서", recv: "미수금", postat: "발주 현황", entry: "일일 입력", lot: "LOT 관리", matstat: "자재 현황", sched: "주간 스케줄", items: "기준정보 관리", ana: "분석", lookup: "기록 조회", memos: "특이사항", staff: "인원 관리" };
+const TITLES = { dash: "대시보드", prod: "생산 현황", workorder: "작업지시서", ship: "출고 현황", invoice: "거래명세서", recv: "미수금", salesrep: "매출 통계", postat: "발주 현황", entry: "일일 입력", lot: "LOT 관리", matstat: "자재 현황", sched: "주간 스케줄", items: "기준정보 관리", ana: "분석", lookup: "기록 조회", memos: "특이사항", staff: "인원 관리" };
 /* 표 검색(필터)은 화면·탭을 옮기면 초기화한다.
    남아 있으면 다른 화면에서 '등록된 항목이 없습니다'만 보여 데이터가 없는 것처럼 오해하게 된다.
    ※ 행 추가용 검색(qaProd 등)은 필터가 아니라 입력칸이므로 대상 아님. */
@@ -139,7 +139,7 @@ $("nav").addEventListener("click", e => {
   $("scrTitle").textContent = TITLES[b.dataset.scr];
   resetSearches();
   const fn = { dash: loadDash, prod: loadProd, ship: loadShip, entry: openEntry, lot: loadLot, items: renderMasters, ana: loadAna, lookup: () => lkCal.render(),
-    postat: loadPoStat, memos: loadMemos, matstat: loadMatStatus, sched: () => loadSchedule(), invoice: loadInvoice, recv: loadReceivables, workorder: loadWorkorder,
+    postat: loadPoStat, memos: loadMemos, matstat: loadMatStatus, sched: () => loadSchedule(), invoice: loadInvoice, recv: loadReceivables, workorder: loadWorkorder, salesrep: loadSalesRep,
     staff: () => { STAFF.mode = "d"; STAFF.date = todayISO();   // 진입 시 항상 일별·오늘로 초기화
       document.querySelectorAll("#staffTabs button").forEach(x => x.classList.toggle("on", x.dataset.sh === "d"));
       loadStaff(); } }[b.dataset.scr];
@@ -4072,6 +4072,47 @@ async function _recvAdd() {
   toast("수금이 저장되었습니다");
   openRecvLedger(body.partner_id); loadReceivables();
 }
+// ── 매출 통계 ──────────────────────────────────────────────────────────
+const SREP = { data: null, tab: "partner" };
+function loadSalesRep() {
+  const t = todayISO();
+  if (!$("srFrom").value) $("srFrom").value = t.slice(0, 4) + "-01-01";
+  if (!$("srTo").value) $("srTo").value = t;
+  if (!SREP.data) srQuery();
+}
+async function srQuery() {
+  let d; try { d = await api(`/api/salesreport?frm=${$("srFrom").value}&to=${$("srTo").value}`); } catch (e) { return; }
+  SREP.data = d;
+  renderSalesRep();
+}
+function renderSalesRep() {
+  const d = SREP.data; if (!d) return;
+  $("srSummary").innerHTML = `기간 ${esc(d.from)} ~ ${esc(d.to)} · 총 매출 <span style="color:var(--ok)">₩${NF(d.total.amount)}</span> · 수량 ${NF(d.total.qty)}`;
+  const tab = SREP.tab;
+  const tot = d.total.amount || 1;
+  if (tab === "partner" || tab === "product") {
+    const arr = tab === "partner" ? d.by_partner : d.by_product;
+    $("srHead").innerHTML = `<tr><th>${tab === "partner" ? "거래처" : "제품"}</th><th class="r">수량</th><th class="r">매출액(원)</th><th class="r">비중</th></tr>`;
+    $("srBody").innerHTML = arr.map(r => `<tr>
+      <td>${tab === "product" && r.code ? `<span class="num auto" style="font-size:10.5px;">${esc(r.code)}</span> ` : ""}<b>${esc(r.name)}</b></td>
+      <td class="r">${NF(r.qty)}</td><td class="r" style="font-weight:700;">${NF(r.amount)}</td>
+      <td class="r auto">${(r.amount / tot * 100).toFixed(1)}%</td></tr>`).join("")
+      || `<tr><td colspan="4" class="auto" style="padding:16px; text-align:center;">기간 내 매출이 없습니다</td></tr>`;
+  } else {
+    $("srHead").innerHTML = `<tr><th>월</th><th class="r">수량</th><th class="r">매출액(원)</th></tr>`;
+    $("srBody").innerHTML = d.by_month.map(r => `<tr>
+      <td><b>${esc(r.month)}</b></td><td class="r">${NF(r.qty)}</td><td class="r" style="font-weight:700;">${NF(r.amount)}</td></tr>`).join("")
+      || `<tr><td colspan="3" class="auto" style="padding:16px; text-align:center;">기간 내 매출이 없습니다</td></tr>`;
+  }
+}
+$("srTabs").addEventListener("click", e => {
+  const b = e.target.closest("[data-srtab]"); if (!b) return;
+  SREP.tab = b.dataset.srtab;
+  [...$("srTabs").children].forEach(x => x.classList.toggle("on", x === b));
+  renderSalesRep();
+});
+$("srLoad").onclick = srQuery;
+$("srCsv").onclick = () => tableToCsv($("srHead"), $("srBody"), csvName("매출통계_" + SREP.tab, todayISO()));
 // ── 작업지시서 ─────────────────────────────────────────────────────────
 const WO = { data: null };
 function loadWorkorder() {
@@ -9822,6 +9863,7 @@ async function startApp(me) {
   $("navPoStat").style.display = canStock ? "" : "none";   // 발주 현황 탭 — 자재 담당·admin
   { const iv = $("navInvoice"); if (iv) iv.style.display = (canM("prod_price") || canM("ship_amt")) ? "" : "none"; }   // 거래명세서 — 단가 열람 권한
   { const rv = $("navRecv"); if (rv) rv.style.display = canM("ship_amt") ? "" : "none"; }   // 미수금 — 출고 금액 권한
+  { const sr = $("navSalesRep"); if (sr) sr.style.display = canM("ship_amt") ? "" : "none"; }   // 매출 통계 — 출고 금액 권한
   api("/api/mysign").then(s => { MYSIGN.img = s.img || ""; }).catch(() => { });   // 내 사인 (발주서 서명란)
   $("dbStatus").innerHTML = `🟢 제품 ${M.product.length} · 자재 ${M.raw.length + M.sub.length}`;
   // 권한 실시간 반영: admin이 권한을 바꾸면(서버 세션은 즉시 교체됨) 화면도 20초 내 자동 새로고침

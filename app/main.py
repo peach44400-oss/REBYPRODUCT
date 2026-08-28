@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.94.2"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.95.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -4141,6 +4141,40 @@ def workorder(request: Request, date: str = ""):
                 matlist.append({"name": m["name"], "unit": m["unit"] or "", "need": round(q, 2), "semi": bool(m["is_semi"])})
         matlist.sort(key=lambda x: (0 if x["semi"] else 1, x["name"]))
         return {"date": date, "items": items, "materials": matlist}
+    finally:
+        con.close()
+
+
+# ── 매출 통계 (거래처별·제품별·월별 매출액) ──────────────────────────────
+@app.get("/api/salesreport")
+def salesreport(request: Request, frm: str = "", to: str = ""):
+    if not mcan(request, "ship_amt"):
+        raise HTTPException(403, "출고 금액 열람 권한이 없습니다")
+    con = connect()
+    try:
+        today = dt.date.today()
+        frm = frm or today.replace(month=1, day=1).isoformat()
+        to = to or today.isoformat()
+        prm = (frm, to)
+        by_partner = rows(con.execute(f"""
+            SELECT COALESCE(pa.name,'거래처 미지정') name, SUM(s.qty) qty, SUM({_SALES_EXPR}) amount
+            FROM shipment s JOIN product p ON p.id=s.product_id
+            LEFT JOIN partner pa ON pa.id=s.partner_id
+            WHERE s.date BETWEEN ? AND ? AND s.qty>0 GROUP BY s.partner_id ORDER BY amount DESC""", prm))
+        by_product = rows(con.execute(f"""
+            SELECT COALESCE(p.code,'') code, p.name, SUM(s.qty) qty, SUM({_SALES_EXPR}) amount
+            FROM shipment s JOIN product p ON p.id=s.product_id
+            WHERE s.date BETWEEN ? AND ? AND s.qty>0 GROUP BY p.id ORDER BY amount DESC""", prm))
+        by_month = rows(con.execute(f"""
+            SELECT substr(s.date,1,7) month, SUM(s.qty) qty, SUM({_SALES_EXPR}) amount
+            FROM shipment s JOIN product p ON p.id=s.product_id
+            WHERE s.date BETWEEN ? AND ? AND s.qty>0 GROUP BY month ORDER BY month""", prm))
+        for arr in (by_partner, by_product, by_month):
+            for r in arr:
+                r["qty"] = round(r["qty"] or 0)
+                r["amount"] = round(r["amount"] or 0)
+        total = {"qty": sum(r["qty"] for r in by_partner), "amount": sum(r["amount"] for r in by_partner)}
+        return {"from": frm, "to": to, "by_partner": by_partner, "by_product": by_product, "by_month": by_month, "total": total}
     finally:
         con.close()
 

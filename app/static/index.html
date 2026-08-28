@@ -776,6 +776,10 @@
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 1.5v13M11 4.2c0-1.2-1.3-2-3-2s-3 .8-3 2 1.3 1.7 3 2 3 1 3 2.3-1.3 2.2-3 2.2-3-.9-3-2.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
         <em>미수금</em>
       </button>
+      <button data-scr="salesrep" id="navSalesRep" title="매출 통계 — 거래처별·제품별·월별 매출액">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2.5 13.5V9m4 4.5V4m4 9.5V6.5m0-2.5-3-1.5M2.5 13.5h11" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <em>매출 통계</em>
+      </button>
 
       <div class="nav-sep"><span>원가 · 분석</span></div>
       <button data-scr="ana">
@@ -1051,6 +1055,31 @@
         <div class="tbl-wrap"><table>
           <thead><tr><th>거래처</th><th class="r">매출 누계(원)</th><th class="r">수금 누계(원)</th><th class="r">미수 잔액(원)</th><th></th></tr></thead>
           <tbody class="num" id="recvBody"></tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <!-- 매출 통계 -->
+    <section class="screen" id="scr-salesrep">
+      <div class="card">
+        <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+          <h2 style="margin:0;">📊 매출 통계</h2>
+          <span class="auto" style="font-size:12px;">기간 내 출고 기준 매출액 · 거래처별 / 제품별 / 월별</span>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:12px;">
+          <label style="font-size:13px;">기간
+            <input type="date" id="srFrom" class="inp sm" style="margin-left:5px;"><span>~</span><input type="date" id="srTo" class="inp sm"></label>
+          <button class="btn primary sm" id="srLoad">조회</button>
+          <div class="tabs" id="srTabs" style="border-bottom:0; margin:0 0 0 6px;">
+            <button class="on" data-srtab="partner">거래처별</button>
+            <button data-srtab="product">제품별</button>
+            <button data-srtab="month">월별</button>
+          </div>
+          <button class="btn ghost sm" id="srCsv" style="margin-left:auto;">📄 엑셀(CSV)</button>
+        </div>
+        <div id="srSummary" style="margin:12px 0; font-weight:700;"></div>
+        <div class="tbl-wrap"><table>
+          <thead id="srHead"></thead><tbody class="num" id="srBody"></tbody>
         </table></div>
       </div>
     </section>
