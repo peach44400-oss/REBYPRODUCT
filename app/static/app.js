@@ -4224,7 +4224,7 @@ function _soEnsureDom() {
       <label style="font-size:13px;">거래처 <select id="soPartner" class="inp sm" style="min-width:170px; margin-left:4px;"></select></label>
       <label style="font-size:13px;">주문일 <input type="date" id="soDate" class="inp sm"></label>
       <label style="font-size:13px;">납기 <input type="date" id="soDue" class="inp sm"></label></div>
-    <div style="font-weight:700; font-size:13px; margin:6px 0 4px;">주문 품목</div>
+    <div style="font-weight:700; font-size:13px; margin:6px 0 4px;">주문 품목 <span id="soSrcHint" class="auto" style="font-weight:400; font-size:11px;"></span></div>
     <div id="soItems"></div>
     <button class="btn ghost sm" id="soAddItem" style="margin-top:6px;">＋ 품목 추가</button>
     <div style="margin-top:8px;"><input id="soNote" class="inp" placeholder="비고" style="width:100%;"></div>
@@ -4245,14 +4245,24 @@ function _soAddRow(name, qty) {
     <button class="btn ghost sm" data-soitemdel style="color:var(--crit);">✕</button>`;
   $("soItems").appendChild(row);
 }
-function openSoNew() {
+async function openSoNew() {
   _soEnsureDom();
   const parts = (M.partner || []).filter(p => p.status !== "중지")
     .sort((a, b) => (pHasType(b, "판매처") - pHasType(a, "판매처")) || a.name.localeCompare(b.name, "ko"));
   $("soPartner").innerHTML = `<option value="">거래처 선택</option>` + parts.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
   $("soDate").value = todayISO(); $("soDue").value = ""; $("soNote").value = "";
-  $("soItems").innerHTML = ""; _soAddRow(); _soAddRow();
+  $("soItems").innerHTML = "";
   $("soOverlay").classList.add("on");
+  // 기본값: 최근 생산분 제품·수량을 미리 채운다 (사용자가 지우거나 수정 가능)
+  let lp = null;
+  try { lp = await api("/api/lastproduced"); } catch (e) { }
+  if (lp && lp.items && lp.items.length) {
+    lp.items.forEach(it => _soAddRow(it.name, it.qty));
+    const h = $("soSrcHint"); if (h) h.textContent = `· ${lp.date} 생산분 자동 표시 (필요 없으면 ✕로 지우세요)`;
+  } else {
+    _soAddRow(); _soAddRow();
+    const h = $("soSrcHint"); if (h) h.textContent = "";
+  }
 }
 // ── 수주 → 완제품 출고 자동 채우기 (일일 입력) ────────────────────────────
 const SFSO = { orders: [] };

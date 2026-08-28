@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.96.1"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.96.2"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -4232,6 +4232,25 @@ def salesorders(request: Request, status: str = "", limit: int = 200):
                 o["items"] = []
             o["qty_total"] = round(sum(float(it.get("qty") or 0) for it in o["items"]), 2)
         return orders
+    finally:
+        con.close()
+
+
+@app.get("/api/lastproduced")
+def lastproduced(request: Request, date: str = ""):
+    """가장 최근(또는 지정) 생산일의 생산 제품·수량 — 새 주문 기본값 채우기용."""
+    con = connect()
+    try:
+        if not date:
+            r = con.execute("SELECT MAX(date) d FROM production WHERE COALESCE(prod_qty,0)>0").fetchone()
+            date = (r["d"] if r and r["d"] else dt.date.today().isoformat())
+        items = rows(con.execute("""
+            SELECT p.id product_id, p.name, SUM(pr.prod_qty) qty
+            FROM production pr JOIN product p ON p.id=pr.product_id
+            WHERE pr.date=? AND COALESCE(pr.prod_qty,0)>0 GROUP BY p.id ORDER BY p.sort, p.id""", (date,)))
+        for it in items:
+            it["qty"] = round(it["qty"] or 0)
+        return {"date": date, "items": items}
     finally:
         con.close()
 
