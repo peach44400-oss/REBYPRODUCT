@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.94.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.94.1"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -4110,7 +4110,7 @@ def workorder(request: Request, date: str = ""):
             LEFT JOIN line l ON l.id=pr.line_id
             WHERE pr.date=? AND COALESCE(pr.plan_qty,0)>0
             GROUP BY pr.product_id, pr.line_id
-            ORDER BY l.name, p.sort, p.id"""))
+            ORDER BY l.name, p.sort, p.id""", (date,)))
         for it in items:
             it["batches"] = round(it["plan_qty"] / it["byield"], 2) if it["byield"] else 0
         # 소요 자재 합계 = Σ(제품 계획수량 × 배합비 소요) — 원부재료 + 반제품
