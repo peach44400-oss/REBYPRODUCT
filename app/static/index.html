@@ -738,6 +738,10 @@
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2.5" y="3" width="11" height="10.5" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M2.5 6h11M5.5 2v2.5M10.5 2v2.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
         <em>주간 스케줄</em>
       </button>
+      <button data-scr="workorder" title="작업지시서 — 그날 생산 계획(제품·라인·배합수)과 소요 원부재료를 인쇄">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="3" y="2" width="10" height="12" rx="1.4" stroke="currentColor" stroke-width="1.4"/><path d="M5.5 5.5h5M5.5 8h5M5.5 10.5h3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M2 4.5 3 5.5 4.5 3.5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <em>작업지시서</em>
+      </button>
 
       <div class="nav-sep"><span>재고관리</span></div>
       <button data-scr="matstat" title="자재 현황 — 전체 원부자재 재고·유통기한(만료/임박)·부족을 한눈에 · 확정 폐기·발주">
@@ -938,6 +942,25 @@
           <tbody class="num" id="prodBody"></tbody>
         </table></div>
         <div id="prodSections"></div>
+      </div>
+    </section>
+
+    <!-- 작업지시서 -->
+    <section class="screen" id="scr-workorder">
+      <div class="card">
+        <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+          <h2 style="margin:0;">📋 작업지시서</h2>
+          <span class="auto" style="font-size:12px;">그날 생산 계획(제품·라인·배합수)과 소요 원부재료를 인쇄합니다 — 계획수량은 일일 입력에서</span>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center; margin-top:12px;">
+          <button class="btn ghost sm" id="woPrev">◀</button>
+          <input type="date" id="woDate" class="inp sm">
+          <button class="btn ghost sm" id="woNext">▶</button>
+          <button class="btn ghost sm" id="woToday">오늘</button>
+          <button class="btn primary sm" id="woLoad">조회</button>
+          <button class="btn ghost sm" id="woPrintBtn" style="display:none;">🖨 인쇄</button>
+        </div>
+        <div id="woDoc" style="margin-top:14px;"></div>
       </div>
     </section>
 

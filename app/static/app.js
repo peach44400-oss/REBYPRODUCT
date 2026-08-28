@@ -98,7 +98,7 @@ async function reloadMaster(t) {
 }
 
 /* ── 네비게이션 ─────────────────────── */
-const TITLES = { dash: "대시보드", prod: "생산 현황", ship: "출고 현황", invoice: "거래명세서", recv: "미수금", postat: "발주 현황", entry: "일일 입력", lot: "LOT 관리", matstat: "자재 현황", sched: "주간 스케줄", items: "기준정보 관리", ana: "분석", lookup: "기록 조회", memos: "특이사항", staff: "인원 관리" };
+const TITLES = { dash: "대시보드", prod: "생산 현황", workorder: "작업지시서", ship: "출고 현황", invoice: "거래명세서", recv: "미수금", postat: "발주 현황", entry: "일일 입력", lot: "LOT 관리", matstat: "자재 현황", sched: "주간 스케줄", items: "기준정보 관리", ana: "분석", lookup: "기록 조회", memos: "특이사항", staff: "인원 관리" };
 /* 표 검색(필터)은 화면·탭을 옮기면 초기화한다.
    남아 있으면 다른 화면에서 '등록된 항목이 없습니다'만 보여 데이터가 없는 것처럼 오해하게 된다.
    ※ 행 추가용 검색(qaProd 등)은 필터가 아니라 입력칸이므로 대상 아님. */
@@ -139,7 +139,7 @@ $("nav").addEventListener("click", e => {
   $("scrTitle").textContent = TITLES[b.dataset.scr];
   resetSearches();
   const fn = { dash: loadDash, prod: loadProd, ship: loadShip, entry: openEntry, lot: loadLot, items: renderMasters, ana: loadAna, lookup: () => lkCal.render(),
-    postat: loadPoStat, memos: loadMemos, matstat: loadMatStatus, sched: () => loadSchedule(), invoice: loadInvoice, recv: loadReceivables,
+    postat: loadPoStat, memos: loadMemos, matstat: loadMatStatus, sched: () => loadSchedule(), invoice: loadInvoice, recv: loadReceivables, workorder: loadWorkorder,
     staff: () => { STAFF.mode = "d"; STAFF.date = todayISO();   // 진입 시 항상 일별·오늘로 초기화
       document.querySelectorAll("#staffTabs button").forEach(x => x.classList.toggle("on", x.dataset.sh === "d"));
       loadStaff(); } }[b.dataset.scr];
@@ -4072,6 +4072,74 @@ async function _recvAdd() {
   toast("수금이 저장되었습니다");
   openRecvLedger(body.partner_id); loadReceivables();
 }
+// ── 작업지시서 ─────────────────────────────────────────────────────────
+const WO = { data: null };
+function loadWorkorder() {
+  if (!$("woDate").value) $("woDate").value = todayISO();
+  if (!WO.data) { $("woDoc").innerHTML = `<div class="auto" style="padding:20px;">날짜를 고르고 <b>[조회]</b>를 누르세요.</div>`; $("woPrintBtn").style.display = "none"; }
+}
+async function woQuery() {
+  const date = $("woDate").value || todayISO();
+  let d; try { d = await api("/api/workorder?date=" + date); } catch (e) { return; }
+  WO.data = d;
+  $("woDoc").innerHTML = workorderSheetHtml(d);
+  $("woPrintBtn").style.display = (d.items || []).length ? "" : "none";
+}
+function workorderSheetHtml(d) {
+  const TD = "border:1px solid #333; padding:4px 7px; font-size:12px;";
+  const irows = (d.items || []).map((it, i) => `<tr>
+    <td style="${TD} text-align:center;">${i + 1}</td>
+    <td style="${TD} text-align:center;">${esc(it.line || "—")}</td>
+    <td style="${TD}">${esc(it.name)}${it.code ? ` <span style="color:#888; font-size:10px;">${esc(it.code)}</span>` : ""}</td>
+    <td style="${TD} text-align:center;">${esc(it.spec || "")}</td>
+    <td style="${TD} text-align:right; font-weight:700;">${NF(it.plan_qty)}</td>
+    <td style="${TD} text-align:right;">${it.batches ? NF(it.batches) : "—"}</td>
+    <td style="${TD} width:70px;"></td><td style="${TD} width:64px;"></td></tr>`).join("")
+    || `<tr><td style="${TD} text-align:center; color:#999;" colspan="8">이 날짜의 생산 계획이 없습니다 (일일 입력에서 계획수량을 넣으세요)</td></tr>`;
+  const mrows = (d.materials || []).map((m, i) => `<tr>
+    <td style="${TD} text-align:center;">${i + 1}</td>
+    <td style="${TD}">${m.semi ? "🧫 " : ""}${esc(m.name)}</td>
+    <td style="${TD} text-align:right; font-weight:700;">${NF(m.need)}</td>
+    <td style="${TD} text-align:center;">${esc(m.unit)}</td>
+    <td style="${TD} width:90px;"></td></tr>`).join("")
+    || `<tr><td style="${TD} text-align:center; color:#999;" colspan="5">배합비가 등록된 계획 제품이 없습니다</td></tr>`;
+  return `<div id="woSheet" style="background:#fff; color:#111; max-width:820px; margin:0 auto; padding:6px;">
+    <div style="text-align:center; font-size:22px; font-weight:800; letter-spacing:6px; margin:4px 0 2px;">작 업 지 시 서</div>
+    <div style="text-align:center; font-size:13px; color:#555; margin-bottom:10px;">작업일자 ${esc(d.date)} (${dowOf(d.date)})</div>
+    <div style="font-weight:800; font-size:13px; margin:8px 0 4px;">■ 생산 지시</div>
+    <table style="width:100%; border-collapse:collapse;">
+      <thead><tr>
+        <th style="${TD} background:#f0f0f0; width:30px;">No</th><th style="${TD} background:#f0f0f0; width:70px;">라인</th>
+        <th style="${TD} background:#f0f0f0;">제품</th><th style="${TD} background:#f0f0f0; width:80px;">규격</th>
+        <th style="${TD} background:#f0f0f0; width:80px;">계획수량</th><th style="${TD} background:#f0f0f0; width:60px;">배합수</th>
+        <th style="${TD} background:#f0f0f0;">생산실적</th><th style="${TD} background:#f0f0f0;">담당</th></tr></thead>
+      <tbody>${irows}</tbody></table>
+    <div style="font-weight:800; font-size:13px; margin:14px 0 4px;">■ 소요 원부재료 (계획 기준)</div>
+    <table style="width:100%; border-collapse:collapse;">
+      <thead><tr>
+        <th style="${TD} background:#f0f0f0; width:30px;">No</th><th style="${TD} background:#f0f0f0;">자재명</th>
+        <th style="${TD} background:#f0f0f0; width:100px;">소요량</th><th style="${TD} background:#f0f0f0; width:50px;">단위</th>
+        <th style="${TD} background:#f0f0f0;">불출 확인</th></tr></thead>
+      <tbody>${mrows}</tbody></table>
+    <div style="display:flex; gap:20px; margin-top:16px; font-size:12px;">
+      <div>작성: __________</div><div>생산: __________</div><div>확인: __________</div></div>
+  </div>`;
+}
+function woPrint() {
+  if (!WO.data) return;
+  const w = window.open("", "_blank");
+  if (!w) { toast("팝업이 차단되었습니다 — 팝업 허용 후 다시 시도하세요"); return; }
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>작업지시서 ${esc(WO.data.date)}</title>
+    <style>body{font-family:'맑은 고딕',sans-serif; margin:12mm;} @media print{ .noprint{display:none;} }</style></head>
+    <body><div class="noprint" style="text-align:center; margin-bottom:10px;"><button onclick="window.print()" style="padding:6px 16px; font-size:14px;">🖨 인쇄</button></div>
+    ${workorderSheetHtml(WO.data)}</body></html>`);
+  w.document.close();
+}
+{ const on3 = (id, fn) => { const el = $(id); if (el) el.onclick = fn; };
+  on3("woLoad", woQuery); on3("woPrintBtn", woPrint);
+  on3("woToday", () => { $("woDate").value = todayISO(); woQuery(); });
+  on3("woPrev", () => { $("woDate").value = _schedAddDays($("woDate").value || todayISO(), -1); woQuery(); });
+  on3("woNext", () => { $("woDate").value = _schedAddDays($("woDate").value || todayISO(), 1); woQuery(); }); }
 // ── BOM 역전개: 이 자재가 들어가는 완제품·반제품 ──────────────────────────
 function _wuEnsureDom() {
   if ($("whereUsedOverlay")) return;

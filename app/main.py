@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.93.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.94.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -4093,6 +4093,54 @@ def receipt_del(rid: int, request: Request):
         audit(con, "receipt_del", f"수금 삭제 #{rid}")
         con.commit()
         return {"ok": True}
+    finally:
+        con.close()
+
+
+# ── 작업지시서 (그날 생산계획 → 제품·라인·배합수 + 소요 원부재료 합계) ──
+@app.get("/api/workorder")
+def workorder(request: Request, date: str = ""):
+    date = date or dt.date.today().isoformat()
+    con = connect()
+    try:
+        items = rows(con.execute("""
+            SELECT p.id pid, p.name, COALESCE(p.code,'') code, COALESCE(p.spec,'') spec,
+                   COALESCE(l.name,'') line, SUM(pr.plan_qty) plan_qty, COALESCE(p.batch_yield,0) byield
+            FROM production pr JOIN product p ON p.id=pr.product_id
+            LEFT JOIN line l ON l.id=pr.line_id
+            WHERE pr.date=? AND COALESCE(pr.plan_qty,0)>0
+            GROUP BY pr.product_id, pr.line_id
+            ORDER BY l.name, p.sort, p.id"""))
+        for it in items:
+            it["batches"] = round(it["plan_qty"] / it["byield"], 2) if it["byield"] else 0
+        # 소요 자재 합계 = Σ(제품 계획수량 × 배합비 소요) — 원부재료 + 반제품
+        mats = {r["id"]: r for r in con.execute("SELECT id, name, unit, pack_count, COALESCE(is_semi,0) is_semi FROM material")}
+        boms = {}
+        for b in con.execute("SELECT product_id, material_id, qty_per_unit, unit FROM bom"):
+            boms.setdefault(b["product_id"], []).append(b)
+        semi_ings = {}
+        for si in con.execute("SELECT product_id, semi_id, qty_per_unit FROM semi_ingredient"):
+            semi_ings.setdefault(si["product_id"], []).append(si)
+        by_prod = {r["id"]: float(r["batch_yield"] or 0) for r in con.execute("SELECT id, batch_yield FROM product")}
+        needs = {}
+        for it in items:
+            pid, plan = it["pid"], float(it["plan_qty"] or 0)
+            for b in boms.get(pid, []):
+                m = mats.get(b["material_id"])
+                if not m:
+                    continue
+                needs[b["material_id"]] = needs.get(b["material_id"], 0) + bom_qty_per_unit(m, b) * plan
+            byv = by_prod.get(pid, 0)
+            for si in semi_ings.get(pid, []):
+                if byv > 0:
+                    needs[si["semi_id"]] = needs.get(si["semi_id"], 0) + (float(si["qty_per_unit"] or 0) / byv) * plan
+        matlist = []
+        for mid, q in needs.items():
+            m = mats.get(mid)
+            if m and q > 0:
+                matlist.append({"name": m["name"], "unit": m["unit"] or "", "need": round(q, 2), "semi": bool(m["is_semi"])})
+        matlist.sort(key=lambda x: (0 if x["semi"] else 1, x["name"]))
+        return {"date": date, "items": items, "materials": matlist}
     finally:
         con.close()
 
