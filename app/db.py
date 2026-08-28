@@ -330,6 +330,19 @@ CREATE TABLE IF NOT EXISTS purchase_order (
 );
 CREATE INDEX IF NOT EXISTS idx_po_date ON purchase_order(date);
 
+-- 수금(입금) — 거래처별 미수금(매출−수금) 관리
+CREATE TABLE IF NOT EXISTS receipt (
+  id INTEGER PRIMARY KEY,
+  date TEXT NOT NULL,                  -- 수금일
+  partner_id INTEGER REFERENCES partner(id),
+  amount REAL NOT NULL DEFAULT 0,      -- 수금액(원)
+  method TEXT DEFAULT '',              -- 계좌이체/현금/카드/어음 등
+  note TEXT DEFAULT '',
+  created_at TEXT DEFAULT (datetime('now','localtime')),
+  created_by TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_receipt ON receipt(partner_id, date);
+
 -- 앱 설정 (전역 키-값)
 CREATE TABLE IF NOT EXISTS app_setting (
   key TEXT PRIMARY KEY,

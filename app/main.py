@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.92.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.93.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -4000,6 +4000,99 @@ def invoice(request: Request, partner_id: int = 0, frm: str = "", to: str = "", 
         return {"supplier": supplier, "buyer": buyer, "items": items,
                 "supply": round(supply), "tax": tax, "grand": round(supply) + tax,
                 "from": frm, "to": to, "taxfree": bool(taxfree)}
+    finally:
+        con.close()
+
+
+# ── 미수금·수금 (거래처별 매출−수금 = 미수 잔액) ──────────────────────────
+_SALES_EXPR = "s.qty * COALESCE(NULLIF(s.unit_price,0), p.unit_price)"   # 출고 스냅샷 단가(없으면 제품 기본단가)
+
+
+@app.get("/api/receivables")
+def receivables(request: Request):
+    """거래처별 매출 누계·수금 누계·미수 잔액 (전 기간)."""
+    if not mcan(request, "ship_amt"):
+        raise HTTPException(403, "출고 금액 열람 권한이 없습니다")
+    con = connect()
+    try:
+        sales, recv = {}, {}
+        for r in con.execute(f"""SELECT s.partner_id pid, SUM({_SALES_EXPR}) amt
+                FROM shipment s JOIN product p ON p.id=s.product_id
+                WHERE s.partner_id IS NOT NULL AND s.qty>0 GROUP BY s.partner_id"""):
+            sales[r["pid"]] = float(r["amt"] or 0)
+        for r in con.execute("SELECT partner_id pid, SUM(amount) amt FROM receipt WHERE partner_id IS NOT NULL GROUP BY partner_id"):
+            recv[r["pid"]] = float(r["amt"] or 0)
+        pnames = {r["id"]: r["name"] for r in con.execute("SELECT id, name FROM partner")}
+        out = []
+        for pid in (set(sales) | set(recv)):
+            sv, rv = round(sales.get(pid, 0)), round(recv.get(pid, 0))
+            out.append({"partner_id": pid, "name": pnames.get(pid, "?"), "sales": sv, "receipt": rv, "balance": sv - rv})
+        out.sort(key=lambda x: -x["balance"])
+        tot = {"sales": sum(r["sales"] for r in out), "receipt": sum(r["receipt"] for r in out),
+               "balance": sum(r["balance"] for r in out)}
+        return {"rows": out, "total": tot}
+    finally:
+        con.close()
+
+
+@app.get("/api/receivable/{pid}")
+def receivable_ledger(pid: int, request: Request):
+    """한 거래처의 매출·수금 원장 (날짜순 + 잔액)."""
+    if not mcan(request, "ship_amt"):
+        raise HTTPException(403, "출고 금액 열람 권한이 없습니다")
+    con = connect()
+    try:
+        ev = []
+        for r in con.execute(f"""SELECT s.date, SUM({_SALES_EXPR}) amt
+                FROM shipment s JOIN product p ON p.id=s.product_id
+                WHERE s.partner_id=? AND s.qty>0 GROUP BY s.date""", (pid,)):
+            ev.append({"date": r["date"], "type": "매출", "sales": round(r["amt"] or 0), "receipt": 0})
+        for r in con.execute("SELECT id, date, amount, COALESCE(method,'') method, COALESCE(note,'') note "
+                             "FROM receipt WHERE partner_id=?", (pid,)):
+            ev.append({"date": r["date"], "type": "수금", "sales": 0, "receipt": round(r["amount"]),
+                       "id": r["id"], "method": r["method"], "note": r["note"]})
+        ev.sort(key=lambda e: (e["date"], 0 if e["type"] == "매출" else 1))
+        bal = 0
+        for e in ev:
+            bal += e["sales"] - e["receipt"]
+            e["balance"] = bal
+        pn = con.execute("SELECT name FROM partner WHERE id=?", (pid,)).fetchone()
+        return {"partner_id": pid, "name": pn["name"] if pn else "?", "events": ev, "balance": bal}
+    finally:
+        con.close()
+
+
+@app.post("/api/receipt")
+def receipt_add(request: Request, body: dict):
+    require_admin(request)
+    pid = body.get("partner_id")
+    try:
+        amt = float(body.get("amount") or 0)
+    except (TypeError, ValueError):
+        amt = 0
+    if not pid or amt <= 0:
+        raise HTTPException(400, "거래처와 수금액을 입력하세요")
+    date = body.get("date") or dt.date.today().isoformat()
+    con = connect()
+    try:
+        cur = con.execute("INSERT INTO receipt(date, partner_id, amount, method, note, created_by) VALUES(?,?,?,?,?,?)",
+                          (date, pid, amt, body.get("method") or "", body.get("note") or "", request.state.user["username"]))
+        audit(con, "receipt", f"수금 거래처#{pid} {amt:,.0f}원")
+        con.commit()
+        return {"id": cur.lastrowid}
+    finally:
+        con.close()
+
+
+@app.delete("/api/receipt/{rid}")
+def receipt_del(rid: int, request: Request):
+    require_admin(request)
+    con = connect()
+    try:
+        con.execute("DELETE FROM receipt WHERE id=?", (rid,))
+        audit(con, "receipt_del", f"수금 삭제 #{rid}")
+        con.commit()
+        return {"ok": True}
     finally:
         con.close()
 

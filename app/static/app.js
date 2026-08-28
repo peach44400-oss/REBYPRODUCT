@@ -98,7 +98,7 @@ async function reloadMaster(t) {
 }
 
 /* ── 네비게이션 ─────────────────────── */
-const TITLES = { dash: "대시보드", prod: "생산 현황", ship: "출고 현황", invoice: "거래명세서", postat: "발주 현황", entry: "일일 입력", lot: "LOT 관리", matstat: "자재 현황", sched: "주간 스케줄", items: "기준정보 관리", ana: "분석", lookup: "기록 조회", memos: "특이사항", staff: "인원 관리" };
+const TITLES = { dash: "대시보드", prod: "생산 현황", ship: "출고 현황", invoice: "거래명세서", recv: "미수금", postat: "발주 현황", entry: "일일 입력", lot: "LOT 관리", matstat: "자재 현황", sched: "주간 스케줄", items: "기준정보 관리", ana: "분석", lookup: "기록 조회", memos: "특이사항", staff: "인원 관리" };
 /* 표 검색(필터)은 화면·탭을 옮기면 초기화한다.
    남아 있으면 다른 화면에서 '등록된 항목이 없습니다'만 보여 데이터가 없는 것처럼 오해하게 된다.
    ※ 행 추가용 검색(qaProd 등)은 필터가 아니라 입력칸이므로 대상 아님. */
@@ -139,7 +139,7 @@ $("nav").addEventListener("click", e => {
   $("scrTitle").textContent = TITLES[b.dataset.scr];
   resetSearches();
   const fn = { dash: loadDash, prod: loadProd, ship: loadShip, entry: openEntry, lot: loadLot, items: renderMasters, ana: loadAna, lookup: () => lkCal.render(),
-    postat: loadPoStat, memos: loadMemos, matstat: loadMatStatus, sched: () => loadSchedule(), invoice: loadInvoice,
+    postat: loadPoStat, memos: loadMemos, matstat: loadMatStatus, sched: () => loadSchedule(), invoice: loadInvoice, recv: loadReceivables,
     staff: () => { STAFF.mode = "d"; STAFF.date = todayISO();   // 진입 시 항상 일별·오늘로 초기화
       document.querySelectorAll("#staffTabs button").forEach(x => x.classList.toggle("on", x.dataset.sh === "d"));
       loadStaff(); } }[b.dataset.scr];
@@ -3990,6 +3990,88 @@ async function _invCoSave() {
 }
 { const on2 = (id, fn) => { const el = $(id); if (el) el.onclick = fn; };
   on2("invLoad", invQuery); on2("invPrintBtn", invPrint); on2("invCompanyBtn", openInvCompany); }
+// ── 미수금·수금 ────────────────────────────────────────────────────────
+const RECV = { data: null };
+async function loadReceivables() {
+  let d; try { d = await api("/api/receivables"); } catch (e) { return; }
+  RECV.data = d;
+  const t = d.total || { sales: 0, receipt: 0, balance: 0 };
+  const card = (lbl, v, color) => `<div class="kpi" style="min-width:150px;"><div class="lbl">${lbl}</div><div class="val num" style="color:${color || ""}">₩${NF(v)}</div></div>`;
+  $("recvSummary").innerHTML = card("매출 누계", t.sales) + card("수금 누계", t.receipt, "var(--ok)")
+    + card("미수 잔액", t.balance, t.balance > 0 ? "var(--crit)" : "var(--muted)");
+  $("recvBody").innerHTML = (d.rows || []).map(r => `<tr>
+    <td><button class="uselink" data-recvp="${r.partner_id}"><b>${esc(r.name)}</b></button></td>
+    <td class="r">${NF(r.sales)}</td>
+    <td class="r">${NF(r.receipt)}</td>
+    <td class="r" style="font-weight:800; color:${r.balance > 0 ? "var(--crit)" : r.balance < 0 ? "var(--ok)" : "var(--muted)"}">${NF(r.balance)}</td>
+    <td class="r">${ROLE === "admin" ? `<button class="btn ghost sm" data-recvadd="${r.partner_id}">＋수금</button>` : ""}</td></tr>`).join("")
+    || `<tr><td colspan="5" class="auto" style="padding:16px; text-align:center;">출고·수금 내역이 없습니다</td></tr>`;
+}
+$("recvBody").addEventListener("click", e => {
+  const p = e.target.closest("[data-recvp]"); if (p) { openRecvLedger(+p.dataset.recvp); return; }
+  const a = e.target.closest("[data-recvadd]"); if (a) { openRecvLedger(+a.dataset.recvadd, true); return; }
+});
+$("recvReload").onclick = loadReceivables;
+function _recvEnsureDom() {
+  if ($("recvLedgerOverlay")) return;
+  const ov = document.createElement("div"); ov.className = "overlay"; ov.id = "recvLedgerOverlay";
+  ov.innerHTML = `<div class="modal" style="width:min(720px,96vw);">
+    <h3 style="margin:0 0 8px;" id="recvLedgerTitle">미수 원장</h3>
+    <div id="recvLedgerBody" style="max-height:50vh; overflow:auto;"></div>
+    <div id="recvAddForm" style="display:none; border-top:1px solid var(--line); margin-top:10px; padding-top:10px;">
+      <div style="font-weight:700; font-size:13px; margin-bottom:6px;">＋ 수금 입력</div>
+      <input type="hidden" id="recvAddPid">
+      <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+        <input type="date" id="recvAddDate" class="inp sm">
+        <input id="recvAddAmt" class="inp sm num" inputmode="numeric" placeholder="수금액(원)" style="width:130px;">
+        <input id="recvAddMethod" class="inp sm" list="recvMethodDl" placeholder="방법" style="width:120px;">
+        <input id="recvAddNote" class="inp sm" placeholder="비고" style="flex:1 1 120px;">
+        <button class="btn primary sm" id="recvAddBtn">저장</button></div>
+      <datalist id="recvMethodDl"><option value="계좌이체"></option><option value="현금"></option><option value="카드"></option><option value="어음"></option></datalist></div>
+    <div class="modal-foot"><button class="btn" id="recvLedgerClose">닫기</button></div></div>`;
+  document.body.appendChild(ov);
+  ov.addEventListener("click", e => { if (e.target === ov) ov.classList.remove("on"); });
+  $("recvLedgerClose").onclick = () => ov.classList.remove("on");
+  $("recvAddBtn").onclick = _recvAdd;
+  $("recvLedgerBody").addEventListener("click", async e => {
+    const del = e.target.closest("[data-recvdel]"); if (!del) return;
+    if (!confirm("이 수금 기록을 삭제할까요?")) return;
+    try { await api("/api/receipt/" + del.dataset.recvdel, { method: "DELETE" }); } catch (e2) { return; }
+    openRecvLedger(+$("recvAddPid").value); loadReceivables();
+  });
+}
+async function openRecvLedger(pid, focusAdd) {
+  _recvEnsureDom();
+  $("recvLedgerBody").innerHTML = `<div class="auto" style="padding:16px;">불러오는 중…</div>`;
+  $("recvLedgerOverlay").classList.add("on");
+  let d; try { d = await api("/api/receivable/" + pid); } catch (e) { return; }
+  $("recvLedgerTitle").innerHTML = `${esc(d.name)} — 미수 잔액 <span style="color:${d.balance > 0 ? "var(--crit)" : "var(--muted)"}">₩${NF(d.balance)}</span>`;
+  const rows = (d.events || []).map(e => `<tr style="border-bottom:1px solid var(--line-soft);">
+    <td style="padding:3px 6px; white-space:nowrap;">${esc(e.date)}</td>
+    <td style="padding:3px 6px; text-align:center;"><span class="chip ${e.type === "수금" ? "ok" : "cat"}" style="font-size:10px;">${e.type}</span></td>
+    <td class="r" style="padding:3px 6px;">${e.sales ? NF(e.sales) : ""}</td>
+    <td class="r" style="padding:3px 6px; color:var(--ok)">${e.receipt ? NF(e.receipt) : ""}</td>
+    <td class="r" style="padding:3px 6px; font-weight:700; color:${e.balance > 0 ? "var(--crit)" : ""}">${NF(e.balance)}</td>
+    <td style="padding:3px 6px; color:var(--muted); font-size:11px;">${esc([e.method, e.note].filter(Boolean).join(" · "))}${e.type === "수금" && ROLE === "admin" ? ` <button class="uselink" data-recvdel="${e.id}" style="color:var(--crit)">삭제</button>` : ""}</td></tr>`).join("")
+    || `<tr><td colspan="6" class="auto" style="padding:14px; text-align:center;">내역이 없습니다</td></tr>`;
+  $("recvLedgerBody").innerHTML = `<table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+    <thead><tr style="color:var(--muted); border-bottom:1px solid var(--line-soft);"><th style="text-align:left; padding:3px 6px;">일자</th><th>구분</th><th class="r">매출</th><th class="r">수금</th><th class="r">잔액</th><th style="text-align:left; padding:3px 6px;">비고</th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+  $("recvAddForm").style.display = ROLE === "admin" ? "" : "none";
+  $("recvAddPid").value = pid;
+  if (!$("recvAddDate").value) $("recvAddDate").value = todayISO();
+  if (focusAdd) setTimeout(() => { const a = $("recvAddAmt"); if (a) a.focus(); }, 120);
+}
+async function _recvAdd() {
+  const body = { partner_id: +$("recvAddPid").value, date: $("recvAddDate").value,
+    amount: Number(($("recvAddAmt").value || "").replace(/,/g, "")), method: $("recvAddMethod").value, note: $("recvAddNote").value };
+  if (!(body.amount > 0)) { toast("수금액을 입력하세요"); return; }
+  try { await api("/api/receipt", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); }
+  catch (e) { return; }
+  $("recvAddAmt").value = ""; $("recvAddNote").value = "";
+  toast("수금이 저장되었습니다");
+  openRecvLedger(body.partner_id); loadReceivables();
+}
 // ── BOM 역전개: 이 자재가 들어가는 완제품·반제품 ──────────────────────────
 function _wuEnsureDom() {
   if ($("whereUsedOverlay")) return;
@@ -9666,6 +9748,7 @@ async function startApp(me) {
   loadLowStock();   // 사이드바 '발주 필요' 알림 (자재 담당·admin)
   $("navPoStat").style.display = canStock ? "" : "none";   // 발주 현황 탭 — 자재 담당·admin
   { const iv = $("navInvoice"); if (iv) iv.style.display = (canM("prod_price") || canM("ship_amt")) ? "" : "none"; }   // 거래명세서 — 단가 열람 권한
+  { const rv = $("navRecv"); if (rv) rv.style.display = canM("ship_amt") ? "" : "none"; }   // 미수금 — 출고 금액 권한
   api("/api/mysign").then(s => { MYSIGN.img = s.img || ""; }).catch(() => { });   // 내 사인 (발주서 서명란)
   $("dbStatus").innerHTML = `🟢 제품 ${M.product.length} · 자재 ${M.raw.length + M.sub.length}`;
   // 권한 실시간 반영: admin이 권한을 바꾸면(서버 세션은 즉시 교체됨) 화면도 20초 내 자동 새로고침
