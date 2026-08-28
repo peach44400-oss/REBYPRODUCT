@@ -3828,6 +3828,46 @@ const MCOLS = {
 };
 function B(s) { return `<b>${esc(s)}</b>`; }
 function codeCell(r) { return `<span class="num" style="color:var(--muted); font-size:11.5px; letter-spacing:.3px;">${esc(r.code || "—")}</span>`; }
+// ── BOM 역전개: 이 자재가 들어가는 완제품·반제품 ──────────────────────────
+function _wuEnsureDom() {
+  if ($("whereUsedOverlay")) return;
+  const ov = document.createElement("div");
+  ov.className = "overlay"; ov.id = "whereUsedOverlay";
+  ov.innerHTML = `<div class="modal" style="width:min(720px,96vw);">
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+      <h3 style="margin:0;">🔎 사용처 (BOM 역전개)</h3>
+      <span id="wuTitle" style="color:var(--muted); font-size:13px;"></span></div>
+    <div id="wuBody" style="max-height:64vh; overflow:auto;"></div>
+    <div class="modal-foot"><button class="btn" id="wuClose">닫기</button></div></div>`;
+  document.body.appendChild(ov);
+  ov.addEventListener("click", e => { if (e.target === ov) ov.classList.remove("on"); });
+  $("wuClose").onclick = () => ov.classList.remove("on");
+}
+async function openWhereUsed(mid) {
+  _wuEnsureDom();
+  $("wuTitle").textContent = "불러오는 중…";
+  $("wuBody").innerHTML = "";
+  $("whereUsedOverlay").classList.add("on");
+  let d;
+  try { d = await api("/api/whereused/" + mid); } catch (e) { $("wuTitle").textContent = "불러오지 못했습니다"; return; }
+  const m = d.material || {};
+  $("wuTitle").textContent = `${m.code ? m.code + " · " : ""}${m.name || ""}`;
+  const tbl = (title, arr, cols, rowFn, empty) => `
+    <div style="font-weight:800; font-size:13px; margin:12px 0 5px;">${title} <span style="color:var(--muted); font-weight:500;">${arr.length}건</span></div>
+    ${arr.length ? `<table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+      <thead><tr style="color:var(--muted); border-bottom:1px solid var(--line-soft);">${cols.map(c => `<th style="text-align:${c[1] || "left"}; padding:4px 6px;">${c[0]}</th>`).join("")}</tr></thead>
+      <tbody>${arr.map(rowFn).join("")}</tbody></table>` : `<div class="auto" style="padding:6px;">${empty}</div>`}`;
+  const q = (v, u) => v != null && v !== "" ? `${NF(v)}${esc(u || "")}` : "—";
+  $("wuBody").innerHTML =
+    tbl("완제품 (직접 사용)", d.products || [], [["품목코드"], ["제품명"], ["1개당 소요", "right"], ["블록"]],
+        p => `<tr style="border-bottom:1px solid var(--line-soft);"><td style="padding:4px 6px;"><span class="num auto" style="font-size:11px;">${esc(p.code || "—")}</span></td><td style="padding:4px 6px;"><b>${esc(p.name)}</b></td><td class="r" style="padding:4px 6px;">${q(p.qty_per_unit, p.unit)}</td><td style="padding:4px 6px; color:var(--muted);">${esc(p.block || "—")}</td></tr>`,
+        "직접 배합비에 들어간 완제품이 없습니다") +
+    tbl("반제품", d.semis || [], [["품목코드"], ["반제품명"], ["1배합당 소요", "right"]],
+        s => `<tr style="border-bottom:1px solid var(--line-soft);"><td style="padding:4px 6px;"><span class="num auto" style="font-size:11px;">${esc(s.code || "—")}</span></td><td style="padding:4px 6px;"><b>${esc(s.name)}</b></td><td class="r" style="padding:4px 6px;">${q(s.qty_per_unit, s.unit)}</td></tr>`,
+        "이 자재를 쓰는 반제품이 없습니다") +
+    ((d.via_semi || []).length ? tbl("반제품을 거쳐 쓰이는 완제품", d.via_semi, [["품목코드"], ["제품명"], ["경유 반제품"]],
+        v => `<tr style="border-bottom:1px solid var(--line-soft);"><td style="padding:4px 6px;"><span class="num auto" style="font-size:11px;">${esc(v.code || "—")}</span></td><td style="padding:4px 6px;"><b>${esc(v.name)}</b></td><td style="padding:4px 6px; color:var(--muted);">${esc(v.semi_name || "")}</td></tr>`, "") : "");
+}
 function chip(s) {
   const bad = ["단종", "중지", "중단", "퇴사"].includes(s);
   return `<span class="chip ${bad ? "warn" : "ok"}">${esc(s || "—")}</span>`;
@@ -4012,7 +4052,7 @@ function renderMasters() {
         <button class="ord-btn" data-moveup="${r.id}" ${i === 0 ? "disabled" : ""} title="위로">▲</button>
         <button class="ord-btn" data-movedn="${r.id}" ${i === list.length - 1 ? "disabled" : ""} title="아래로">▼</button></td>` : "";
     return `<tr ${reorder ? `draggable="true" data-rid="${r.id}"` : ""}>${handleCell}${cells.map((c, idx) => hideIdx.has(idx) ? "" : `<td>${c}</td>`).join("")}
-     <td style="white-space:nowrap"><button class="btn ghost sm" data-edit="${r.id}">수정</button><button class="btn ghost sm" style="color:var(--crit)" data-delm="${r.id}">삭제</button></td></tr>`;
+     <td style="white-space:nowrap">${["raw", "sub", "semi"].includes(mTab) ? `<button class="btn ghost sm" data-whereused="${r.id}" title="이 자재가 들어가는 제품·반제품(BOM 역전개)">🔎 사용처</button>` : ""}<button class="btn ghost sm" data-edit="${r.id}">수정</button><button class="btn ghost sm" style="color:var(--crit)" data-delm="${r.id}">삭제</button></td></tr>`;
   }).join("")
     || `<tr><td colspan="${cfg.cols.length - hideIdx.size + (reorder ? 2 : 1)}" class="auto">${mMissing ? "미등록 항목이 없습니다 👍" : "등록된 항목이 없습니다"}</td></tr>`;
   $("mHint").textContent = mQuick
@@ -4957,6 +4997,8 @@ $("mBody").addEventListener("input", e => {
   }
 });
 $("mBody").addEventListener("click", e => {
+  const wu = e.target.closest("[data-whereused]");
+  if (wu) { openWhereUsed(+wu.dataset.whereused); return; }
   const sr = e.target.closest("[data-semirecipe]");
   if (sr) { openSemiRecipe(+sr.dataset.semirecipe); return; }
   const mh = e.target.closest("[data-mhist]");

@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.91.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.91.1"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -3904,6 +3904,40 @@ def masters_reorder(request: Request, mtype: str, body: dict):
         bump_masters()
         con.commit()
         return {"ok": True, "count": len(ids)}
+    finally:
+        con.close()
+
+
+@app.get("/api/whereused/{mid}")
+def whereused(mid: int, request: Request):
+    """BOM 역전개 — 이 자재(원·부재료·반제품)가 들어가는 완제품·반제품 목록."""
+    con = connect()
+    try:
+        m = con.execute("SELECT id, COALESCE(code,'') code, name, unit, kind, COALESCE(is_semi,0) is_semi "
+                        "FROM material WHERE id=?", (mid,)).fetchone()
+        if not m:
+            raise HTTPException(404, "자재 없음")
+        # 1) 완제품에서 직접 사용 (bom)
+        products = rows(con.execute("""
+            SELECT p.id, COALESCE(p.code,'') code, p.name, b.qty_per_unit, b.unit, COALESCE(b.block,'') block
+            FROM bom b JOIN product p ON p.id=b.product_id
+            WHERE b.material_id=? ORDER BY p.sort, p.id""", (mid,)))
+        # 2) 반제품에서 사용 (semi_bom) — semi_id는 material(is_semi=1)
+        semis = rows(con.execute("""
+            SELECT s.id, COALESCE(s.code,'') code, s.name, sb.qty_per_unit, sb.unit
+            FROM semi_bom sb JOIN material s ON s.id=sb.semi_id
+            WHERE sb.material_id=? ORDER BY s.sort, s.id""", (mid,)))
+        # 3) 반제품 경유 완제품 (그 반제품이 들어가는 완제품)
+        via = []
+        if semis:
+            sids = [s["id"] for s in semis]
+            ph = ",".join("?" * len(sids))
+            via = rows(con.execute(f"""
+                SELECT p.id, COALESCE(p.code,'') code, p.name, s.name semi_name
+                FROM bom b JOIN product p ON p.id=b.product_id
+                JOIN material s ON s.id=b.material_id
+                WHERE b.material_id IN ({ph}) ORDER BY p.sort, p.id""", sids))
+        return {"material": dict(m), "products": products, "semis": semis, "via_semi": via}
     finally:
         con.close()
 
