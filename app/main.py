@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.96.4"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.97.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -4343,6 +4343,46 @@ def pnl(request: Request, frm: str = "", to: str = ""):
                "labor": (sum(r["labor"] for r in rows_) if see_labor else None)}
         tot["profit"] = (tot["sales"] - tot["buy"] - tot["labor"]) if (see_buy and see_labor) else None
         return {"from": frm, "to": to, "rows": rows_, "total": tot, "see_buy": see_buy, "see_labor": see_labor}
+    finally:
+        con.close()
+
+
+# ── 거래처 원장(고객 카드) — 한 거래처의 매출·수금·미수 + 최근 출고 + 주문 ──
+@app.get("/api/partnercard/{pid}")
+def partnercard(pid: int, request: Request):
+    if not mcan(request, "ship_amt"):
+        raise HTTPException(403, "출고 금액 열람 권한이 없습니다")
+    con = connect()
+    try:
+        p = con.execute("SELECT id, name, COALESCE(biz_no,'') biz_no, COALESCE(ceo,'') ceo, "
+                        "COALESCE(phone,'') phone, COALESCE(mobile,'') mobile, COALESCE(type,'') type "
+                        "FROM partner WHERE id=?", (pid,)).fetchone()
+        if not p:
+            raise HTTPException(404, "거래처 없음")
+        sales = con.execute(f"SELECT COALESCE(SUM({_SALES_EXPR}),0) v FROM shipment s JOIN product p ON p.id=s.product_id "
+                            "WHERE s.partner_id=? AND s.qty>0", (pid,)).fetchone()["v"]
+        recv = con.execute("SELECT COALESCE(SUM(amount),0) v FROM receipt WHERE partner_id=?", (pid,)).fetchone()["v"]
+        recent_ship = rows(con.execute(f"""
+            SELECT s.date, p.name, SUM(s.qty) qty, SUM({_SALES_EXPR}) amount
+            FROM shipment s JOIN product p ON p.id=s.product_id
+            WHERE s.partner_id=? AND s.qty>0 GROUP BY s.date, p.id ORDER BY s.date DESC, amount DESC LIMIT 40""", (pid,)))
+        for r in recent_ship:
+            r["qty"] = round(r["qty"] or 0)
+            r["amount"] = round(r["amount"] or 0)
+        orders = rows(con.execute("SELECT date, due, status, items FROM sales_order WHERE partner_id=? ORDER BY date DESC, id DESC LIMIT 30", (pid,)))
+        for o in orders:
+            try:
+                its = json.loads(o["items"] or "[]")
+            except ValueError:
+                its = []
+            o["summary"] = ", ".join(f"{it.get('name','')} {it.get('qty','')}" for it in its)
+            o.pop("items", None)
+        receipts = rows(con.execute("SELECT date, amount, COALESCE(method,'') method, COALESCE(note,'') note "
+                                   "FROM receipt WHERE partner_id=? ORDER BY date DESC, id DESC LIMIT 30", (pid,)))
+        for r in receipts:
+            r["amount"] = round(r["amount"] or 0)
+        return {"partner": dict(p), "sales": round(sales), "receipt": round(recv), "balance": round(sales) - round(recv),
+                "recent_ship": recent_ship, "orders": orders, "receipts": receipts}
     finally:
         con.close()
 

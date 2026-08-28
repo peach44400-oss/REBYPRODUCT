@@ -98,7 +98,7 @@ async function reloadMaster(t) {
 }
 
 /* ── 네비게이션 ─────────────────────── */
-const TITLES = { dash: "대시보드", prod: "생산 현황", workorder: "작업지시서", ship: "출고 현황", invoice: "거래명세서", recv: "미수금", salesrep: "매출 통계", postat: "발주 현황", purchrep: "매입 통계", salesorder: "수주 관리", entry: "일일 입력", lot: "LOT 관리", matstat: "자재 현황", sched: "주간 스케줄", items: "기준정보 관리", ana: "분석", lookup: "기록 조회", memos: "특이사항", staff: "인원 관리", pnl: "손익 요약" };
+const TITLES = { dash: "대시보드", prod: "생산 현황", workorder: "작업지시서", ship: "출고 현황", invoice: "거래명세서", recv: "미수금", salesrep: "매출 통계", pcard: "거래처 원장", postat: "발주 현황", purchrep: "매입 통계", salesorder: "수주 관리", entry: "일일 입력", lot: "LOT 관리", matstat: "자재 현황", sched: "주간 스케줄", items: "기준정보 관리", ana: "분석", lookup: "기록 조회", memos: "특이사항", staff: "인원 관리", pnl: "손익 요약" };
 /* 표 검색(필터)은 화면·탭을 옮기면 초기화한다.
    남아 있으면 다른 화면에서 '등록된 항목이 없습니다'만 보여 데이터가 없는 것처럼 오해하게 된다.
    ※ 행 추가용 검색(qaProd 등)은 필터가 아니라 입력칸이므로 대상 아님. */
@@ -139,7 +139,7 @@ $("nav").addEventListener("click", e => {
   $("scrTitle").textContent = TITLES[b.dataset.scr];
   resetSearches();
   const fn = { dash: loadDash, prod: loadProd, ship: loadShip, entry: openEntry, lot: loadLot, items: renderMasters, ana: loadAna, lookup: () => lkCal.render(),
-    postat: loadPoStat, memos: loadMemos, matstat: loadMatStatus, sched: () => loadSchedule(), invoice: loadInvoice, recv: loadReceivables, salesorder: loadSalesOrders, pnl: loadPnl, workorder: loadWorkorder, salesrep: loadSalesRep, purchrep: loadPurchRep,
+    postat: loadPoStat, memos: loadMemos, matstat: loadMatStatus, sched: () => loadSchedule(), invoice: loadInvoice, recv: loadReceivables, salesorder: loadSalesOrders, pcard: loadPCard, pnl: loadPnl, workorder: loadWorkorder, salesrep: loadSalesRep, purchrep: loadPurchRep,
     staff: () => { STAFF.mode = "d"; STAFF.date = todayISO();   // 진입 시 항상 일별·오늘로 초기화
       document.querySelectorAll("#staffTabs button").forEach(x => x.classList.toggle("on", x.dataset.sh === "d"));
       loadStaff(); } }[b.dataset.scr];
@@ -4182,6 +4182,46 @@ function renderPnl() {
 }
 $("pnlLoad").onclick = pnlQuery;
 $("pnlCsv").onclick = () => tableToCsv($("pnlHead"), $("pnlBody"), csvName("손익요약", todayISO()));
+// ── 거래처 원장(고객 카드) ─────────────────────────────────────────────
+function loadPCard() {
+  const parts = (M.partner || []).filter(p => p.status !== "중지").sort((a, b) => a.name.localeCompare(b.name, "ko"));
+  $("pcPartnerDl").innerHTML = parts.map(p => `<option value="${esc(p.name)}">`).join("");
+  if (!$("pcCard").innerHTML) $("pcCard").innerHTML = `<div class="auto" style="padding:20px;">거래처를 고르고 [조회]를 누르세요.</div>`;
+}
+async function pcQuery() {
+  const nm = $("pcPartner").value.trim();
+  const p = (M.partner || []).find(x => x.name === nm);
+  if (!p) { toast("거래처를 목록에서 선택하세요"); return; }
+  let d; try { d = await api("/api/partnercard/" + p.id); } catch (e) { return; }
+  const pa = d.partner;
+  const card = (lbl, v, color) => `<div class="kpi" style="min-width:140px;"><div class="lbl">${lbl}</div><div class="val num" style="color:${color || ""}">₩${NF(v)}</div></div>`;
+  const tbl = (title, head, rowsHtml) => `<div style="font-weight:800; font-size:13px; margin:14px 0 5px;">${title}</div>
+    <div class="tbl-wrap"><table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+      <thead><tr style="color:var(--muted); border-bottom:1px solid var(--line-soft);">${head}</tr></thead>
+      <tbody>${rowsHtml || `<tr><td colspan="6" class="auto" style="padding:10px;">내역 없음</td></tr>`}</tbody></table></div>`;
+  const shipRows = (d.recent_ship || []).map(r => `<tr style="border-bottom:1px solid var(--line-soft);">
+    <td style="padding:3px 6px; white-space:nowrap;">${esc(r.date)}</td><td style="padding:3px 6px;">${esc(r.name)}</td>
+    <td class="r" style="padding:3px 6px;">${NF(r.qty)}</td><td class="r" style="padding:3px 6px; font-weight:600;">${NF(r.amount)}</td></tr>`).join("");
+  const orderRows = (d.orders || []).map(o => `<tr style="border-bottom:1px solid var(--line-soft);">
+    <td style="padding:3px 6px; white-space:nowrap;">${esc(o.date)}</td>
+    <td style="padding:3px 6px;">${esc(o.summary) || "—"}</td>
+    <td style="padding:3px 6px; white-space:nowrap;">${esc(o.due || "—")}</td>
+    <td style="padding:3px 6px;"><span class="chip ${o.status === "완료" ? "ok" : o.status === "취소" ? "warn" : "cat"}" style="font-size:10px;">${esc(o.status)}</span></td></tr>`).join("");
+  const recvRows = (d.receipts || []).map(r => `<tr style="border-bottom:1px solid var(--line-soft);">
+    <td style="padding:3px 6px; white-space:nowrap;">${esc(r.date)}</td>
+    <td class="r" style="padding:3px 6px; color:var(--ok); font-weight:600;">${NF(r.amount)}</td>
+    <td style="padding:3px 6px; color:var(--muted);">${esc([r.method, r.note].filter(Boolean).join(" · "))}</td></tr>`).join("");
+  $("pcCard").innerHTML = `
+    <div style="font-size:15px; font-weight:800;">${esc(pa.name)} ${pa.type ? `<span class="chip cat" style="font-size:10.5px;">${esc(pa.type)}</span>` : ""}</div>
+    <div class="auto" style="font-size:12px; margin:2px 0 10px;">${[pa.biz_no && "사업자 " + pa.biz_no, pa.ceo && "대표 " + pa.ceo, pa.phone || pa.mobile].filter(Boolean).map(esc).join(" · ") || "—"}</div>
+    <div style="display:flex; gap:10px; flex-wrap:wrap;">
+      ${card("총 매출", d.sales)}${card("총 수금", d.receipt, "var(--ok)")}${card("미수 잔액", d.balance, d.balance > 0 ? "var(--crit)" : "var(--muted)")}</div>
+    ${tbl("최근 출고", `<th style="text-align:left; padding:3px 6px;">일자</th><th style="text-align:left;">제품</th><th class="r">수량</th><th class="r">금액</th>`, shipRows)}
+    ${tbl("주문(수주)", `<th style="text-align:left; padding:3px 6px;">주문일</th><th style="text-align:left;">품목</th><th style="text-align:left;">납기</th><th style="text-align:left;">상태</th>`, orderRows)}
+    ${tbl("수금", `<th style="text-align:left; padding:3px 6px;">일자</th><th class="r">수금액</th><th style="text-align:left;">방법·비고</th>`, recvRows)}`;
+}
+$("pcLoad").onclick = pcQuery;
+$("pcPartner").addEventListener("change", pcQuery);
 // ── 수주(주문) 관리 ────────────────────────────────────────────────────
 const SO = { list: [], stat: "" };
 async function loadSalesOrders() {
@@ -4258,16 +4298,52 @@ function openSoNew() {
   $("soOverlay").classList.add("on");
 }
 // 최근 생산분을 확인하고 주문 품목에 추가 (버튼 클릭 시)
+// 생산분에서 제품별로 체크·수량을 정해 주문 품목에 추가 (버튼 클릭 시)
+const SOPROD = { items: [] };
 async function _soLoadProd() {
   let lp; try { lp = await api("/api/lastproduced"); } catch (e) { return; }
   if (!lp.items || !lp.items.length) { toast("최근 생산 기록이 없습니다"); return; }
-  const names = lp.items.slice(0, 6).map(it => it.name + " " + NF(it.qty)).join(", ") + (lp.items.length > 6 ? " 외 " + (lp.items.length - 6) + "종" : "");
-  if (!confirm(lp.date + " 생산분 " + lp.items.length + "종을 주문 품목에 추가할까요? (" + names + ")")) return;
+  SOPROD.items = lp.items;
+  _soProdEnsureDom();
+  $("soProdTitle").textContent = lp.date + " 생산분에서 선택";
+  $("soProdBody").innerHTML = lp.items.map((it, i) => `
+    <label style="display:flex; gap:8px; align-items:center; padding:5px 4px; border-bottom:1px solid var(--line-soft); cursor:pointer;">
+      <input type="checkbox" data-sp="${i}">
+      <span style="flex:1;">${esc(it.name)}</span>
+      <input class="inp sm num" data-spq="${i}" value="${esc(it.qty)}" inputmode="numeric" style="width:100px; text-align:right;"></label>`).join("");
+  $("soProdOverlay").classList.add("on");
+}
+function _soProdEnsureDom() {
+  if ($("soProdOverlay")) return;
+  const ov = document.createElement("div"); ov.className = "overlay"; ov.id = "soProdOverlay";
+  ov.innerHTML = `<div class="modal" style="width:min(520px,95vw);">
+    <h3 style="margin:0 0 4px;" id="soProdTitle">생산분에서 선택</h3>
+    <p class="hint">추가할 제품을 체크하고 수량을 조정한 뒤 [선택 추가]를 누르세요.</p>
+    <div style="display:flex; gap:6px; margin-bottom:6px;"><button class="btn ghost sm" id="soProdAll">전체 선택</button><button class="btn ghost sm" id="soProdNone">전체 해제</button></div>
+    <div id="soProdBody" style="max-height:50vh; overflow:auto; border:1px solid var(--line); border-radius:8px; padding:2px 8px;"></div>
+    <div class="modal-foot"><button class="btn" id="soProdCancel">취소</button><button class="btn primary" id="soProdApply">선택 추가</button></div></div>`;
+  document.body.appendChild(ov);
+  ov.addEventListener("click", e => { if (e.target === ov) ov.classList.remove("on"); });
+  $("soProdCancel").onclick = () => ov.classList.remove("on");
+  $("soProdAll").onclick = () => ov.querySelectorAll("#soProdBody [data-sp]").forEach(c => c.checked = true);
+  $("soProdNone").onclick = () => ov.querySelectorAll("#soProdBody [data-sp]").forEach(c => c.checked = false);
+  $("soProdApply").onclick = _soProdApply;
+}
+function _soProdApply() {
+  let added = 0;
+  document.querySelectorAll("#soProdBody [data-sp]:checked").forEach(cb => {
+    const i = +cb.dataset.sp, it = SOPROD.items[i];
+    const qi = document.querySelector(`#soProdBody [data-spq="${i}"]`);
+    const q = Number((qi ? qi.value : "").replace(/,/g, ""));
+    if (it && q > 0) { _soAddRow(it.name, q); added++; }
+  });
+  if (!added) { toast("추가할 제품을 체크하고 수량을 확인하세요"); return; }
   [...document.querySelectorAll("#soItems .so-irow")].forEach(r => {
     if (!r.querySelector(".so-prod").value.trim() && !r.querySelector(".so-qty").value.trim()) r.remove();
   });
-  lp.items.forEach(it => _soAddRow(it.name, it.qty));
-  const h = $("soSrcHint"); if (h) h.textContent = "· " + lp.date + " 생산분 " + lp.items.length + "종 추가됨 (필요 없는 건 ✕로 지우세요)";
+  $("soProdOverlay").classList.remove("on");
+  const h = $("soSrcHint"); if (h) h.textContent = "· 생산분에서 " + added + "종 추가됨";
+  toast(added + "종 추가되었습니다");
 }
 // ── 수주 → 완제품 출고 자동 채우기 (일일 입력) ────────────────────────────
 const SFSO = { orders: [], target: "ship" };
@@ -10095,6 +10171,7 @@ async function startApp(me) {
   { const iv = $("navInvoice"); if (iv) iv.style.display = (canM("prod_price") || canM("ship_amt")) ? "" : "none"; }   // 거래명세서 — 단가 열람 권한
   { const rv = $("navRecv"); if (rv) rv.style.display = canM("ship_amt") ? "" : "none"; }   // 미수금 — 출고 금액 권한
   { const sr = $("navSalesRep"); if (sr) sr.style.display = canM("ship_amt") ? "" : "none"; }   // 매출 통계 — 출고 금액 권한
+  { const pc = $("navPCard"); if (pc) pc.style.display = canM("ship_amt") ? "" : "none"; }   // 거래처 원장 — 출고 금액 권한
   { const pr = $("navPurchRep"); if (pr) pr.style.display = canM("mat_amt") ? "" : "none"; }   // 매입 통계 — 자재 금액 권한
   { const pl = $("navPnl"); if (pl) pl.style.display = canM("ship_amt") ? "" : "none"; }   // 손익 요약 — 출고 금액 권한
   api("/api/mysign").then(s => { MYSIGN.img = s.img || ""; }).catch(() => { });   // 내 사인 (발주서 서명란)
