@@ -3828,6 +3828,60 @@ const MCOLS = {
 };
 function B(s) { return `<b>${esc(s)}</b>`; }
 function codeCell(r) { return `<span class="num" style="color:var(--muted); font-size:11.5px; letter-spacing:.3px;">${esc(r.code || "—")}</span>`; }
+// ── 바코드(Code39) — 품목코드를 스캔 가능한 바코드로. 외부 라이브러리 없이 SVG 생성(오프라인/CSP 안전) ──
+const _C39 = { "0": "nnnwwnwnn", "1": "wnnwnnnnw", "2": "nnwwnnnnw", "3": "wnwwnnnnn", "4": "nnnwwnnnw",
+  "5": "wnnwwnnnn", "6": "nnwwwnnnn", "7": "nnnwnnwnw", "8": "wnnwnnwnn", "9": "nnwwnnwnn",
+  "A": "wnnnnwnnw", "B": "nnwnnwnnw", "C": "wnwnnwnnn", "D": "nnnnwwnnw", "E": "wnnnwwnnn", "F": "nnwnwwnnn",
+  "G": "nnnnnwwnw", "H": "wnnnnwwnn", "I": "nnwnnwwnn", "J": "nnnnwwwnn", "K": "wnnnnnnww", "L": "nnwnnnnww",
+  "M": "wnwnnnnwn", "N": "nnnnwnnww", "O": "wnnnwnnwn", "P": "nnwnwnnwn", "Q": "nnnnnnwww", "R": "wnnnnnwwn",
+  "S": "nnwnnnwwn", "T": "nnnnwnwwn", "U": "wwnnnnnnw", "V": "nwwnnnnnw", "W": "wwwnnnnnn", "X": "nwnnwnnnw",
+  "Y": "wwnnwnnnn", "Z": "nwwnwnnnn", "-": "nwnnnnwnw", ".": "wwnnnnwnn", " ": "nwwnnnwnn",
+  "*": "nwnnwnwnn" };
+function code39Svg(text, h, unit) {
+  h = h || 46; unit = unit || 2;
+  const t = String(text || "").toUpperCase().replace(/[^0-9A-Z\-. ]/g, "");
+  const seq = "*" + t + "*", quiet = unit * 8;
+  let x = quiet, bars = "";
+  for (const ch of seq) {
+    const pat = _C39[ch]; if (!pat) continue;
+    for (let i = 0; i < 9; i++) {
+      const w = (pat[i] === "w" ? 3 : 1) * unit;
+      if (i % 2 === 0) bars += `<rect x="${x}" y="0" width="${w}" height="${h}"/>`;   // 짝수=바
+      x += w;
+    }
+    x += unit;   // 문자 사이 좁은 공백
+  }
+  const total = x + quiet;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${total}" height="${h}" viewBox="0 0 ${total} ${h}" preserveAspectRatio="xMidYMid meet"><rect width="${total}" height="${h}" fill="#fff"/><g fill="#000">${bars}</g></svg>`;
+}
+// 현재 탭(완제품/원자재/부자재/반제품)의 품목들을 바코드 라벨 시트로 인쇄
+function printBarcodeLabels() {
+  const { list } = masterList();
+  const items = (list || []).filter(r => (r.code || "").trim());
+  if (!items.length) { toast("바코드를 만들 품목코드가 없습니다"); return; }
+  const label = (MCOLS[mTab] || {}).label || "품목";
+  const cells = items.map(r => `<div class="lbl">
+      <div class="nm">${esc(r.name)}</div>
+      ${code39Svg(r.code, 44, 2)}
+      <div class="cd">${esc(r.code)}</div></div>`).join("");
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>바코드 라벨 — ${esc(label)}</title>
+    <style>
+      body{font-family:'맑은 고딕',sans-serif; margin:10mm;}
+      h2{font-size:15px; margin:0 0 8px;}
+      .sheet{display:grid; grid-template-columns:repeat(3, 1fr); gap:6mm;}
+      .lbl{border:1px solid #bbb; border-radius:6px; padding:6px 8px; text-align:center; break-inside:avoid;}
+      .lbl .nm{font-size:12px; font-weight:700; margin-bottom:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+      .lbl svg{max-width:100%; height:44px;}
+      .lbl .cd{font-family:monospace; font-size:12px; letter-spacing:1px; margin-top:1px;}
+      @media print{ .noprint{display:none;} }
+    </style></head><body>
+    <h2>🏷️ 바코드 라벨 — ${esc(label)} (${items.length}종) · Code39</h2>
+    <div class="noprint" style="margin-bottom:8px;"><button onclick="window.print()" style="padding:6px 14px; font-size:14px;">🖨 인쇄</button> <span style="color:#777; font-size:12px;">스캐너로 읽으면 품목코드가 입력됩니다 (기준정보 검색창에 그대로 검색)</span></div>
+    <div class="sheet">${cells}</div></body></html>`;
+  const w = window.open("", "_blank");
+  if (!w) { toast("팝업이 차단되었습니다 — 브라우저 팝업 허용 후 다시 시도하세요"); return; }
+  w.document.write(html); w.document.close();
+}
 // ── BOM 역전개: 이 자재가 들어가는 완제품·반제품 ──────────────────────────
 function _wuEnsureDom() {
   if ($("whereUsedOverlay")) return;
@@ -4015,6 +4069,7 @@ function renderMasters() {
   const qeMap = QE_COLS[mTab];
   $("mQuickEdit").style.display = (qeMap && ROLE !== "guest") ? "" : "none";
   $("mImport").style.display = (qeMap && ROLE === "admin" && mTab !== "partner") ? "" : "none";   // 거래처는 [엑셀 받기] 전용
+  { const bc = $("mBarcode"); if (bc) { bc.style.display = ["product", "raw", "sub", "semi"].includes(mTab) ? "" : "none"; bc.onclick = printBarcodeLabels; } }   // 품목 탭에서 바코드 라벨
   $("mPackSet").style.display = (mTab === "sub" && ROLE === "admin") ? "" : "none";
   $("mErpImport").style.display = (mTab === "partner" && ROLE === "admin") ? "" : "none";
   $("mQuickEdit").classList.toggle("on", mQuick);
