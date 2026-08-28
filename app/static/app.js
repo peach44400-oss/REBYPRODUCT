@@ -98,7 +98,7 @@ async function reloadMaster(t) {
 }
 
 /* ── 네비게이션 ─────────────────────── */
-const TITLES = { dash: "대시보드", prod: "생산 현황", ship: "출고 현황", postat: "발주 현황", entry: "일일 입력", lot: "LOT 관리", matstat: "자재 현황", sched: "주간 스케줄", items: "기준정보 관리", ana: "분석", lookup: "기록 조회", memos: "특이사항", staff: "인원 관리" };
+const TITLES = { dash: "대시보드", prod: "생산 현황", ship: "출고 현황", invoice: "거래명세서", postat: "발주 현황", entry: "일일 입력", lot: "LOT 관리", matstat: "자재 현황", sched: "주간 스케줄", items: "기준정보 관리", ana: "분석", lookup: "기록 조회", memos: "특이사항", staff: "인원 관리" };
 /* 표 검색(필터)은 화면·탭을 옮기면 초기화한다.
    남아 있으면 다른 화면에서 '등록된 항목이 없습니다'만 보여 데이터가 없는 것처럼 오해하게 된다.
    ※ 행 추가용 검색(qaProd 등)은 필터가 아니라 입력칸이므로 대상 아님. */
@@ -139,7 +139,7 @@ $("nav").addEventListener("click", e => {
   $("scrTitle").textContent = TITLES[b.dataset.scr];
   resetSearches();
   const fn = { dash: loadDash, prod: loadProd, ship: loadShip, entry: openEntry, lot: loadLot, items: renderMasters, ana: loadAna, lookup: () => lkCal.render(),
-    postat: loadPoStat, memos: loadMemos, matstat: loadMatStatus, sched: () => loadSchedule(),
+    postat: loadPoStat, memos: loadMemos, matstat: loadMatStatus, sched: () => loadSchedule(), invoice: loadInvoice,
     staff: () => { STAFF.mode = "d"; STAFF.date = todayISO();   // 진입 시 항상 일별·오늘로 초기화
       document.querySelectorAll("#staffTabs button").forEach(x => x.classList.toggle("on", x.dataset.sh === "d"));
       loadStaff(); } }[b.dataset.scr];
@@ -3882,6 +3882,114 @@ function printBarcodeLabels() {
   if (!w) { toast("팝업이 차단되었습니다 — 브라우저 팝업 허용 후 다시 시도하세요"); return; }
   w.document.write(html); w.document.close();
 }
+// ── 거래명세서(납품서) ────────────────────────────────────────────────
+const INV = { data: null };
+function loadInvoice() {
+  const sel = $("invPartner");
+  const parts = (M.partner || []).filter(p => p.status !== "중지")
+    .sort((a, b) => (pHasType(b, "판매처") - pHasType(a, "판매처")) || a.name.localeCompare(b.name, "ko"));
+  sel.innerHTML = `<option value="">거래처 선택</option>` + parts.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
+  const t = todayISO();
+  if (!$("invFrom").value) $("invFrom").value = t.slice(0, 8) + "01";
+  if (!$("invTo").value) $("invTo").value = t;
+  $("invCompanyBtn").style.display = ROLE === "admin" ? "" : "none";
+  if (!INV.data) { $("invDoc").innerHTML = `<div class="auto" style="padding:22px;">거래처와 기간을 고른 뒤 <b>[조회]</b>를 누르세요.</div>`; $("invPrintBtn").style.display = "none"; }
+}
+async function invQuery() {
+  const pid = $("invPartner").value;
+  if (!pid) { toast("거래처를 선택하세요"); return; }
+  let d;
+  try { d = await api(`/api/invoice?partner_id=${pid}&frm=${$("invFrom").value}&to=${$("invTo").value}&taxfree=${$("invTaxfree").checked ? 1 : 0}`); }
+  catch (e) { return; }
+  INV.data = d;
+  $("invDoc").innerHTML = invoiceSheetHtml(d);
+  $("invPrintBtn").style.display = (d.items || []).length ? "" : "none";
+}
+function invoiceSheetHtml(d) {
+  const s = d.supplier || {}, b = d.buyer || {};
+  const infoBox = (title, o, isBuyer) => `<table style="width:100%; border-collapse:collapse; font-size:12px;">
+    <tr><td colspan="2" style="border:1px solid #333; background:#f0f0f0; font-weight:800; text-align:center; padding:3px;">${title}</td></tr>
+    <tr><td style="border:1px solid #333; background:#f7f7f2; width:64px; padding:3px 5px;">상호</td><td style="border:1px solid #333; padding:3px 6px; font-weight:700;">${esc(isBuyer ? (o.name || "") : (o.co_name || ""))}</td></tr>
+    <tr><td style="border:1px solid #333; background:#f7f7f2; padding:3px 5px;">사업자번호</td><td style="border:1px solid #333; padding:3px 6px;">${esc(isBuyer ? (o.biz_no || "") : (o.co_bizno || "")) || "—"}</td></tr>
+    <tr><td style="border:1px solid #333; background:#f7f7f2; padding:3px 5px;">대표자</td><td style="border:1px solid #333; padding:3px 6px;">${esc(isBuyer ? (o.ceo || "") : (o.co_ceo || "")) || "—"}</td></tr>
+    <tr><td style="border:1px solid #333; background:#f7f7f2; padding:3px 5px;">${isBuyer ? "전화" : "주소"}</td><td style="border:1px solid #333; padding:3px 6px;">${esc(isBuyer ? (o.phone || o.mobile || "") : (o.co_addr || "")) || "—"}</td></tr>
+    ${isBuyer ? "" : `<tr><td style="border:1px solid #333; background:#f7f7f2; padding:3px 5px;">업태/종목</td><td style="border:1px solid #333; padding:3px 6px;">${esc([s.co_type, s.co_item].filter(Boolean).join(" / ")) || "—"}</td></tr>`}
+  </table>`;
+  const TD = "border:1px solid #333; padding:4px 6px; font-size:12px;";
+  const rows = (d.items || []).map((it, i) => `<tr>
+    <td style="${TD} text-align:center;">${i + 1}</td>
+    <td style="${TD} text-align:center; white-space:nowrap;">${esc((it.date || "").slice(5))}</td>
+    <td style="${TD}">${esc(it.name)}${it.code ? ` <span style="color:#888; font-size:10px;">${esc(it.code)}</span>` : ""}</td>
+    <td style="${TD} text-align:center;">${esc(it.spec || "")}</td>
+    <td style="${TD} text-align:right;">${NF(it.qty)}</td>
+    <td style="${TD} text-align:right;">${NF(it.price)}</td>
+    <td style="${TD} text-align:right;">${NF(it.amount)}</td></tr>`).join("")
+    || `<tr><td style="${TD} text-align:center; color:#999;" colspan="7">이 기간 출고 내역이 없습니다</td></tr>`;
+  return `<div id="invSheet" style="background:#fff; color:#111; max-width:800px; margin:0 auto; padding:6px;">
+    <div style="text-align:center; font-size:22px; font-weight:800; letter-spacing:8px; margin:4px 0 2px;">거 래 명 세 서</div>
+    <div style="text-align:center; font-size:12px; color:#555; margin-bottom:8px;">${esc(d.from)} ~ ${esc(d.to)}${d.taxfree ? " · 면세" : ""}</div>
+    <div style="display:flex; gap:10px; margin-bottom:8px;">
+      <div style="flex:1;">${infoBox("공급받는자", b || {}, true)}</div>
+      <div style="flex:1;">${infoBox("공급자", s, false)}</div></div>
+    <table style="width:100%; border-collapse:collapse;">
+      <thead><tr>
+        <th style="${TD} background:#f0f0f0; width:30px;">No</th>
+        <th style="${TD} background:#f0f0f0; width:52px;">일자</th>
+        <th style="${TD} background:#f0f0f0;">품목</th>
+        <th style="${TD} background:#f0f0f0; width:90px;">규격</th>
+        <th style="${TD} background:#f0f0f0; width:70px;">수량</th>
+        <th style="${TD} background:#f0f0f0; width:80px;">단가</th>
+        <th style="${TD} background:#f0f0f0; width:90px;">공급가액</th></tr></thead>
+      <tbody>${rows}</tbody>
+      <tfoot>
+        <tr><td style="${TD} text-align:center; font-weight:700; background:#f7f7f2;" colspan="6">공급가액 합계</td><td style="${TD} text-align:right; font-weight:800;">${NF(d.supply)}</td></tr>
+        <tr><td style="${TD} text-align:center; font-weight:700; background:#f7f7f2;" colspan="6">세액 (부가세)</td><td style="${TD} text-align:right;">${NF(d.tax)}</td></tr>
+        <tr><td style="${TD} text-align:center; font-weight:800; background:#eef3ff;" colspan="6">합계 금액</td><td style="${TD} text-align:right; font-weight:800; font-size:14px;">${NF(d.grand)}</td></tr>
+      </tfoot></table>
+    <div style="text-align:right; font-size:11px; color:#888; margin-top:6px;">발행일 ${todayISO()} · ${esc(s.co_name || "")}</div>
+  </div>`;
+}
+function invPrint() {
+  if (!INV.data) return;
+  const w = window.open("", "_blank");
+  if (!w) { toast("팝업이 차단되었습니다 — 팝업 허용 후 다시 시도하세요"); return; }
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>거래명세서 ${esc((INV.data.buyer || {}).name || "")}</title>
+    <style>body{font-family:'맑은 고딕',sans-serif; margin:12mm;} @media print{ .noprint{display:none;} }</style></head>
+    <body><div class="noprint" style="text-align:center; margin-bottom:10px;"><button onclick="window.print()" style="padding:6px 16px; font-size:14px;">🖨 인쇄</button></div>
+    ${invoiceSheetHtml(INV.data)}</body></html>`);
+  w.document.close();
+}
+// 공급자(회사) 정보 편집
+async function openInvCompany() {
+  let d; try { d = await api("/api/company"); } catch (e) { d = {}; }
+  let ov = $("invCoOverlay");
+  if (!ov) {
+    ov = document.createElement("div"); ov.className = "overlay"; ov.id = "invCoOverlay";
+    ov.innerHTML = `<div class="modal" style="width:min(480px,95vw);">
+      <h3 style="margin:0 0 4px;">🏢 공급자(회사) 정보</h3>
+      <p class="hint">거래명세서 상단 '공급자' 칸에 표시됩니다.</p>
+      <div id="invCoForm" style="display:flex; flex-direction:column; gap:8px;"></div>
+      <div class="modal-foot"><button class="btn" id="invCoCancel">취소</button><button class="btn primary" id="invCoSave">저장</button></div></div>`;
+    document.body.appendChild(ov);
+    ov.addEventListener("click", e => { if (e.target === ov) ov.classList.remove("on"); });
+    $("invCoCancel").onclick = () => ov.classList.remove("on");
+    $("invCoSave").onclick = _invCoSave;
+  }
+  const F = [["co_name", "상호"], ["co_bizno", "사업자등록번호"], ["co_ceo", "대표자"], ["co_addr", "주소"], ["co_tel", "전화"], ["co_type", "업태"], ["co_item", "종목"]];
+  $("invCoForm").innerHTML = F.map(([k, lbl]) => `<label style="font-size:13px;">${lbl}
+    <input id="ic_${k}" class="inp" value="${esc(d[k] || "")}" style="width:100%; margin-top:2px;"></label>`).join("");
+  ov.classList.add("on");
+}
+async function _invCoSave() {
+  const F = ["co_name", "co_bizno", "co_ceo", "co_addr", "co_tel", "co_type", "co_item"];
+  const body = {}; F.forEach(k => body[k] = ($("ic_" + k) || {}).value || "");
+  try { await api("/api/company", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); }
+  catch (e) { return; }
+  $("invCoOverlay").classList.remove("on"); toast("공급자 정보를 저장했습니다");
+  if (INV.data) invQuery();
+}
+{ const on2 = (id, fn) => { const el = $(id); if (el) el.onclick = fn; };
+  on2("invLoad", invQuery); on2("invPrintBtn", invPrint); on2("invCompanyBtn", openInvCompany); }
 // ── BOM 역전개: 이 자재가 들어가는 완제품·반제품 ──────────────────────────
 function _wuEnsureDom() {
   if ($("whereUsedOverlay")) return;
@@ -9557,6 +9665,7 @@ async function startApp(me) {
   await loadDash();
   loadLowStock();   // 사이드바 '발주 필요' 알림 (자재 담당·admin)
   $("navPoStat").style.display = canStock ? "" : "none";   // 발주 현황 탭 — 자재 담당·admin
+  { const iv = $("navInvoice"); if (iv) iv.style.display = (canM("prod_price") || canM("ship_amt")) ? "" : "none"; }   // 거래명세서 — 단가 열람 권한
   api("/api/mysign").then(s => { MYSIGN.img = s.img || ""; }).catch(() => { });   // 내 사인 (발주서 서명란)
   $("dbStatus").innerHTML = `🟢 제품 ${M.product.length} · 자재 ${M.raw.length + M.sub.length}`;
   // 권한 실시간 반영: admin이 권한을 바꾸면(서버 세션은 즉시 교체됨) 화면도 20초 내 자동 새로고침
