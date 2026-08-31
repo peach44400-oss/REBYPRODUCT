@@ -4236,14 +4236,14 @@ function renderSalesRep() {
   if (tab === "partner" || tab === "product") {
     const arr = tab === "partner" ? d.by_partner : d.by_product;
     $("srHead").innerHTML = `<tr><th>${tab === "partner" ? "거래처" : "제품"}</th><th class="r">수량</th><th class="r">매출액(원)</th><th class="r">비중</th></tr>`;
-    $("srBody").innerHTML = arr.map(r => `<tr>
+    $("srepBody").innerHTML = arr.map(r => `<tr>
       <td>${tab === "product" && r.code ? `<span class="num auto" style="font-size:10.5px;">${esc(r.code)}</span> ` : ""}<b>${esc(r.name)}</b></td>
       <td class="r">${NF(r.qty)}</td><td class="r" style="font-weight:700;">${NF(r.amount)}</td>
       <td class="r auto">${(r.amount / tot * 100).toFixed(1)}%</td></tr>`).join("")
       || `<tr><td colspan="4" class="auto" style="padding:16px; text-align:center;">기간 내 매출이 없습니다</td></tr>`;
   } else {
     $("srHead").innerHTML = `<tr><th>월</th><th class="r">수량</th><th class="r">매출액(원)</th></tr>`;
-    $("srBody").innerHTML = d.by_month.map(r => `<tr>
+    $("srepBody").innerHTML = d.by_month.map(r => `<tr>
       <td><b>${esc(r.month)}</b></td><td class="r">${NF(r.qty)}</td><td class="r" style="font-weight:700;">${NF(r.amount)}</td></tr>`).join("")
       || `<tr><td colspan="3" class="auto" style="padding:16px; text-align:center;">기간 내 매출이 없습니다</td></tr>`;
   }
@@ -4255,7 +4255,7 @@ $("srTabs").addEventListener("click", e => {
   renderSalesRep();
 });
 $("srLoad").onclick = srQuery;
-$("srCsv").onclick = () => tableToCsv($("srHead"), $("srBody"), csvName("매출통계_" + SREP.tab, todayISO()));
+$("srCsv").onclick = () => tableToCsv($("srHead"), $("srepBody"), csvName("매출통계_" + SREP.tab, todayISO()));
 // ── 매입 통계 ──────────────────────────────────────────────────────────
 const PREP = { data: null, tab: "partner" };
 function loadPurchRep() {
@@ -4328,11 +4328,11 @@ $("pnlCsv").onclick = () => tableToCsv($("pnlHead"), $("pnlBody"), csvName("손�
 // ── 거래처 원장(고객 카드) ─────────────────────────────────────────────
 function loadPCard() {
   const parts = (M.partner || []).filter(p => p.status !== "중지").sort((a, b) => a.name.localeCompare(b.name, "ko"));
-  $("pcPartnerDl").innerHTML = parts.map(p => `<option value="${esc(p.name)}">`).join("");
+  $("pcardPartnerDl").innerHTML = parts.map(p => `<option value="${esc(p.name)}">`).join("");
   if (!$("pcCard").innerHTML) $("pcCard").innerHTML = `<div class="auto" style="padding:20px;">거래처를 고르고 [조회]를 누르세요.</div>`;
 }
 async function pcQuery() {
-  const nm = $("pcPartner").value.trim();
+  const nm = $("pcardPartner").value.trim();
   const p = (M.partner || []).find(x => x.name === nm);
   if (!p) { toast("거래처를 목록에서 선택하세요"); return; }
   let d; try { d = await api("/api/partnercard/" + p.id); } catch (e) { return; }
@@ -4364,7 +4364,7 @@ async function pcQuery() {
     ${tbl("수금", `<th style="text-align:left; padding:3px 6px;">일자</th><th class="r">수금액</th><th style="text-align:left;">방법·비고</th>`, recvRows)}`;
 }
 $("pcLoad").onclick = pcQuery;
-$("pcPartner").addEventListener("change", pcQuery);
+$("pcardPartner").addEventListener("change", pcQuery);
 // ── 수주(주문) 관리 ────────────────────────────────────────────────────
 const SO = { list: [], stat: "" };
 async function loadSalesOrders() {
