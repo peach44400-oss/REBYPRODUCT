@@ -3984,85 +3984,111 @@ async function invQuery() {
 if ($("invHideAmt")) $("invHideAmt").addEventListener("change", () => {
   if (INV.data) $("invDoc").innerHTML = invoiceSheetHtml(INV.data, $("invHideAmt").checked);
 });
+// 기간 빠른 선택 — 오늘/이번주(월~일)/이번달/올해 → 날짜 세팅 후 거래처가 있으면 바로 조회
+function invSetRange(k) {
+  const t = new Date(), fmt = x => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
+  const y = t.getFullYear(), m = t.getMonth();
+  let from, to;
+  if (k === "today") { from = to = fmt(t); }
+  else if (k === "week") {
+    const off = (t.getDay() + 6) % 7, mon = new Date(t); mon.setDate(t.getDate() - off);
+    const sun = new Date(mon); sun.setDate(mon.getDate() + 6); from = fmt(mon); to = fmt(sun);
+  } else if (k === "month") { from = fmt(new Date(y, m, 1)); to = fmt(new Date(y, m + 1, 0)); }
+  else if (k === "year") { from = fmt(new Date(y, 0, 1)); to = fmt(new Date(y, 11, 31)); }
+  $("invFrom").value = from; $("invTo").value = to;
+  if ($("invPartner").value) invQuery();
+}
+document.querySelectorAll("#scr-invoice [data-invrange]").forEach(btn =>
+  btn.addEventListener("click", () => invSetRange(btn.dataset.invrange)));
 function invoiceSheetHtml(d, hideAmt) {
   const s = d.supplier || {}, b = d.buyer || {};
   const showAmt = !hideAmt;
+  const items = d.items || [];
   const CB = "border:1px solid #333;";
-  const LB = `${CB} background:#f7f7f2; padding:3px 5px; width:62px; white-space:nowrap;`;
-  const VB = `${CB} padding:3px 6px;`;
-  // 도장 자리 — 공급자 대표자 옆 (인) 원형
-  const stamp = `<span style="display:inline-block; width:36px; height:36px; border:1px dashed #bbb; border-radius:50%; color:#c9c9c9; font-size:9px; text-align:center; line-height:36px; float:right; margin:-6px 0;">(인)</span>`;
-  const buyerBox = `<table style="width:100%; border-collapse:collapse; font-size:12px;">
-    <tr><td colspan="2" style="${CB} background:#f0f0f0; font-weight:800; text-align:center; padding:3px;">공급받는자</td></tr>
-    <tr><td style="${LB}">상호</td><td style="${VB} font-weight:700;">${esc(b.name || "") || "—"}</td></tr>
-    <tr><td style="${LB}">사업자번호</td><td style="${VB}">${esc(b.biz_no || "") || "—"}</td></tr>
-    <tr><td style="${LB}">대표자</td><td style="${VB}">${esc(b.ceo || "") || "—"}</td></tr>
-    <tr><td style="${LB}">전화</td><td style="${VB}">${esc(b.phone || b.mobile || "") || "—"}</td></tr>
-    <tr><td style="${LB}">주소</td><td style="${VB}">${esc(b.address || "") || "—"}</td></tr>
-  </table>`;
-  const supBox = `<table style="width:100%; border-collapse:collapse; font-size:12px;">
-    <tr><td colspan="2" style="${CB} background:#f0f0f0; font-weight:800; text-align:center; padding:3px;">공급자</td></tr>
-    <tr><td style="${LB}">상호</td><td style="${VB} font-weight:700;">${esc(s.co_name || "") || "—"}</td></tr>
-    <tr><td style="${LB}">사업자번호</td><td style="${VB}">${esc(s.co_bizno || "") || "—"}</td></tr>
-    <tr><td style="${LB}">대표자</td><td style="${VB}">${esc(s.co_ceo || "") || "—"} ${stamp}</td></tr>
-    <tr><td style="${LB}">주소</td><td style="${VB}">${esc(s.co_addr || "") || "—"}</td></tr>
-    <tr><td style="${LB}">업태/종목</td><td style="${VB}">${esc([s.co_type, s.co_item].filter(Boolean).join(" / ")) || "—"}</td></tr>
-  </table>`;
+  const LB = `${CB} background:#f7f7f2; padding:4px 6px; white-space:nowrap; font-size:11.5px; color:#333;`;
+  const VB = `${CB} padding:4px 7px;`;
+  // 정보 박스 — 라벨 폭 고정(colgroup)으로 좌우 표를 나란히 정렬
+  const infoTable = (title, body) => `<table style="width:100%; border-collapse:collapse; font-size:12px; table-layout:fixed;">
+    <colgroup><col style="width:74px;"><col></colgroup>
+    <tr><td colspan="2" style="${CB} background:#eef1f6; font-weight:800; text-align:center; padding:4px;">${title}</td></tr>${body}</table>`;
+  const buyerBox = infoTable("공급받는자",
+    `<tr><td style="${LB}">상호</td><td style="${VB} font-weight:700;">${esc(b.name || "") || "—"}</td></tr>
+     <tr><td style="${LB}">사업자번호</td><td style="${VB}">${esc(b.biz_no || "") || "—"}</td></tr>
+     <tr><td style="${LB}">대표자</td><td style="${VB}">${esc(b.ceo || "") || "—"}</td></tr>
+     <tr><td style="${LB}">전화</td><td style="${VB}">${esc(b.phone || b.mobile || "") || "—"}</td></tr>
+     <tr><td style="${LB}">주소</td><td style="${VB}">${esc(b.address || "") || "—"}</td></tr>`);
+  // 도장 자리 — 대표자 칸 오른쪽에 겹치는 (인) 원형
+  const stampVB = `${VB} position:relative;`;
+  const stamp = `<span style="position:absolute; right:10px; top:50%; transform:translateY(-50%); width:32px; height:32px; border:1px dashed #c4c4c4; border-radius:50%; color:#cfcfcf; font-size:8.5px; text-align:center; line-height:32px;">(인)</span>`;
+  const supBox = infoTable("공급자",
+    `<tr><td style="${LB}">상호</td><td style="${VB} font-weight:700;">${esc(s.co_name || "") || "—"}</td></tr>
+     <tr><td style="${LB}">사업자번호</td><td style="${VB}">${esc(s.co_bizno || "") || "—"}</td></tr>
+     <tr><td style="${LB}">대표자</td><td style="${stampVB}">${esc(s.co_ceo || "") || "—"}${stamp}</td></tr>
+     <tr><td style="${LB}">주소</td><td style="${VB}">${esc(s.co_addr || "") || "—"}</td></tr>
+     <tr><td style="${LB}">업태/종목</td><td style="${VB}">${esc([s.co_type, s.co_item].filter(Boolean).join(" / ")) || "—"}</td></tr>`);
   const TD = "border:1px solid #333; padding:4px 6px; font-size:12px;";
-  const nCols = showAmt ? 7 : 5;   // No,품목,규격,박스,수량,소비기한(+단가,공급가액)
+  // 있는 열만 표시 — 규격/박스/소비기한은 값이 하나라도 있을 때만
+  const anySpec = items.some(it => (it.spec || "").trim());
+  const anyBox = items.some(it => it.boxes != null);
+  const anyExp = items.some(it => (it.expiry || "").trim());
+  const cols = [{ k: "no", t: "No", w: 30, a: "center" }, { k: "name", t: "품목", w: 0, a: "left" }];
+  if (anySpec) cols.push({ k: "spec", t: "규격", w: 78, a: "center" });
+  if (anyBox) cols.push({ k: "box", t: "박스", w: 66, a: "right" });
+  cols.push({ k: "qty", t: "수량", w: 66, a: "right" });
+  if (anyExp) cols.push({ k: "exp", t: "소비기한", w: 82, a: "center" });
+  if (showAmt) { cols.push({ k: "price", t: "단가", w: 70, a: "right" }); cols.push({ k: "amount", t: "공급가액", w: 90, a: "right" }); }
+  const ncol = cols.length;
+  const cell = (c, it, no) => {
+    const st = `${TD} text-align:${c.a};`;
+    switch (c.k) {
+      case "no": return `<td style="${st}">${no}</td>`;
+      case "name": return `<td style="${st}">${esc(it.name)}${it.code ? ` <span style="color:#888; font-size:10px;">${esc(it.code)}</span>` : ""}</td>`;
+      case "spec": return `<td style="${st}">${esc(it.spec || "")}</td>`;
+      case "box": return `<td style="${st}">${it.boxes != null ? NF(it.boxes) + " BOX" : "—"}</td>`;
+      case "qty": return `<td style="${st}">${NF(it.qty)}</td>`;
+      case "exp": return `<td style="${st} white-space:nowrap;">${esc(it.expiry || "") || "—"}</td>`;
+      case "price": return `<td style="${st}">${NF(it.price)}</td>`;
+      case "amount": return `<td style="${st}">${NF(it.amount)}</td>`;
+    }
+  };
   // 날짜별 그룹 — 그날 출고된 품목만 한 묶음으로
   const groups = {};
-  (d.items || []).forEach(it => { (groups[it.date] = groups[it.date] || []).push(it); });
+  items.forEach(it => { (groups[it.date] = groups[it.date] || []).push(it); });
   const dates = Object.keys(groups).sort();
   let no = 0, body = "";
   for (const dt0 of dates) {
-    body += `<tr><td style="${TD} background:#eef3ff; font-weight:800; text-align:left;" colspan="${nCols + (showAmt ? 1 : 0)}">📅 ${esc(dt0)} (${dowOf(dt0)})</td></tr>`;
-    for (const it of groups[dt0]) {
-      no++;
-      body += `<tr>
-        <td style="${TD} text-align:center;">${no}</td>
-        <td style="${TD}">${esc(it.name)}${it.code ? ` <span style="color:#888; font-size:10px;">${esc(it.code)}</span>` : ""}</td>
-        <td style="${TD} text-align:center;">${esc(it.spec || "")}</td>
-        <td style="${TD} text-align:right;">${it.boxes != null ? NF(it.boxes) + " BOX" : "—"}</td>
-        <td style="${TD} text-align:right;">${NF(it.qty)}</td>
-        <td style="${TD} text-align:center; white-space:nowrap;">${esc(it.expiry || "") || "—"}</td>
-        ${showAmt ? `<td style="${TD} text-align:right;">${NF(it.price)}</td><td style="${TD} text-align:right;">${NF(it.amount)}</td>` : ""}</tr>`;
-    }
+    body += `<tr><td style="${TD} background:#eef3ff; font-weight:800; text-align:left;" colspan="${ncol}">📅 ${esc(dt0)} (${dowOf(dt0)})</td></tr>`;
+    for (const it of groups[dt0]) { no++; body += `<tr>${cols.map(c => cell(c, it, no)).join("")}</tr>`; }
   }
-  if (!dates.length) body = `<tr><td style="${TD} text-align:center; color:#999;" colspan="${nCols + (showAmt ? 1 : 0)}">이 기간 출고 내역이 없습니다</td></tr>`;
-  const totQty = (d.items || []).reduce((a, it) => a + (+it.qty || 0), 0);
-  const totBox = (d.items || []).reduce((a, it) => a + (+it.boxes || 0), 0);
-  const foot = showAmt ? `<tfoot>
-      <tr><td style="${TD} text-align:center; font-weight:700; background:#f7f7f2;" colspan="3">합계</td>
-        <td style="${TD} text-align:right; font-weight:700;">${NF(totBox)} BOX</td>
-        <td style="${TD} text-align:right; font-weight:700;">${NF(totQty)}</td>
-        <td style="${TD} background:#f7f7f2;"></td>
-        <td style="${TD} text-align:right; font-weight:800;">${NF(d.supply)}</td></tr>
-      <tr><td style="${TD} text-align:center; font-weight:700; background:#f7f7f2;" colspan="6">세액 (부가세)</td><td style="${TD} text-align:right;">${NF(d.tax)}</td></tr>
-      <tr><td style="${TD} text-align:center; font-weight:800; background:#eef3ff;" colspan="6">합계 금액</td><td style="${TD} text-align:right; font-weight:800; font-size:14px;">${NF(d.grand)}</td></tr>
-    </tfoot>` : `<tfoot>
-      <tr><td style="${TD} text-align:center; font-weight:700; background:#f7f7f2;" colspan="3">합계</td>
-        <td style="${TD} text-align:right; font-weight:700;">${NF(totBox)} BOX</td>
-        <td style="${TD} text-align:right; font-weight:700;">${NF(totQty)}</td>
-        <td style="${TD} background:#f7f7f2;"></td></tr>
-    </tfoot>`;
+  if (!dates.length) body = `<tr><td style="${TD} text-align:center; color:#999;" colspan="${ncol}">이 기간 출고 내역이 없습니다</td></tr>`;
+  const totQty = items.reduce((a, it) => a + (+it.qty || 0), 0);
+  const totBox = items.reduce((a, it) => a + (+it.boxes || 0), 0);
+  // 합계 행 — 요약 열(박스/수량/공급가액) 시작 전까지 '합계'로 병합
+  const sumStart = cols.findIndex(c => c.k === "box" || c.k === "qty");
+  let sumRow = `<td style="${TD} text-align:center; font-weight:700; background:#f7f7f2;" colspan="${sumStart}">합계</td>`;
+  for (let i = sumStart; i < ncol; i++) {
+    const c = cols[i], st = `${TD} text-align:${c.a}; font-weight:700;`;
+    if (c.k === "box") sumRow += `<td style="${st}">${NF(totBox)} BOX</td>`;
+    else if (c.k === "qty") sumRow += `<td style="${st}">${NF(totQty)}</td>`;
+    else if (c.k === "amount") sumRow += `<td style="${st}">${NF(d.supply)}</td>`;
+    else sumRow += `<td style="${TD} background:#f7f7f2;"></td>`;
+  }
+  let foot = `<tr>${sumRow}</tr>`;
+  if (showAmt) {
+    foot += `<tr><td style="${TD} text-align:center; font-weight:700; background:#f7f7f2;" colspan="${ncol - 1}">세액 (부가세)</td><td style="${TD} text-align:right;">${NF(d.tax)}</td></tr>`;
+    foot += `<tr><td style="${TD} text-align:center; font-weight:800; background:#eef3ff;" colspan="${ncol - 1}">합계 금액</td><td style="${TD} text-align:right; font-weight:800; font-size:14px;">${NF(d.grand)}</td></tr>`;
+  }
+  const thead = cols.map(c => `<th style="${TD} background:#f0f0f0;${c.w ? ` width:${c.w}px;` : ""}">${c.t}</th>`).join("");
   return `<div id="invSheet" style="background:#fff; color:#111; max-width:820px; margin:0 auto; padding:6px;">
     <div style="text-align:center; font-size:22px; font-weight:800; letter-spacing:8px; margin:4px 0 2px;">거 래 명 세 서</div>
     <div style="text-align:center; font-size:12px; color:#555; margin-bottom:8px;">${esc(d.from)} ~ ${esc(d.to)}${d.taxfree ? " · 면세" : ""}${hideAmt ? " · 납품서(금액 생략)" : ""}</div>
-    <div style="display:flex; gap:10px; margin-bottom:8px;">
+    <div style="display:flex; gap:10px; margin-bottom:8px; align-items:flex-start;">
       <div style="flex:1;">${buyerBox}</div>
       <div style="flex:1;">${supBox}</div></div>
-    <table style="width:100%; border-collapse:collapse;">
-      <thead><tr>
-        <th style="${TD} background:#f0f0f0; width:30px;">No</th>
-        <th style="${TD} background:#f0f0f0;">품목</th>
-        <th style="${TD} background:#f0f0f0; width:78px;">규격</th>
-        <th style="${TD} background:#f0f0f0; width:66px;">박스</th>
-        <th style="${TD} background:#f0f0f0; width:66px;">수량</th>
-        <th style="${TD} background:#f0f0f0; width:80px;">소비기한</th>
-        ${showAmt ? `<th style="${TD} background:#f0f0f0; width:70px;">단가</th><th style="${TD} background:#f0f0f0; width:88px;">공급가액</th>` : ""}</tr></thead>
+    <table style="width:100%; border-collapse:collapse; table-layout:fixed;">
+      <thead><tr>${thead}</tr></thead>
       <tbody>${body}</tbody>
-      ${foot}</table>
+      <tfoot>${foot}</tfoot></table>
     <div style="text-align:right; font-size:11px; color:#888; margin-top:6px;">발행일 ${todayISO()} · ${esc(s.co_name || "")}</div>
   </div>`;
 }

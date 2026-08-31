@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.99.1"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.99.2"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -3996,9 +3996,9 @@ def invoice(request: Request, partner_id: int = 0, frm: str = "", to: str = "", 
             it["price"] = round(price)
             it["amount"] = round(price * float(it["qty"]))
             supply += it["amount"]
-            # 박스 수 = 출고수량 ÷ 기본 개입수(pack_sizes 첫 값)
-            packs = [int(x) for x in str(it.get("pack_sizes", "")).replace(" ", "").split(",") if x.strip().isdigit()]
-            pack = packs[0] if packs else 0
+            # 박스 수 = 출고수량 ÷ 기본 개입수. pack_sizes는 "135개입,30개입" 같은 문자열이라 첫 숫자만 뽑는다.
+            mpack = re.search(r"\d+", str(it.get("pack_sizes", "")))
+            pack = int(mpack.group()) if mpack else 0
             it["pack"] = pack
             it["boxes"] = round(float(it["qty"]) / pack, 1) if pack else None
             it.pop("uprice", None)
