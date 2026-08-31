@@ -98,7 +98,7 @@ async function reloadMaster(t) {
 }
 
 /* ── 네비게이션 ─────────────────────── */
-const TITLES = { dash: "대시보드", prod: "생산 현황", workorder: "작업지시서", ship: "출고 현황", invoice: "거래명세서", recv: "미수금", salesrep: "매출 통계", pcard: "거래처 원장", postat: "발주 현황", purchrep: "매입 통계", salesorder: "수주 관리", entry: "일일 입력", lot: "LOT 관리", matstat: "자재 현황", sched: "주간 스케줄", items: "기준정보 관리", ana: "분석", lookup: "기록 조회", memos: "특이사항", staff: "인원 관리", pnl: "손익 요약" };
+const TITLES = { dash: "대시보드", prod: "생산 현황", workorder: "작업지시서", ship: "출고 현황", invoice: "거래명세서", recv: "미수금", salesrep: "매출 통계", pcard: "거래처 원장", postat: "발주 현황", purchrep: "매입 통계", salesorder: "수주 관리", entry: "일일 입력", lot: "LOT 관리", matstat: "자재 현황", sched: "출고 스케줄", prodsched: "생산 스케줄", items: "기준정보 관리", ana: "분석", lookup: "기록 조회", memos: "특이사항", staff: "인원 관리", pnl: "손익 요약" };
 /* 표 검색(필터)은 화면·탭을 옮기면 초기화한다.
    남아 있으면 다른 화면에서 '등록된 항목이 없습니다'만 보여 데이터가 없는 것처럼 오해하게 된다.
    ※ 행 추가용 검색(qaProd 등)은 필터가 아니라 입력칸이므로 대상 아님. */
@@ -140,7 +140,7 @@ $("nav").addEventListener("click", e => {
   $("scrTitle").textContent = TITLES[b.dataset.scr];
   resetSearches();
   const fn = { dash: loadDash, prod: loadProd, ship: loadShip, entry: openEntry, lot: loadLot, items: renderMasters, ana: loadAna, lookup: () => lkCal.render(),
-    postat: loadPoStat, memos: loadMemos, matstat: loadMatStatus, sched: () => loadSchedule(), invoice: loadInvoice, recv: loadReceivables, salesorder: loadSalesOrders, pcard: loadPCard, pnl: loadPnl, workorder: loadWorkorder, salesrep: loadSalesRep, purchrep: loadPurchRep,
+    postat: loadPoStat, memos: loadMemos, matstat: loadMatStatus, sched: () => loadSchedule(), prodsched: () => loadProdSched(), invoice: loadInvoice, recv: loadReceivables, salesorder: loadSalesOrders, pcard: loadPCard, pnl: loadPnl, workorder: loadWorkorder, salesrep: loadSalesRep, purchrep: loadPurchRep,
     staff: () => { STAFF.mode = "d"; STAFF.date = todayISO();   // 진입 시 항상 일별·오늘로 초기화
       document.querySelectorAll("#staffTabs button").forEach(x => x.classList.toggle("on", x.dataset.sh === "d"));
       loadStaff(); } }[b.dataset.scr];
@@ -10907,6 +10907,135 @@ $("pwSaveBtn").onclick = async () => {
 // 계획이 자주 바뀌므로 주(월요일 기준) 단위 JSON 한 덩어리로 편집·저장한다(느슨한 구조).
 // 편집기(제품군 카드) → SCHED.data 갱신 → 미리보기(=인쇄본) 실시간 갱신. 전체화면은 새 창(#schedfull) 재사용.
 const SCHED = { week: "", data: null, saved: "", weeks: [], gridMode: (localStorage.getItem("ms_schedGrid") || "col"), editMode: false, dirty: false };
+
+// ── 생산 스케줄 (출고 스케줄 제품을 요일별로 드래그 배치 → 생산 계획 연결) ──
+const PSCHED = { week: "", placements: [], products: [], saved: "", dirty: false, _seq: 0 };
+const PS_DOWS = ["월", "화", "수", "목", "금", "토", "일"];
+function _psKey(pid, label) { return pid ? "P:" + pid : "L:" + (label || ""); }
+function _psPackNum(pack) { const m = String(pack || "").match(/\d+/); return m ? parseInt(m[0]) : 0; }
+function _psSourceProducts(schedData) {
+  const map = new Map();
+  for (const g of ((schedData && schedData.groups) || [])) {
+    for (const it of (g.items || [])) {
+      const qty = Math.round(Number(String(it.qty == null ? "" : it.qty).replace(/[^\d.]/g, "")) || 0);
+      const label = it.label || "";
+      if (qty <= 0 || (!label && !it.product_id)) continue;
+      const key = _psKey(it.product_id, label);
+      const cur = map.get(key) || { key, product_id: it.product_id || null, label, total: 0, pack: it.pack || "" };
+      cur.total += qty;
+      if (!cur.pack && it.pack) cur.pack = it.pack;
+      if (!cur.label && label) cur.label = label;
+      map.set(key, cur);
+    }
+  }
+  return [...map.values()];
+}
+function _psRemaining() {
+  const placed = {};
+  for (const pl of PSCHED.placements) { const k = _psKey(pl.product_id, pl.label); placed[k] = (placed[k] || 0) + (Number(pl.qty) || 0); }
+  return PSCHED.products.map(p => ({ ...p, remaining: Math.max(0, p.total - (placed[p.key] || 0)) }));
+}
+async function loadProdSched(dateOpt) {
+  const week = _schedMonday(dateOpt || PSCHED.week || todayISO());
+  let sched = {}, ps = {};
+  try { const r = await api("/api/schedule?week=" + week); sched = r.data || {}; } catch (e) {}
+  try { ps = await api("/api/prodschedule?week=" + week); } catch (e) { ps = {}; }
+  PSCHED.week = (ps && ps.week_start) || week;
+  PSCHED.products = _psSourceProducts(sched);
+  PSCHED.placements = (((ps.data && ps.data.placements) || [])).map(x => ({
+    id: "p" + (++PSCHED._seq), product_id: x.product_id || null, label: x.label || "",
+    day: Number(x.day) || 0, qty: Number(x.qty) || 0, pack: x.pack || ""
+  }));
+  PSCHED.saved = ps.updated_at ? `저장됨 · ${String(ps.updated_at).slice(0, 16)}${ps.updated_by ? " · " + ps.updated_by : ""}` : "아직 저장 안 됨";
+  PSCHED.dirty = false;
+  if ($("psDate")) $("psDate").value = PSCHED.week;
+  renderProdSched();
+}
+function psTileHtml(t) {
+  const packN = _psPackNum(t.pack);
+  const boxes = packN ? Math.round((t.qty / packN) * 10) / 10 : null;
+  const idAttr = t.kind === "palette" ? `data-pkey="${esc(t.id)}"` : `data-pid="${esc(t.id)}"`;
+  return `<div class="ps-tile" draggable="true" data-kind="${t.kind}" ${idAttr}
+     style="border:1px solid var(--line); border-left:3px solid var(--accent,#2f6df0); border-radius:8px; padding:5px 7px; background:var(--surface-2,#fff); cursor:grab; font-size:12px;">
+     <div style="font-weight:700; display:flex; justify-content:space-between; gap:6px; align-items:center;">
+       <span>${esc(t.label)}</span>
+       ${t.kind === "day" ? `<button class="ps-x" data-pid="${esc(t.id)}" title="배치 취소" style="border:0; background:none; color:var(--crit); cursor:pointer; font-size:12px; line-height:1;">✕</button>` : ""}</div>
+     <div class="num ps-qty" ${t.kind === "day" ? `data-pid="${esc(t.id)}" title="클릭해 수량 수정" style="cursor:text;"` : ""}>${NF(t.qty)}개${boxes != null ? ` · ${NF(boxes)}박스` : ""}</div></div>`;
+}
+function renderProdSched() {
+  const rem = _psRemaining().filter(p => p.remaining > 0).sort((a, b) => a.label.localeCompare(b.label, "ko"));
+  $("psPalette").innerHTML = rem.map(p => psTileHtml({ kind: "palette", id: p.key, label: p.label, qty: p.remaining, pack: p.pack })).join("")
+    || `<div class="auto" style="font-size:12px; padding:10px; text-align:center;">${PSCHED.products.length ? "모든 제품이 배치됐습니다 ✓" : "이번 주 출고 스케줄에 제품이 없습니다"}</div>`;
+  $("psPaletteCnt").textContent = rem.length ? `${rem.length}종 남음` : "";
+  let html = "";
+  for (let d = 0; d < 7; d++) {
+    const date = _schedAddDays(PSCHED.week, d);
+    const dayPls = PSCHED.placements.filter(pl => pl.day === d);
+    const tiles = dayPls.map(pl => psTileHtml({ kind: "day", id: pl.id, label: pl.label, qty: pl.qty, pack: pl.pack })).join("");
+    const dayQty = dayPls.reduce((a, pl) => a + (Number(pl.qty) || 0), 0);
+    html += `<div style="border:1px solid var(--line); border-radius:10px; padding:6px; background:var(--surface,#fafafa);">
+      <div style="font-weight:800; font-size:12.5px; text-align:center; padding-bottom:5px; border-bottom:1px solid var(--line-soft); margin-bottom:6px;">
+        ${PS_DOWS[d]} <span class="auto" style="font-weight:500;">${date.slice(5)}</span>${dayQty ? `<div class="auto num" style="font-weight:600; font-size:10.5px;">${NF(dayQty)}개</div>` : ""}</div>
+      <div class="ps-drop" data-day="${d}" style="display:flex; flex-direction:column; gap:5px; min-height:120px;">${tiles}</div></div>`;
+  }
+  $("psBoard").innerHTML = html;
+  $("psMeta").textContent = `${PSCHED.week} 주 · ${PSCHED.saved}${PSCHED.dirty ? " · ✏ 저장 전 변경 있음" : ""}`;
+}
+let _psDrag = null;
+document.addEventListener("dragstart", e => {
+  const t = e.target.closest(".ps-tile"); if (!t) return;
+  _psDrag = t.dataset.kind === "palette" ? { kind: "palette", key: t.dataset.pkey } : { kind: "day", pid: t.dataset.pid };
+  try { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", ""); } catch (x) {}
+});
+document.addEventListener("dragover", e => { if (e.target.closest(".ps-drop")) e.preventDefault(); });
+document.addEventListener("drop", e => {
+  const drop = e.target.closest(".ps-drop"); if (!drop || !_psDrag) return;
+  e.preventDefault();
+  const day = Number(drop.dataset.day);   // -1 = 팔레트(배치 취소)
+  if (_psDrag.kind === "palette") {
+    if (day < 0) { _psDrag = null; return; }
+    const p = _psRemaining().find(x => x.key === _psDrag.key); _psDrag = null;
+    if (!p || p.remaining <= 0) return;
+    const ans = prompt(`${p.label} — ${PS_DOWS[day]}요일에 생산할 수량 (남은 ${NF(p.remaining)}개)`, p.remaining);
+    if (ans == null) return;
+    let q = Math.round(Number(String(ans).replace(/[^\d.]/g, "")) || 0);
+    if (q <= 0) return;
+    if (q > p.remaining) q = p.remaining;
+    PSCHED.placements.push({ id: "p" + (++PSCHED._seq), product_id: p.product_id, label: p.label, day, qty: q, pack: p.pack });
+    PSCHED.dirty = true; renderProdSched();
+  } else {
+    const pl = PSCHED.placements.find(x => x.id === _psDrag.pid); _psDrag = null;
+    if (!pl) return;
+    if (day < 0) PSCHED.placements = PSCHED.placements.filter(x => x.id !== pl.id);
+    else pl.day = day;
+    PSCHED.dirty = true; renderProdSched();
+  }
+});
+if ($("psBoard")) $("psBoard").addEventListener("click", e => {
+  const x = e.target.closest(".ps-x");
+  if (x) { PSCHED.placements = PSCHED.placements.filter(p => p.id !== x.dataset.pid); PSCHED.dirty = true; renderProdSched(); return; }
+  const q = e.target.closest(".ps-qty");
+  if (q && q.dataset.pid) {
+    const pl = PSCHED.placements.find(p => p.id === q.dataset.pid); if (!pl) return;
+    const ans = prompt(`${pl.label} 생산 수량`, pl.qty);
+    if (ans == null) return;
+    const v = Math.round(Number(String(ans).replace(/[^\d.]/g, "")) || 0);
+    if (v <= 0) PSCHED.placements = PSCHED.placements.filter(p => p.id !== pl.id);
+    else pl.qty = v;
+    PSCHED.dirty = true; renderProdSched();
+  }
+});
+async function saveProdSched() {
+  const data = { placements: PSCHED.placements.map(p => ({ product_id: p.product_id, label: p.label, day: p.day, qty: p.qty, pack: p.pack })) };
+  try { await api("/api/prodschedule", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ week_start: PSCHED.week, data }) }); }
+  catch (e) { return; }
+  PSCHED.dirty = false; PSCHED.saved = "저장됨 · 방금"; toast("생산 스케줄이 저장되었습니다"); renderProdSched();
+}
+if ($("psSave")) $("psSave").onclick = saveProdSched;
+if ($("psReload")) $("psReload").onclick = () => loadProdSched(PSCHED.week);
+if ($("psPrev")) $("psPrev").onclick = () => { if (PSCHED.dirty && !confirm("저장 안 한 변경이 있습니다. 이동할까요?")) return; loadProdSched(_schedAddDays(PSCHED.week, -7)); };
+if ($("psNext")) $("psNext").onclick = () => { if (PSCHED.dirty && !confirm("저장 안 한 변경이 있습니다. 이동할까요?")) return; loadProdSched(_schedAddDays(PSCHED.week, 7)); };
+if ($("psDate")) $("psDate").onchange = () => { if (PSCHED.dirty && !confirm("저장 안 한 변경이 있습니다. 이동할까요?")) { $("psDate").value = PSCHED.week; return; } loadProdSched($("psDate").value); };
 // 저장하지 않은 변경이 있으면 확인 후 진행 — 없으면 바로 proceed(). [저장하고 이동]/[저장 안 함]/[취소]
 function _schedGuard(proceed, onCancel) {
   if (!SCHED.dirty) { proceed(); return; }

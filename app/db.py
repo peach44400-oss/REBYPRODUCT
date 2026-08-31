@@ -584,6 +584,14 @@ CREATE TABLE IF NOT EXISTS schedule (
   updated_at TEXT DEFAULT (datetime('now','localtime')),
   updated_by TEXT DEFAULT ''
 );
+
+-- 생산 스케줄 — 출고 스케줄 제품을 요일(월~일)에 드래그해 배치한 보드. 배치 수량 = 그날 생산 계획.
+CREATE TABLE IF NOT EXISTS prod_schedule (
+  week_start TEXT PRIMARY KEY,          -- 그 주 월요일(ISO)
+  data TEXT NOT NULL DEFAULT '{}',      -- {placements:[{product_id,label,day,qty,pack,boxes}], ...}
+  updated_at TEXT DEFAULT (datetime('now','localtime')),
+  updated_by TEXT DEFAULT ''
+);
 """
 
 

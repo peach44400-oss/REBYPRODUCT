@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.99.4"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.99.5"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -5925,6 +5925,47 @@ def schedule_del(request: Request, week: str = ""):
         con.execute("DELETE FROM schedule WHERE week_start=?", (mon,))
         con.commit()
         return {"ok": True}
+    finally:
+        con.close()
+
+
+# ── 생산 스케줄 (출고 스케줄 제품을 요일별로 배치한 보드) ──────────────────
+@app.get("/api/prodschedule")
+def prodschedule_get(week: str = ""):
+    mon = _week_monday(week or dt.date.today().isoformat())
+    con = connect()
+    try:
+        row = con.execute("SELECT data, updated_at, updated_by FROM prod_schedule WHERE week_start=?", (mon,)).fetchone()
+        data = {}
+        if row:
+            try:
+                data = json.loads(row["data"] or "{}")
+            except ValueError:
+                data = {}
+        return {"week_start": mon, "data": data,
+                "updated_at": row["updated_at"] if row else "",
+                "updated_by": row["updated_by"] if row else ""}
+    finally:
+        con.close()
+
+
+@app.post("/api/prodschedule")
+def prodschedule_save(request: Request, body: dict):
+    _require_writer(request)
+    mon = _week_monday(body.get("week_start") or dt.date.today().isoformat())
+    data = body.get("data")
+    if not isinstance(data, (dict, list)):
+        raise HTTPException(400, "생산 스케줄 데이터가 올바르지 않습니다")
+    con = connect()
+    try:
+        con.execute("""INSERT INTO prod_schedule(week_start, data, updated_at, updated_by)
+            VALUES(?,?,datetime('now','localtime'),?)
+            ON CONFLICT(week_start) DO UPDATE SET
+              data=excluded.data, updated_at=excluded.updated_at, updated_by=excluded.updated_by""",
+            (mon, json.dumps(data, ensure_ascii=False), request.state.user.get("username", "")))
+        audit(con, "save_prodschedule", f"생산 스케줄 저장 — {mon}")
+        con.commit()
+        return {"ok": True, "week_start": mon}
     finally:
         con.close()
 
