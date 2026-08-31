@@ -3960,10 +3960,9 @@ function printBarcodeLabels() {
 // ── 거래명세서(납품서) ────────────────────────────────────────────────
 const INV = { data: null };
 function loadInvoice() {
-  const sel = $("invPartner");
   const parts = (M.partner || []).filter(p => p.status !== "중지")
     .sort((a, b) => (pHasType(b, "판매처") - pHasType(a, "판매처")) || a.name.localeCompare(b.name, "ko"));
-  sel.innerHTML = `<option value="">거래처 선택</option>` + parts.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
+  $("invPartnerDl").innerHTML = parts.map(p => `<option value="${esc(p.name)}">`).join("");
   const t = todayISO();
   if (!$("invFrom").value) $("invFrom").value = t.slice(0, 8) + "01";
   if (!$("invTo").value) $("invTo").value = t;
@@ -3971,8 +3970,10 @@ function loadInvoice() {
   if (!INV.data) { $("invDoc").innerHTML = `<div class="auto" style="padding:22px;">거래처와 기간을 고른 뒤 <b>[조회]</b>를 누르세요.</div>`; $("invPrintBtn").style.display = "none"; }
 }
 async function invQuery() {
-  const pid = $("invPartner").value;
-  if (!pid) { toast("거래처를 선택하세요"); return; }
+  const nm = $("invPartner").value.trim();
+  const p = (M.partner || []).find(x => x.name === nm);
+  if (!p) { toast("거래처를 목록에서 검색·선택하세요"); return; }
+  const pid = p.id;
   let d;
   try { d = await api(`/api/invoice?partner_id=${pid}&frm=${$("invFrom").value}&to=${$("invTo").value}&taxfree=${$("invTaxfree").checked ? 1 : 0}`); }
   catch (e) { return; }

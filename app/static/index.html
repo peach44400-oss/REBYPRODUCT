@@ -1110,7 +1110,8 @@
         </div>
         <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:12px;">
           <label style="font-size:13px;">거래처
-            <select id="invPartner" class="inp sm" style="min-width:180px; margin-left:5px;"></select></label>
+            <input id="invPartner" class="inp sm" list="invPartnerDl" placeholder="🔍 거래처 검색·선택" autocomplete="off" style="min-width:200px; margin-left:5px;">
+            <datalist id="invPartnerDl"></datalist></label>
           <label style="font-size:13px;">기간
             <input type="date" id="invFrom" class="inp sm" style="margin-left:5px;">
             <span>~</span>
