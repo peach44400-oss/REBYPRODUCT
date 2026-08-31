@@ -343,6 +343,19 @@ CREATE TABLE IF NOT EXISTS receipt (
 );
 CREATE INDEX IF NOT EXISTS idx_receipt ON receipt(partner_id, date);
 
+-- 지급(출금) — 매입처별 미지급금(매입−지급) 관리. receipt(수금)의 대칭.
+CREATE TABLE IF NOT EXISTS payment (
+  id INTEGER PRIMARY KEY,
+  date TEXT NOT NULL,                  -- 지급일
+  partner_id INTEGER REFERENCES partner(id),
+  amount REAL NOT NULL DEFAULT 0,      -- 지급액(원)
+  method TEXT DEFAULT '',              -- 계좌이체/현금/카드/어음 등
+  note TEXT DEFAULT '',
+  created_at TEXT DEFAULT (datetime('now','localtime')),
+  created_by TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_payment ON payment(partner_id, date);
+
 -- 수주(주문) — 거래처 주문 접수 → 출고로 이행
 CREATE TABLE IF NOT EXISTS sales_order (
   id INTEGER PRIMARY KEY,
@@ -864,7 +877,7 @@ def init_db() -> None:
         con.execute("ALTER TABLE material ADD COLUMN batch_yield REAL DEFAULT 0")
     # 거래처: 사업자등록번호·대표자·모바일·이메일 (ERP 가져오기 + 발주서 메일)
     pcols = [r[1] for r in con.execute("PRAGMA table_info(partner)")]
-    for col in ("biz_no", "ceo", "mobile", "email"):
+    for col in ("biz_no", "ceo", "mobile", "email", "address"):
         if col not in pcols:
             con.execute(f"ALTER TABLE partner ADD COLUMN {col} TEXT DEFAULT ''")
     # 완제품 수불부 거래처별 분리 표시 — 1이면 그 거래처 몫을 '거래처명 제품명' 행으로 따로 표시 (기본 미표시)

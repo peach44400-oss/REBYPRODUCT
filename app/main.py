@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.99.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.99.1"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -139,7 +139,7 @@ MASTER_TABLES = {
     "material": ("material", ["code", "kind", "name", "spec", "unit", "pack_count", "pack_set", "unit_price", "partner_id",
                               "safety_stock", "prod_mult", "prod_per", "shelf_days", "status", "note",
                               "is_semi", "batch_yield"]),
-    "partner": ("partner", ["name", "type", "phone", "contact", "note", "status", "biz_no", "ceo", "mobile", "email"]),
+    "partner": ("partner", ["name", "type", "phone", "contact", "note", "status", "biz_no", "ceo", "mobile", "email", "address"]),
     "staff": ("staff", ["name", "kind", "position", "process", "wage", "join_date", "phone", "status", "note"]),
     "line": ("line", ["name", "process", "std_hours", "parent_id", "note", "status"]),
 }
@@ -3977,15 +3977,17 @@ def invoice(request: Request, partner_id: int = 0, frm: str = "", to: str = "", 
         buyer = None
         if partner_id:
             b = con.execute("SELECT id, name, COALESCE(biz_no,'') biz_no, COALESCE(ceo,'') ceo, "
-                            "COALESCE(phone,'') phone, COALESCE(mobile,'') mobile FROM partner WHERE id=?",
+                            "COALESCE(phone,'') phone, COALESCE(mobile,'') mobile, "
+                            "COALESCE(address,'') address FROM partner WHERE id=?",
                             (partner_id,)).fetchone()
             buyer = dict(b) if b else None
         items = rows(con.execute("""
             SELECT s.date, p.id pid, COALESCE(p.code,'') code, p.name, COALESCE(p.spec,'') spec,
+                   COALESCE(p.pack_sizes,'') pack_sizes, COALESCE(s.expiry,'') expiry,
                    SUM(s.qty) qty, MAX(COALESCE(s.unit_price,0)) uprice, COALESCE(p.unit_price,0) base_price
             FROM shipment s JOIN product p ON p.id=s.product_id
             WHERE s.partner_id=? AND s.date BETWEEN ? AND ? AND s.qty>0
-            GROUP BY s.date, p.id ORDER BY s.date, p.sort, p.id""", (partner_id, frm, to)))
+            GROUP BY s.date, p.id, s.expiry ORDER BY s.date, p.sort, p.id""", (partner_id, frm, to)))
         pp = {r["product_id"]: r["price"] for r in con.execute(
             "SELECT product_id, price FROM product_price WHERE partner_id=? AND price>0", (partner_id,))}
         supply = 0.0
@@ -3994,8 +3996,14 @@ def invoice(request: Request, partner_id: int = 0, frm: str = "", to: str = "", 
             it["price"] = round(price)
             it["amount"] = round(price * float(it["qty"]))
             supply += it["amount"]
+            # 박스 수 = 출고수량 ÷ 기본 개입수(pack_sizes 첫 값)
+            packs = [int(x) for x in str(it.get("pack_sizes", "")).replace(" ", "").split(",") if x.strip().isdigit()]
+            pack = packs[0] if packs else 0
+            it["pack"] = pack
+            it["boxes"] = round(float(it["qty"]) / pack, 1) if pack else None
             it.pop("uprice", None)
             it.pop("base_price", None)
+            it.pop("pack_sizes", None)
         tax = 0 if taxfree else round(supply * 0.1)
         return {"supplier": supplier, "buyer": buyer, "items": items,
                 "supply": round(supply), "tax": tax, "grand": round(supply) + tax,

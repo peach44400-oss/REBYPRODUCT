@@ -3977,50 +3977,92 @@ async function invQuery() {
   try { d = await api(`/api/invoice?partner_id=${pid}&frm=${$("invFrom").value}&to=${$("invTo").value}&taxfree=${$("invTaxfree").checked ? 1 : 0}`); }
   catch (e) { return; }
   INV.data = d;
-  $("invDoc").innerHTML = invoiceSheetHtml(d);
+  $("invDoc").innerHTML = invoiceSheetHtml(d, $("invHideAmt").checked);
   $("invPrintBtn").style.display = (d.items || []).length ? "" : "none";
 }
-function invoiceSheetHtml(d) {
+// 금액 숨김 토글 — 이미 조회된 명세서면 즉시 다시 그림
+if ($("invHideAmt")) $("invHideAmt").addEventListener("change", () => {
+  if (INV.data) $("invDoc").innerHTML = invoiceSheetHtml(INV.data, $("invHideAmt").checked);
+});
+function invoiceSheetHtml(d, hideAmt) {
   const s = d.supplier || {}, b = d.buyer || {};
-  const infoBox = (title, o, isBuyer) => `<table style="width:100%; border-collapse:collapse; font-size:12px;">
-    <tr><td colspan="2" style="border:1px solid #333; background:#f0f0f0; font-weight:800; text-align:center; padding:3px;">${title}</td></tr>
-    <tr><td style="border:1px solid #333; background:#f7f7f2; width:64px; padding:3px 5px;">상호</td><td style="border:1px solid #333; padding:3px 6px; font-weight:700;">${esc(isBuyer ? (o.name || "") : (o.co_name || ""))}</td></tr>
-    <tr><td style="border:1px solid #333; background:#f7f7f2; padding:3px 5px;">사업자번호</td><td style="border:1px solid #333; padding:3px 6px;">${esc(isBuyer ? (o.biz_no || "") : (o.co_bizno || "")) || "—"}</td></tr>
-    <tr><td style="border:1px solid #333; background:#f7f7f2; padding:3px 5px;">대표자</td><td style="border:1px solid #333; padding:3px 6px;">${esc(isBuyer ? (o.ceo || "") : (o.co_ceo || "")) || "—"}</td></tr>
-    <tr><td style="border:1px solid #333; background:#f7f7f2; padding:3px 5px;">${isBuyer ? "전화" : "주소"}</td><td style="border:1px solid #333; padding:3px 6px;">${esc(isBuyer ? (o.phone || o.mobile || "") : (o.co_addr || "")) || "—"}</td></tr>
-    ${isBuyer ? "" : `<tr><td style="border:1px solid #333; background:#f7f7f2; padding:3px 5px;">업태/종목</td><td style="border:1px solid #333; padding:3px 6px;">${esc([s.co_type, s.co_item].filter(Boolean).join(" / ")) || "—"}</td></tr>`}
+  const showAmt = !hideAmt;
+  const CB = "border:1px solid #333;";
+  const LB = `${CB} background:#f7f7f2; padding:3px 5px; width:62px; white-space:nowrap;`;
+  const VB = `${CB} padding:3px 6px;`;
+  // 도장 자리 — 공급자 대표자 옆 (인) 원형
+  const stamp = `<span style="display:inline-block; width:36px; height:36px; border:1px dashed #bbb; border-radius:50%; color:#c9c9c9; font-size:9px; text-align:center; line-height:36px; float:right; margin:-6px 0;">(인)</span>`;
+  const buyerBox = `<table style="width:100%; border-collapse:collapse; font-size:12px;">
+    <tr><td colspan="2" style="${CB} background:#f0f0f0; font-weight:800; text-align:center; padding:3px;">공급받는자</td></tr>
+    <tr><td style="${LB}">상호</td><td style="${VB} font-weight:700;">${esc(b.name || "") || "—"}</td></tr>
+    <tr><td style="${LB}">사업자번호</td><td style="${VB}">${esc(b.biz_no || "") || "—"}</td></tr>
+    <tr><td style="${LB}">대표자</td><td style="${VB}">${esc(b.ceo || "") || "—"}</td></tr>
+    <tr><td style="${LB}">전화</td><td style="${VB}">${esc(b.phone || b.mobile || "") || "—"}</td></tr>
+    <tr><td style="${LB}">주소</td><td style="${VB}">${esc(b.address || "") || "—"}</td></tr>
+  </table>`;
+  const supBox = `<table style="width:100%; border-collapse:collapse; font-size:12px;">
+    <tr><td colspan="2" style="${CB} background:#f0f0f0; font-weight:800; text-align:center; padding:3px;">공급자</td></tr>
+    <tr><td style="${LB}">상호</td><td style="${VB} font-weight:700;">${esc(s.co_name || "") || "—"}</td></tr>
+    <tr><td style="${LB}">사업자번호</td><td style="${VB}">${esc(s.co_bizno || "") || "—"}</td></tr>
+    <tr><td style="${LB}">대표자</td><td style="${VB}">${esc(s.co_ceo || "") || "—"} ${stamp}</td></tr>
+    <tr><td style="${LB}">주소</td><td style="${VB}">${esc(s.co_addr || "") || "—"}</td></tr>
+    <tr><td style="${LB}">업태/종목</td><td style="${VB}">${esc([s.co_type, s.co_item].filter(Boolean).join(" / ")) || "—"}</td></tr>
   </table>`;
   const TD = "border:1px solid #333; padding:4px 6px; font-size:12px;";
-  const rows = (d.items || []).map((it, i) => `<tr>
-    <td style="${TD} text-align:center;">${i + 1}</td>
-    <td style="${TD} text-align:center; white-space:nowrap;">${esc((it.date || "").slice(5))}</td>
-    <td style="${TD}">${esc(it.name)}${it.code ? ` <span style="color:#888; font-size:10px;">${esc(it.code)}</span>` : ""}</td>
-    <td style="${TD} text-align:center;">${esc(it.spec || "")}</td>
-    <td style="${TD} text-align:right;">${NF(it.qty)}</td>
-    <td style="${TD} text-align:right;">${NF(it.price)}</td>
-    <td style="${TD} text-align:right;">${NF(it.amount)}</td></tr>`).join("")
-    || `<tr><td style="${TD} text-align:center; color:#999;" colspan="7">이 기간 출고 내역이 없습니다</td></tr>`;
-  return `<div id="invSheet" style="background:#fff; color:#111; max-width:800px; margin:0 auto; padding:6px;">
+  const nCols = showAmt ? 7 : 5;   // No,품목,규격,박스,수량,소비기한(+단가,공급가액)
+  // 날짜별 그룹 — 그날 출고된 품목만 한 묶음으로
+  const groups = {};
+  (d.items || []).forEach(it => { (groups[it.date] = groups[it.date] || []).push(it); });
+  const dates = Object.keys(groups).sort();
+  let no = 0, body = "";
+  for (const dt0 of dates) {
+    body += `<tr><td style="${TD} background:#eef3ff; font-weight:800; text-align:left;" colspan="${nCols + (showAmt ? 1 : 0)}">📅 ${esc(dt0)} (${dowOf(dt0)})</td></tr>`;
+    for (const it of groups[dt0]) {
+      no++;
+      body += `<tr>
+        <td style="${TD} text-align:center;">${no}</td>
+        <td style="${TD}">${esc(it.name)}${it.code ? ` <span style="color:#888; font-size:10px;">${esc(it.code)}</span>` : ""}</td>
+        <td style="${TD} text-align:center;">${esc(it.spec || "")}</td>
+        <td style="${TD} text-align:right;">${it.boxes != null ? NF(it.boxes) + " BOX" : "—"}</td>
+        <td style="${TD} text-align:right;">${NF(it.qty)}</td>
+        <td style="${TD} text-align:center; white-space:nowrap;">${esc(it.expiry || "") || "—"}</td>
+        ${showAmt ? `<td style="${TD} text-align:right;">${NF(it.price)}</td><td style="${TD} text-align:right;">${NF(it.amount)}</td>` : ""}</tr>`;
+    }
+  }
+  if (!dates.length) body = `<tr><td style="${TD} text-align:center; color:#999;" colspan="${nCols + (showAmt ? 1 : 0)}">이 기간 출고 내역이 없습니다</td></tr>`;
+  const totQty = (d.items || []).reduce((a, it) => a + (+it.qty || 0), 0);
+  const totBox = (d.items || []).reduce((a, it) => a + (+it.boxes || 0), 0);
+  const foot = showAmt ? `<tfoot>
+      <tr><td style="${TD} text-align:center; font-weight:700; background:#f7f7f2;" colspan="3">합계</td>
+        <td style="${TD} text-align:right; font-weight:700;">${NF(totBox)} BOX</td>
+        <td style="${TD} text-align:right; font-weight:700;">${NF(totQty)}</td>
+        <td style="${TD} background:#f7f7f2;"></td>
+        <td style="${TD} text-align:right; font-weight:800;">${NF(d.supply)}</td></tr>
+      <tr><td style="${TD} text-align:center; font-weight:700; background:#f7f7f2;" colspan="6">세액 (부가세)</td><td style="${TD} text-align:right;">${NF(d.tax)}</td></tr>
+      <tr><td style="${TD} text-align:center; font-weight:800; background:#eef3ff;" colspan="6">합계 금액</td><td style="${TD} text-align:right; font-weight:800; font-size:14px;">${NF(d.grand)}</td></tr>
+    </tfoot>` : `<tfoot>
+      <tr><td style="${TD} text-align:center; font-weight:700; background:#f7f7f2;" colspan="3">합계</td>
+        <td style="${TD} text-align:right; font-weight:700;">${NF(totBox)} BOX</td>
+        <td style="${TD} text-align:right; font-weight:700;">${NF(totQty)}</td>
+        <td style="${TD} background:#f7f7f2;"></td></tr>
+    </tfoot>`;
+  return `<div id="invSheet" style="background:#fff; color:#111; max-width:820px; margin:0 auto; padding:6px;">
     <div style="text-align:center; font-size:22px; font-weight:800; letter-spacing:8px; margin:4px 0 2px;">거 래 명 세 서</div>
-    <div style="text-align:center; font-size:12px; color:#555; margin-bottom:8px;">${esc(d.from)} ~ ${esc(d.to)}${d.taxfree ? " · 면세" : ""}</div>
+    <div style="text-align:center; font-size:12px; color:#555; margin-bottom:8px;">${esc(d.from)} ~ ${esc(d.to)}${d.taxfree ? " · 면세" : ""}${hideAmt ? " · 납품서(금액 생략)" : ""}</div>
     <div style="display:flex; gap:10px; margin-bottom:8px;">
-      <div style="flex:1;">${infoBox("공급받는자", b || {}, true)}</div>
-      <div style="flex:1;">${infoBox("공급자", s, false)}</div></div>
+      <div style="flex:1;">${buyerBox}</div>
+      <div style="flex:1;">${supBox}</div></div>
     <table style="width:100%; border-collapse:collapse;">
       <thead><tr>
         <th style="${TD} background:#f0f0f0; width:30px;">No</th>
-        <th style="${TD} background:#f0f0f0; width:52px;">일자</th>
         <th style="${TD} background:#f0f0f0;">품목</th>
-        <th style="${TD} background:#f0f0f0; width:90px;">규격</th>
-        <th style="${TD} background:#f0f0f0; width:70px;">수량</th>
-        <th style="${TD} background:#f0f0f0; width:80px;">단가</th>
-        <th style="${TD} background:#f0f0f0; width:90px;">공급가액</th></tr></thead>
-      <tbody>${rows}</tbody>
-      <tfoot>
-        <tr><td style="${TD} text-align:center; font-weight:700; background:#f7f7f2;" colspan="6">공급가액 합계</td><td style="${TD} text-align:right; font-weight:800;">${NF(d.supply)}</td></tr>
-        <tr><td style="${TD} text-align:center; font-weight:700; background:#f7f7f2;" colspan="6">세액 (부가세)</td><td style="${TD} text-align:right;">${NF(d.tax)}</td></tr>
-        <tr><td style="${TD} text-align:center; font-weight:800; background:#eef3ff;" colspan="6">합계 금액</td><td style="${TD} text-align:right; font-weight:800; font-size:14px;">${NF(d.grand)}</td></tr>
-      </tfoot></table>
+        <th style="${TD} background:#f0f0f0; width:78px;">규격</th>
+        <th style="${TD} background:#f0f0f0; width:66px;">박스</th>
+        <th style="${TD} background:#f0f0f0; width:66px;">수량</th>
+        <th style="${TD} background:#f0f0f0; width:80px;">소비기한</th>
+        ${showAmt ? `<th style="${TD} background:#f0f0f0; width:70px;">단가</th><th style="${TD} background:#f0f0f0; width:88px;">공급가액</th>` : ""}</tr></thead>
+      <tbody>${body}</tbody>
+      ${foot}</table>
     <div style="text-align:right; font-size:11px; color:#888; margin-top:6px;">발행일 ${todayISO()} · ${esc(s.co_name || "")}</div>
   </div>`;
 }
@@ -4031,7 +4073,7 @@ function invPrint() {
   w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>거래명세서 ${esc((INV.data.buyer || {}).name || "")}</title>
     <style>body{font-family:'맑은 고딕',sans-serif; margin:12mm;} @media print{ .noprint{display:none;} }</style></head>
     <body><div class="noprint" style="text-align:center; margin-bottom:10px;"><button onclick="window.print()" style="padding:6px 16px; font-size:14px;">🖨 인쇄</button></div>
-    ${invoiceSheetHtml(INV.data)}</body></html>`);
+    ${invoiceSheetHtml(INV.data, $("invHideAmt").checked)}</body></html>`);
   w.document.close();
 }
 // 공급자(회사) 정보 편집
@@ -5916,6 +5958,7 @@ const MFORMS = {
     ["biz_no", "사업자등록번호"], ["ceo", "대표자명"],
     ["phone", "전화"], ["mobile", "모바일"],
     ["email", "이메일 (발주서 메일 발송)"],
+    ["address", "주소 (거래명세서 공급받는자 주소)", "full"],
     ["contact", "담당자"], ["status", "상태", "sel", ["활성", "중지"]], ["note", "비고", "full"]],
   staff: [["name", "이름 *"], ["kind", "구분", "sel", ["정직원", "계약직", "용역", "일용직", "아르바이트", "파견"]],
     ["position", "직책", "combo", []], ["process", "담당 공정"],
