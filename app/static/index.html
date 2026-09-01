@@ -1836,7 +1836,7 @@
 
 <!-- 생산 스케줄: 출고 제품 담기 팝업 (출고 표 그대로 → 제품 클릭해 생산 표에 추가) -->
 <div class="overlay" id="schedPickOverlay">
-  <div class="modal" id="schedPickModal" style="width:fit-content; min-width:360px; max-width:98vw; max-height:90vh; display:flex; flex-direction:column;">
+  <div class="modal" id="schedPickModal" style="width:fit-content; min-width:360px; max-width:98vw; max-height:90vh; display:flex; flex-direction:column; position:relative;">
     <div id="schedPickHdr" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; cursor:move; user-select:none;">
       <h3 style="margin:0;">📦 출고 스케줄에서 제품 담기</h3>
       <span class="auto" id="schedPickWeek" style="font-size:12px;"></span>
@@ -1850,6 +1850,7 @@
     <p class="hint" style="margin:6px 0 8px;">제품을 <b>아래 생산 표의 요일 열로 끌어다 놓으면(드래그)</b> 담깁니다. 대상 열이 파랗게 표시됩니다. 표 안에서도 항목 왼쪽 <b>⠿</b>를 잡아 다른 요일로 옮길 수 있습니다. 이미 담은 제품엔 '담김' 표시가 붙지만 다른 요일에도 담을 수 있습니다.</p>
     <div id="schedPickBody" style="flex:1 1 auto; overflow:auto; border:1px solid var(--line); border-radius:8px; padding:8px; background:var(--bg);"></div>
     <div class="modal-foot" style="margin-top:10px;"><span class="auto" id="schedPickCount" style="margin-right:auto; font-size:12px;"></span><button class="btn primary" id="schedPickClose">완료</button></div>
+    <div id="schedPickResize" title="끌어서 창 크기 조절" style="position:absolute; right:1px; bottom:1px; width:18px; height:18px; cursor:nwse-resize; color:#9aa; font-size:14px; line-height:16px; text-align:center; user-select:none;">⤡</div>
   </div>
 </div>
 

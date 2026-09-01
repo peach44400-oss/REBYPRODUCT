@@ -11100,16 +11100,17 @@ function _schedPickInit() {
   if (!hdr || !modal || hdr._wired) return; hdr._wired = true;
   hdr.addEventListener("mousedown", e => {
     if (e.target.closest("select,input,button,a")) return;
-    const r = modal.getBoundingClientRect();
-    _pickMove = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+    const z = _schedPickZoom() || 1, r = modal.getBoundingClientRect();
+    _pickMove = { dx: e.clientX - r.left, dy: e.clientY - r.top, z };
     modal.style.position = "fixed"; modal.style.margin = "0";
-    modal.style.left = r.left + "px"; modal.style.top = r.top + "px";
+    modal.style.left = (r.left / z) + "px"; modal.style.top = (r.top / z) + "px";   // zoom 보정
     e.preventDefault();
   });
   document.addEventListener("mousemove", e => {
     if (!_pickMove) return;
-    modal.style.left = Math.max(0, Math.min(window.innerWidth - 120, e.clientX - _pickMove.dx)) + "px";
-    modal.style.top = Math.max(0, Math.min(window.innerHeight - 60, e.clientY - _pickMove.dy)) + "px";
+    const z = _pickMove.z || 1;
+    modal.style.left = Math.max(0, (Math.min(window.innerWidth - 120, e.clientX - _pickMove.dx)) / z) + "px";
+    modal.style.top = Math.max(0, (Math.min(window.innerHeight - 60, e.clientY - _pickMove.dy)) / z) + "px";
   });
   document.addEventListener("mouseup", () => { _pickMove = null; });
 }
@@ -11120,10 +11121,34 @@ function _schedPickShow() {
   if (modal) { modal.style.pointerEvents = "auto"; modal.style.position = ""; modal.style.left = ""; modal.style.top = ""; modal.style.margin = ""; }
   _schedPickApplyZoom();
   _schedPickInit();
+  _schedPickInitResize();
+}
+// 마우스로 창 크기 조절 — 우하단 핸들을 끌면 비율(zoom)만 바뀜
+let _pickResize = null;
+function _schedPickInitResize() {
+  const h = $("schedPickResize"), modal = $("schedPickModal");
+  if (!h || !modal || h._wired) return; h._wired = true;
+  h.addEventListener("mousedown", e => {
+    const z = _schedPickZoom() || 1, r = modal.getBoundingClientRect();
+    _pickResize = { x: e.clientX, w: r.width, baseW: (r.width / z) || 1 };
+    e.preventDefault(); e.stopPropagation();
+  });
+  document.addEventListener("mousemove", e => {
+    if (!_pickResize) return;
+    let z = (_pickResize.w + (e.clientX - _pickResize.x)) / _pickResize.baseW;
+    z = Math.max(0.5, Math.min(1.6, Math.round(z * 100) / 100));
+    try { localStorage.setItem("schedPickZoom", z); } catch (x) {}
+    _schedPickApplyZoom();
+  });
+  document.addEventListener("mouseup", () => { _pickResize = null; });
 }
 // 팝업 크기(비율) 조절 — 내용 유지, zoom으로만 축소/확대. 기본 80%.
 function _schedPickZoom() { let z; try { z = parseFloat(localStorage.getItem("schedPickZoom")); } catch (e) {} return z > 0 ? z : 0.8; }
-function _schedPickApplyZoom() { const b = $("schedPickBody"); if (b) b.style.zoom = _schedPickZoom(); const l = $("schedPickZoomLbl"); if (l) l.textContent = Math.round(_schedPickZoom() * 100) + "%"; }
+function _schedPickApplyZoom() {
+  const b = $("schedPickBody"); if (b) b.style.zoom = "";   // 예전 방식(내용만 축소) 해제
+  const m = $("schedPickModal"); if (m) m.style.zoom = _schedPickZoom();   // 창(팝업) 전체를 비율로 축소/확대
+  const l = $("schedPickZoomLbl"); if (l) l.textContent = Math.round(_schedPickZoom() * 100) + "%";
+}
 function _schedPickSetZoom(d) { const z = Math.max(0.5, Math.min(1.5, Math.round((_schedPickZoom() + d) * 20) / 20)); try { localStorage.setItem("schedPickZoom", z); } catch (e) {} _schedPickApplyZoom(); }
 if ($("schedPickZoomOut")) $("schedPickZoomOut").onclick = () => _schedPickSetZoom(-0.1);
 if ($("schedPickZoomIn")) $("schedPickZoomIn").onclick = () => _schedPickSetZoom(0.1);
