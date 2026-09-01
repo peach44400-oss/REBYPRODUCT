@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.99.5"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.99.6"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -5929,7 +5929,7 @@ def schedule_del(request: Request, week: str = ""):
         con.close()
 
 
-# ── 생산 스케줄 (출고 스케줄 제품을 요일별로 배치한 보드) ──────────────────
+# ── 생산 스케줄 (출고 스케줄과 동일 구조 — 편집기를 그대로 재사용) ──────────
 @app.get("/api/prodschedule")
 def prodschedule_get(week: str = ""):
     mon = _week_monday(week or dt.date.today().isoformat())
@@ -5942,7 +5942,14 @@ def prodschedule_get(week: str = ""):
                 data = json.loads(row["data"] or "{}")
             except ValueError:
                 data = {}
-        return {"week_start": mon, "data": data,
+        weeks = [r["week_start"] for r in con.execute(
+            "SELECT week_start FROM prod_schedule ORDER BY week_start DESC")]
+        try:
+            style_default = json.loads(get_app_setting("sched_style", "") or "{}")
+        except ValueError:
+            style_default = {}
+        return {"week_start": mon, "data": data, "weeks": weeks,
+                "style_default": style_default,
                 "updated_at": row["updated_at"] if row else "",
                 "updated_by": row["updated_by"] if row else ""}
     finally:
