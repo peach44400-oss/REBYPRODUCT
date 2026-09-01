@@ -1755,7 +1755,8 @@
             <button class="btn ghost sm" id="schedNext" title="다음 주">▶</button>
             <button class="btn ghost sm" id="schedThis">이번 주</button>
             <button class="btn ghost sm" id="schedLoadPrev" title="지난 주를 골라 전체를 덮어쓰거나, 필요한 제품군(열)·행·제품만 골라 이번 주에 추가합니다 (날짜 자동 이동)">📋 지난주 불러오기</button>
-            <button class="btn ghost sm" id="schedFromShip" style="display:none; border-color:var(--accent,#2f6df0); color:var(--accent,#2f6df0);" title="이 주의 출고 스케줄 표를 그대로 생산 스케줄로 불러옵니다 — 생산에 맞게 편집 후 저장하세요">📥 출고에서 불러오기</button>
+            <button class="btn sm" id="schedPickBtn" style="display:none; background:var(--accent,#2f6df0); color:#fff;" title="출고 스케줄 표를 팝업으로 열어 제품을 골라 생산 표에 담습니다">📦 출고 제품 담기</button>
+            <button class="btn ghost sm" id="schedFromShip" style="display:none; border-color:var(--accent,#2f6df0); color:var(--accent,#2f6df0);" title="이 주의 출고 스케줄 표를 통째로 생산 스케줄로 불러옵니다 — 생산에 맞게 편집 후 저장하세요">📥 전체 불러오기</button>
             <span style="flex:1;"></span>
             <button class="btn sm" id="schedEditToggle" title="미리보기에서 바로 편집합니다. 편집을 마치면 다시 눌러 인쇄와 똑같은 미리보기로 돌아갑니다." style="background:var(--solid); color:var(--solid-ink);">✏️ 편집</button>
             <button class="btn ghost sm" id="schedExport" title="현재 스케줄을 엑셀(CSV)로 내보냅니다 — 엑셀에서 열어 수정한 뒤 다시 불러올 수 있습니다">⬇ 엑셀</button>
@@ -1773,21 +1774,6 @@
           <!-- 표시 설정(글자 크기·글씨체·색상) — 접기/펴기, 마지막 상태 유지 -->
           <button type="button" id="schedStyleToggle" class="btn ghost sm" style="margin-bottom:2px;">🅰 표시 설정 <span id="schedStyleCaret">▾</span></button>
           <div id="schedStyle" style="display:flex; gap:12px 16px; align-items:center; flex-wrap:wrap; padding:7px 12px; background:var(--bg); border:1px solid var(--line); border-radius:8px;"></div>
-        </div>
-        <!-- 생산 스케줄 전용: 출고 스케줄 제품 소스(드래그해서 아래 생산 표로) -->
-        <div id="schedSource" style="display:none; border:1px solid var(--accent,#2f6df0); border-radius:10px; padding:8px 10px; margin-bottom:12px; background:var(--surface-2,#f6f8ff);">
-          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:6px;">
-            <b style="font-size:12.5px;">📦 출고 스케줄 제품</b>
-            <span class="auto" style="font-size:11.5px;">제품을 아래 생산 표(제품군)로 끌어다 놓으세요 — 편집 모드로 추가됩니다</span>
-            <label class="auto" style="font-size:11.5px; margin-left:auto;">정렬
-              <select id="schedSrcSort" class="inp sm" style="margin-left:4px;">
-                <option value="name">제품명순</option>
-                <option value="group">제품군순</option>
-                <option value="qty">수량많은순</option>
-              </select></label>
-            <button class="btn ghost sm" id="schedSrcReload" title="출고 스케줄에서 다시 불러오기">↻</button>
-          </div>
-          <div id="schedSrcList" style="display:flex; flex-wrap:wrap; gap:6px; max-height:160px; overflow:auto;"></div>
         </div>
         <!-- 상단 메타(작성자·안내·범례) — 헤더 아래(스크롤됨) -->
         <div id="schedMeta" style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;"></div>
@@ -1842,6 +1828,21 @@
         <div id="staffBody"></div>
       </div>
     </section>
+  </div>
+</div>
+
+<!-- 생산 스케줄: 출고 제품 담기 팝업 (출고 표 그대로 → 제품 클릭해 생산 표에 추가) -->
+<div class="overlay" id="schedPickOverlay">
+  <div class="modal" style="width:min(1000px,97vw); max-height:92vh; display:flex; flex-direction:column;">
+    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+      <h3 style="margin:0;">📦 출고 스케줄에서 제품 담기</h3>
+      <span class="auto" id="schedPickWeek" style="font-size:12px;"></span>
+      <label style="font-size:12.5px; margin-left:auto;">담을 날짜(열)
+        <select id="schedPickTarget" class="inp sm" style="margin-left:4px; min-width:130px;"></select></label>
+    </div>
+    <p class="hint" style="margin:6px 0 8px;">제품을 <b>클릭</b>하면 위에서 고른 날짜 열에 추가됩니다. 이미 담은 제품은 <b>흐리게 '담김'</b>으로 표시됩니다.</p>
+    <div id="schedPickBody" style="flex:1 1 auto; overflow:auto; border:1px solid var(--line); border-radius:8px; padding:8px; background:var(--bg);"></div>
+    <div class="modal-foot" style="margin-top:10px;"><span class="auto" id="schedPickCount" style="margin-right:auto; font-size:12px;"></span><button class="btn primary" id="schedPickClose">완료</button></div>
   </div>
 </div>
 
