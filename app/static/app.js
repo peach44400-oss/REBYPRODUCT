@@ -11106,9 +11106,12 @@ function _schedPickAdd(it, gEl) {
     if (tv === "__new__" || !groups.length) { groups.push({ name: "", shipDate: "", partner: "", memo: "", w: 1, items: [] }); gi = groups.length - 1; }
     else gi = Math.min(+tv, groups.length - 1);
   }
-  const ni = _schedBlankItem();
+  const g = groups[gi];
+  // 새 열은 빈 제품칸이 하나 자동 생성돼 있음 → 그 칸을 채워 중복 행이 생기지 않게 함 (없으면 새 행 추가)
+  const empty = (g.items || []).find(x => !(x.label || "").trim() && !x.spacer);
+  const ni = empty || _schedBlankItem();
   ni.label = it.label; ni.qty = it.qty; ni.pack = it.pack; ni.partner = it.partner; ni.expiry = it.expiry; ni.expiry2 = it.expiry2;
-  groups[gi].items.push(ni);
+  if (!empty) g.items.push(ni);
   SCHED.dirty = true;
   if (!SCHED.editMode) { SCHED.editMode = true; _schedSyncEditUI(); }
   renderSchedule();
@@ -11928,6 +11931,7 @@ function buildScheduleDocEdit(d, week) {
   // 생산: 상단 머리 = 날짜(달력) 입력, 제품군명 대신. 출고: 제품군명 입력.
   const nameCell = (g, gi) => _prod
     ? g_(gi, "shipDate", g.shipDate, "datepick", ` readonly placeholder="📅 날짜" style="text-align:center; font-weight:800; cursor:pointer;"`)
+        + (g.shipDate && _schedDowOf(g.shipDate) ? `<div class="auto" style="font-size:${labelFs}px; font-weight:700;">(${_schedDowOf(g.shipDate)})</div>` : "")
     : g_(gi, "name", g.name, "", ` placeholder="제품군명" style="text-align:center; font-weight:800;"`);
   const nameRow = groups.map((g, gi) => `<th class="sched-celledit" style="${TD} text-align:center; font-weight:800; font-size:${nameFs}px; background:#e7e4dd; position:relative;">${nameCell(g, gi)}${gctl(gi)}</th>`).join("")
     + `<th style="${TD} text-align:center; background:#f2f1ec;"><button class="sched-addbtn" data-schedgaddcol="1" title="${_prod ? "날짜(열) 추가" : "제품군(열) 추가"}" style="padding:6px 8px; font-size:${labelFs}px;">＋<br>${_prod ? "날짜" : "제품군"}</button></th>`;
