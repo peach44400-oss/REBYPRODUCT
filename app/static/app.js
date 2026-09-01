@@ -10931,8 +10931,70 @@ function _schedBase() { return SCHED.kind === "prod" ? "/api/prodschedule" : "/a
 function _schedApplyKindUI() {
   const prod = SCHED.kind === "prod";
   const imp = $("schedFromShip"); if (imp) imp.style.display = prod ? "" : "none";
+  const src = $("schedSource"); if (src) src.style.display = prod ? "" : "none";
   const kb = $("schedKindBadge"); if (kb) kb.textContent = prod ? "\ud83d\uddd3 \uc0dd\uc0b0 \uc2a4\ucf00\uc904" : "\ud83d\ude9a \ucd9c\uace0 \uc2a4\ucf00\uc904";
+  if (prod) loadSchedSource();
 }
+// \ucd9c\uace0 \uc2a4\ucf00\uc904 \uc81c\ud488\uc744 \uc18c\uc2a4 \ud328\ub110\uc5d0 \ub098\uc5f4(\ub4dc\ub798\uadf8 \uc6d0\ubcf8)
+const _schedNum = x => Number(String(x == null ? "" : x).replace(/[^\d.]/g, "")) || 0;
+async function loadSchedSource() {
+  const host = $("schedSrcList"); if (!host) return;
+  let data = {};
+  try { const r = await api("/api/schedule?week=" + SCHED.week); data = r.data || {}; } catch (e) {}
+  const items = [];
+  (data.groups || []).forEach(g => (g.items || []).forEach(it => {
+    if (!(it.label || "").trim()) return;
+    items.push({ label: it.label, qty: it.qty || "", pack: it.pack || "", partner: it.partner || g.partner || "",
+                 expiry: it.expiry || "", expiry2: it.expiry2 || "", group: g.name || "" });
+  }));
+  SCHED._srcItems = items;
+  _renderSchedSource();
+}
+function _renderSchedSource() {
+  const host = $("schedSrcList"); if (!host) return;
+  const sort = ($("schedSrcSort") || {}).value || "name";
+  const items = (SCHED._srcItems || []).slice();
+  if (sort === "name") items.sort((a, b) => a.label.localeCompare(b.label, "ko"));
+  else if (sort === "group") items.sort((a, b) => (a.group || "").localeCompare(b.group || "", "ko") || a.label.localeCompare(b.label, "ko"));
+  else if (sort === "qty") items.sort((a, b) => _schedNum(b.qty) - _schedNum(a.qty));
+  SCHED._srcSorted = items;
+  host.innerHTML = items.map((it, i) => `<div class="sched-src-tile" draggable="true" data-si="${i}"
+     style="border:1px solid var(--line); border-left:3px solid var(--accent,#2f6df0); border-radius:8px; padding:4px 8px; background:#fff; cursor:grab; font-size:12px;">
+     <b>${esc(it.label)}</b> <span class="num">${esc(it.qty)}</span>${it.pack ? ` <span class="auto" style="font-size:10.5px">${esc(it.pack)}</span>` : ""}${it.group ? `<div class="auto" style="font-size:10px">${esc(it.group)}${it.partner ? " \u00b7 " + esc(it.partner) : ""}</div>` : ""}</div>`).join("")
+    || `<div class="auto" style="font-size:12px; padding:8px;">\uc774 \uc8fc\uc758 \ucd9c\uace0 \uc2a4\ucf00\uc904\uc5d0 \uc81c\ud488\uc774 \uc5c6\uc2b5\ub2c8\ub2e4</div>`;
+}
+if ($("schedSrcSort")) $("schedSrcSort").onchange = _renderSchedSource;
+if ($("schedSrcReload")) $("schedSrcReload").onclick = loadSchedSource;
+// \uc18c\uc2a4 \ud0c0\uc77c \u2192 \uc0dd\uc0b0 \ud45c(#schedDoc)\ub85c \ub4dc\ub798\uadf8\uc564\ub4dc\ub78d (\uac00\uc7a5 \uac00\uae4c\uc6b4 \uc81c\ud488\uad70\uc5d0 \ucd94\uac00)
+let _schedSrcDrag = null;
+document.addEventListener("dragstart", e => {
+  const t = e.target.closest(".sched-src-tile"); if (!t) return;
+  _schedSrcDrag = (SCHED._srcSorted || [])[+t.dataset.si] || null;
+  try { e.dataTransfer.effectAllowed = "copy"; e.dataTransfer.setData("text/plain", ""); } catch (x) {}
+});
+document.addEventListener("dragover", e => { if (_schedSrcDrag && e.target.closest("#schedDoc")) e.preventDefault(); });
+document.addEventListener("drop", e => {
+  if (!_schedSrcDrag) return;
+  if (!e.target.closest("#schedDoc")) { _schedSrcDrag = null; return; }
+  e.preventDefault();
+  const it = _schedSrcDrag; _schedSrcDrag = null;
+  if (!SCHED.data) return;
+  if (!SCHED.editMode) { SCHED.editMode = true; _schedSyncEditUI(); renderSchedule(); }
+  const groups = SCHED.data.groups || (SCHED.data.groups = []);
+  const gEl = e.target.closest("[data-g]");
+  const gv = gEl ? gEl.dataset.g : "";   // 문서 레벨 필드는 data-g="" → 그룹 아님
+  let gi = gv === "" ? -1 : +gv;
+  if (gi < 0 || !groups[gi]) {
+    if (groups.length) gi = groups.length - 1;
+    else { groups.push({ name: it.group || "", shipDate: "", partner: it.partner || "", memo: "", w: 1, items: [] }); gi = 0; }
+  }
+  const ni = _schedBlankItem();
+  ni.label = it.label; ni.qty = it.qty; ni.pack = it.pack; ni.partner = it.partner; ni.expiry = it.expiry; ni.expiry2 = it.expiry2;
+  groups[gi].items.push(ni);
+  SCHED.dirty = true;
+  renderSchedule();
+  toast(`'${it.label}' \u2192 ${groups[gi].name || "\uc81c\ud488\uad70"}\uc5d0 \ucd94\uac00\ub428`);
+});
 function loadProdSched() {
   SCHED.kind = "prod";
   document.querySelectorAll(".screen").forEach(s => s.classList.toggle("on", s.id === "scr-sched"));
@@ -11034,6 +11096,7 @@ async function loadSchedule(dateOpt) {
   SCHED.dirty = false;   // 막 불러온 상태 = 저장된 상태 (이후 편집하면 true)
   if ($("schedDate")) $("schedDate").value = SCHED.week;
   renderSchedule();
+  if (SCHED.kind === "prod") loadSchedSource();   // 생산 모드: 그 주 출고 제품 소스 갱신
 }
 // ── 제품군 클립보드 (주 사이 복사·붙여넣기) ───────────────────────────────
 // '복사'를 누르면 그 제품군을 (출처 주와 함께) 저장해 두고, 다른 주로 이동해 [제품군 붙여넣기]로 붙인다.
