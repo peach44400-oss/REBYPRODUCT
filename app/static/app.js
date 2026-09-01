@@ -11062,7 +11062,7 @@ async function openSchedPick() {
   if ($("schedPickWeek")) $("schedPickWeek").textContent = SCHED.week + " 주";
   _schedPickFillTargets();
   _schedPickRender();
-  $("schedPickOverlay").classList.add("on");
+  _schedPickShow();
 }
 function _schedPickFillTargets() {
   const sel = $("schedPickTarget"); if (!sel) return;
@@ -11083,45 +11083,97 @@ function _schedPickRender() {
       const done = placed.has((it.label || "").trim());
       if (!done) cnt++;
       const payload = esc(JSON.stringify({ label: it.label, qty: it.qty, pack: it.pack, partner: it.partner || g.partner || "", expiry: it.expiry, expiry2: it.expiry2 }));
-      return `<button class="sched-pick-card" ${done ? "disabled" : ""} data-pick="${payload}"
-        style="display:block; width:100%; text-align:left; border:1px solid var(--line); border-left:3px solid ${done ? "#bbb" : "var(--accent,#2f6df0)"}; border-radius:8px; padding:5px 8px; margin-bottom:5px; background:${done ? "#f1f1f1" : "#fff"}; ${done ? "opacity:.55; cursor:default;" : "cursor:pointer;"} font-size:12px;">
+      return `<button class="sched-pick-card" ${done ? "disabled" : `draggable="true"`} data-pick="${payload}"
+        style="display:block; width:100%; text-align:left; border:1px solid var(--line); border-left:3px solid ${done ? "#bbb" : "var(--accent,#2f6df0)"}; border-radius:8px; padding:5px 8px; margin-bottom:5px; background:${done ? "#f1f1f1" : "#fff"}; ${done ? "opacity:.55; cursor:default;" : "cursor:grab;"} font-size:12px;">
         <b>${esc(it.label)}</b> <span class="num">${esc(it.qty)}</span>${it.pack ? ` <span class="auto" style="font-size:10.5px">${esc(it.pack)}</span>` : ""}${done ? ` <span class="chip ok" style="font-size:9.5px;">담김</span>` : ""}</button>`;
     }).join("") || `<div class="auto" style="font-size:11.5px; padding:6px;">제품 없음</div>`;
-    return `<div style="flex:0 0 200px; border:1px solid var(--line); border-radius:8px; padding:6px; background:#fff;">
+    return `<div style="flex:0 0 165px; border:1px solid var(--line); border-radius:8px; padding:6px; background:#fff;">
       <div style="font-weight:800; font-size:12.5px; text-align:center; padding-bottom:4px; border-bottom:1px solid var(--line-soft); margin-bottom:6px;">${esc(g.name || "—")}${g.partner ? `<div class="auto" style="font-weight:500; font-size:10.5px;">${esc(g.partner)}</div>` : ""}${g.shipDate ? `<div class="auto" style="font-weight:500; font-size:10px;">${esc(_schedMD(g.shipDate))}</div>` : ""}</div>
       ${cards}</div>`;
   }).join("") || `<div class="auto" style="padding:20px; text-align:center;">이 주의 출고 스케줄에 제품이 없습니다</div>`;
   host.innerHTML = `<div style="display:flex; gap:8px; align-items:flex-start; min-width:min-content;">${cols}</div>`;
   if ($("schedPickCount")) $("schedPickCount").textContent = cnt ? "담을 수 있는 제품 " + cnt + "종" : "모두 담았습니다";
 }
-if ($("schedPickBody")) $("schedPickBody").addEventListener("click", e => {
-  const b = e.target.closest(".sched-pick-card"); if (!b || b.disabled) return;
-  let it; try { it = JSON.parse(b.dataset.pick); } catch (x) { return; }
+// 제품 담기 — gEl이 있으면 그 날짜 열(드롭 위치), 없으면 상단에서 고른 '담을 날짜(열)'
+function _schedPickAdd(it, gEl) {
   const lbl = (it.label || "").trim();
   const groups = SCHED.data.groups || (SCHED.data.groups = []);
   if (lbl && groups.some(g => (g.items || []).some(x => (x.label || "").trim() === lbl))) { toast("'" + it.label + "'은(는) 이미 담겨 있습니다"); return; }
-  const tv = $("schedPickTarget").value;
   let gi;
-  if (tv === "__new__" || !groups.length) { groups.push({ name: "", shipDate: "", partner: "", memo: "", w: 1, items: [] }); gi = groups.length - 1; }
-  else gi = Math.min(+tv, groups.length - 1);
+  if (gEl && gEl.dataset.g !== "") gi = Math.min(+gEl.dataset.g, groups.length - 1);
+  else {
+    const tv = ($("schedPickTarget") || {}).value;
+    if (tv === "__new__" || !groups.length) { groups.push({ name: "", shipDate: "", partner: "", memo: "", w: 1, items: [] }); gi = groups.length - 1; }
+    else gi = Math.min(+tv, groups.length - 1);
+  }
   const ni = _schedBlankItem();
   ni.label = it.label; ni.qty = it.qty; ni.pack = it.pack; ni.partner = it.partner; ni.expiry = it.expiry; ni.expiry2 = it.expiry2;
   groups[gi].items.push(ni);
   SCHED.dirty = true;
   if (!SCHED.editMode) { SCHED.editMode = true; _schedSyncEditUI(); }
   renderSchedule();
-  _schedPickFillTargets(); $("schedPickTarget").value = String(gi);
+  _schedPickFillTargets(); if ($("schedPickTarget")) $("schedPickTarget").value = String(gi);
   _schedPickRender();
   toast("'" + it.label + "' 담았습니다");
+}
+if ($("schedPickBody")) $("schedPickBody").addEventListener("click", e => {
+  const b = e.target.closest(".sched-pick-card"); if (!b || b.disabled) return;
+  let it; try { it = JSON.parse(b.dataset.pick); } catch (x) { return; }
+  _schedPickAdd(it, null);
 });
+// 카드 → 생산 표(#schedDoc)로 드래그앤드랍 (팝업은 배경 통과라 뒤 표에 드롭됨)
+let _schedPickDrag = null;
+document.addEventListener("dragstart", e => {
+  const c = e.target.closest(".sched-pick-card"); if (!c || c.disabled) return;
+  try { _schedPickDrag = JSON.parse(c.dataset.pick); } catch (x) { _schedPickDrag = null; return; }
+  try { e.dataTransfer.effectAllowed = "copy"; e.dataTransfer.setData("text/plain", ""); } catch (x) {}
+});
+document.addEventListener("dragover", e => { if (_schedPickDrag && e.target.closest("#schedDoc")) e.preventDefault(); });
+document.addEventListener("drop", e => {
+  if (!_schedPickDrag) return;
+  if (!e.target.closest("#schedDoc")) { _schedPickDrag = null; return; }
+  e.preventDefault();
+  const it = _schedPickDrag; _schedPickDrag = null;
+  _schedPickAdd(it, e.target.closest("[data-g]"));
+});
+// 팝업 이동(제목 잡고 끌기)
+let _pickMove = null;
+function _schedPickInit() {
+  const hdr = $("schedPickHdr"), modal = $("schedPickModal");
+  if (!hdr || !modal || hdr._wired) return; hdr._wired = true;
+  hdr.addEventListener("mousedown", e => {
+    if (e.target.closest("select,input,button,a")) return;
+    const r = modal.getBoundingClientRect();
+    _pickMove = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+    modal.style.position = "fixed"; modal.style.margin = "0";
+    modal.style.left = r.left + "px"; modal.style.top = r.top + "px";
+    e.preventDefault();
+  });
+  document.addEventListener("mousemove", e => {
+    if (!_pickMove) return;
+    modal.style.left = Math.max(0, Math.min(window.innerWidth - 120, e.clientX - _pickMove.dx)) + "px";
+    modal.style.top = Math.max(0, Math.min(window.innerHeight - 60, e.clientY - _pickMove.dy)) + "px";
+  });
+  document.addEventListener("mouseup", () => { _pickMove = null; });
+}
+function _schedPickShow() {
+  const ov = $("schedPickOverlay"), modal = $("schedPickModal");
+  ov.classList.add("on");
+  ov.style.pointerEvents = "none"; ov.style.background = "transparent";   // 배경 통과 → 뒤 생산 표로 드롭 가능
+  if (modal) { modal.style.pointerEvents = "auto"; modal.style.position = ""; modal.style.left = ""; modal.style.top = ""; modal.style.margin = ""; }
+  _schedPickInit();
+}
+function _schedPickHide() {
+  const ov = $("schedPickOverlay"); ov.classList.remove("on");
+  ov.style.pointerEvents = ""; ov.style.background = "";
+}
 if ($("schedPickBtn")) $("schedPickBtn").onclick = openSchedPick;
-if ($("schedPickClose")) $("schedPickClose").onclick = () => $("schedPickOverlay").classList.remove("on");
-if ($("schedPickOverlay")) $("schedPickOverlay").addEventListener("click", e => { if (e.target === $("schedPickOverlay")) $("schedPickOverlay").classList.remove("on"); });
+if ($("schedPickClose")) $("schedPickClose").onclick = _schedPickHide;
 // 표시 설정 패널 접기/펴기 — 마지막 상태를 브라우저에 저장(출고·생산 공통)
 function _schedStyleOpen() { try { return localStorage.getItem("schedStyleOpen") !== "0"; } catch (e) { return true; } }
 function _schedApplyStylePanel() {
   const open = _schedStyleOpen();
-  const p = $("schedStyle"); if (p) p.style.display = open ? "" : "none";
+  const p = $("schedStyle"); if (p) p.style.display = open ? "flex" : "none";   // flex 유지(빈 문자열이면 인라인 flex가 지워져 세로로 쌓임)
   const c = $("schedStyleCaret"); if (c) c.textContent = open ? "▾" : "▸";
 }
 if ($("schedStyleToggle")) $("schedStyleToggle").addEventListener("click", () => {
@@ -11450,8 +11502,7 @@ function renderSchedStyle() {
     <span style="display:flex; align-items:center; gap:6px; font-size:12px;">글자 색
       <input type="color" id="schedColor" value="${esc(d.textColor || "#111111")}" style="width:36px; height:26px; padding:0; border:1px solid var(--line); border-radius:5px; cursor:pointer;">
       <button class="btn ghost sm" id="schedColorReset" style="padding:0 9px;">기본색</button></span>
-    <span style="flex-basis:100%; height:0;"></span>
-    <span style="font-size:12px; font-weight:800;">요소별</span>
+    <span style="font-size:12px; font-weight:800; margin-left:6px;">요소별</span>
     ${[["label", "제품명"], ["qty", "수량"], ["sub", "개입/박스"], ["date", "날짜"]].map(([k, nm]) => {
       const s = (d.elem[k] && d.elem[k].s) || 100, c = (d.elem[k] && d.elem[k].c) || "";
       return `<span style="display:flex; align-items:center; gap:4px; font-size:12px; border:1px solid var(--line); border-radius:6px; padding:2px 7px;">${nm}
