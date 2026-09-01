@@ -3143,6 +3143,10 @@ function timeDD(prefix, key, val) {
 }
 function renderStaff() {
   const admin = canM("wage");   // 시급 입력칸 노출 여부
+  // 정직원(용역 아님)은 어느 라인이든 한 번 배정되면 다른 라인 '＋ 인원 추가' 목록에서 제외 (용역은 예외 — 여러 라인 가능)
+  const _staffKind = {}; (M.staff || []).forEach(s => { _staffKind[s.id] = s.kind; });
+  const _assignedFix = new Set();
+  (E.staff || []).forEach(r => (r.members || []).forEach(m => { if (_staffKind[m.id] !== "용역") _assignedFix.add(m.id); }));
   $("eStaff").innerHTML = E.staff.map((r, i) => {
     const line = M.line.find(l => l.id === r.line_id);
     const rate = staffRate(r);
@@ -3188,7 +3192,7 @@ function renderStaff() {
     const addSel = `<select class="mini-sel" data-addmember style="max-width:140px"><option value="">＋ 인원 추가</option>` +
       `<option value="__agency__">＋ 용역 (이름 없음)</option>` +
       `<optgroup label="정직원 · 등록 직원">` +
-      M.staff.filter(s => s.status !== "퇴사" && !ids.includes(s.id))
+      M.staff.filter(s => s.status !== "퇴사" && !ids.includes(s.id) && !(s.kind !== "용역" && _assignedFix.has(s.id)))
         .map(s => `<option value="${s.id}">${esc(s.name)}${s.kind === "용역" ? " (용역)" : ""}</option>`).join("") + "</optgroup></select>";
     const named = (r.members || []).length, agency = (r.agency || []).length;
     const total = named + agency || (Number(r.headcount) || 0);
