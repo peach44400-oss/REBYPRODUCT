@@ -1770,7 +1770,8 @@
             <button class="btn ghost sm" id="schedPdf">📄 PDF</button>
             <button class="btn sm" id="schedFull" title="새 창을 열어 전체화면으로 — 현장 모니터에 실시간 표시(10초마다 자동 새로고침)">🖥 전체화면</button>
           </div>
-          <!-- 표시 설정(글자 크기·글씨체·색상) -->
+          <!-- 표시 설정(글자 크기·글씨체·색상) — 접기/펴기, 마지막 상태 유지 -->
+          <button type="button" id="schedStyleToggle" class="btn ghost sm" style="margin-bottom:2px;">🅰 표시 설정 <span id="schedStyleCaret">▾</span></button>
           <div id="schedStyle" style="display:flex; gap:12px 16px; align-items:center; flex-wrap:wrap; padding:7px 12px; background:var(--bg); border:1px solid var(--line); border-radius:8px;"></div>
         </div>
         <!-- 생산 스케줄 전용: 출고 스케줄 제품 소스(드래그해서 아래 생산 표로) -->

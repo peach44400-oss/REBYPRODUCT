@@ -10929,6 +10929,20 @@ const SCHED = { week: "", data: null, saved: "", weeks: [], kind: "ship", gridMo
 // ── 생산 스케줄 = 출고 스케줄과 동일한 편집기, 저장 데이터셋만 다름(kind='prod') ──
 function _schedBase() { return SCHED.kind === "prod" ? "/api/prodschedule" : "/api/schedule"; }
 function _schedKindTitle() { return SCHED.kind === "prod" ? "주간 생산 스케줄" : "주간 출고 스케줄"; }
+// 생산 스케줄은 '출고일' 대신 '요일'로 — 라벨/값/편집 select
+const _SCHED_DOWS = ["월", "화", "수", "목", "금", "토", "일"];
+function _schedDateLabel() { return SCHED.kind === "prod" ? "생산 요일" : "출고일"; }
+function _schedDowOf(v) {   // 날짜(YYYY-MM-DD)면 요일로, 이미 요일이면 그대로, 없으면 ""
+  v = (v == null ? "" : String(v)).trim(); if (!v) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) { try { return dowOf(v); } catch (e) { return ""; } }
+  return v;
+}
+function _schedDowRank(v) { const i = _SCHED_DOWS.indexOf(_schedDowOf(v)); return i < 0 ? 99 : i; }
+function _schedDowSelect(gi, cur) {   // 편집용 요일 select (data-g/data-f=shipDate)
+  const val = _schedDowOf(cur);
+  const opts = ['<option value="">요일</option>'].concat(_SCHED_DOWS.map(d => `<option value="${d}"${d === val ? " selected" : ""}>${d}</option>`)).join("");
+  return `<select data-g="${gi}" data-f="shipDate" class="mini-input" style="text-align:center; font-weight:800; cursor:pointer; width:70px;">${opts}</select>`;
+}
 // 문서 큰 제목 — 비었거나 옛 기본값("주간 생산·출고 스케줄")이면 모드별 제목으로, 사용자가 바꾼 제목은 그대로
 function _schedDocTitle(d) {
   const t = (d && d.title || "").trim();
@@ -11035,6 +11049,17 @@ async function schedImportFromShip() {
   } catch (e) { /* api \ud1a0\uc2a4\ud2b8 */ }
 }
 if ($("schedFromShip")) $("schedFromShip").onclick = schedImportFromShip;
+// 표시 설정 패널 접기/펴기 — 마지막 상태를 브라우저에 저장(출고·생산 공통)
+function _schedStyleOpen() { try { return localStorage.getItem("schedStyleOpen") !== "0"; } catch (e) { return true; } }
+function _schedApplyStylePanel() {
+  const open = _schedStyleOpen();
+  const p = $("schedStyle"); if (p) p.style.display = open ? "" : "none";
+  const c = $("schedStyleCaret"); if (c) c.textContent = open ? "▾" : "▸";
+}
+if ($("schedStyleToggle")) $("schedStyleToggle").addEventListener("click", () => {
+  try { localStorage.setItem("schedStyleOpen", _schedStyleOpen() ? "0" : "1"); } catch (e) {}
+  _schedApplyStylePanel();
+});
 // 저장하지 않은 변경이 있으면 확인 후 진행 — 없으면 바로 proceed(). [저장하고 이동]/[저장 안 함]/[취소]
 function _schedGuard(proceed, onCancel) {
   if (!SCHED.dirty) { proceed(); return; }
@@ -11334,6 +11359,7 @@ function renderSchedule() {
   ["schedMeta", "schedGroups", "schedViewToggle", "schedRefBox"].forEach(id => { const el = $(id); if (el) { el.style.display = "none"; if (id === "schedGroups") el.innerHTML = ""; } });
   _schedSyncEditUI();
   renderSchedStyle();
+  _schedApplyStylePanel();
   renderSchedDoc();
 }
 // 표시 설정 — 글자 크기(배율)·글씨체·글자 색. 스케줄에 저장되어 인쇄·전체화면에도 동일 적용.
@@ -11679,12 +11705,13 @@ function buildScheduleDoc(d, week) {
   const colgroup = `<colgroup><col style="width:${labelW}px;">${_schedGroupCols(groups)}</colgroup>`;
   // 주간 출고일 리본: 각 날짜에 출고되는 물품(항목) 개수 — 제품군 출고일 기준, 없으면 0개
   // 실제 입력된 제품군 출고일만 모아 날짜순으로 표시(일요일 포함) — 출고일이 하나도 없으면 리본도 비움
+  const _prod = SCHED.kind === "prod";   // 생산 스케줄: 상단에 날짜(요일)만, 제품군명·거래처 숨김
   const _shipMap = {};
   (groups || []).forEach(g => { if (g.shipDate) _shipMap[g.shipDate] = (_shipMap[g.shipDate] || 0) + (g.items || []).length; });
   const ribbon = Object.keys(_shipMap).sort().map(x =>
     `<span style="display:inline-block; min-width:84px; text-align:center; border:1px solid #999; border-radius:5px; padding:2px 9px; margin:2px; font-size:${S(13)}px; line-height:1.25;">${_schedMD(x)}<br><b style="color:#0a7a2f;">${_shipMap[x]}개</b></span>`
-  ).join("") || `<span class="auto" style="font-size:${S(12)}px; color:#bbb;">출고일 미입력</span>`;
-  const nameRow = groups.map(g => `<th style="${TD} text-align:center; font-weight:800; font-size:${nameFs}px; background:#e7e4dd;">${esc(g.name || "—")}</th>`).join("");
+  ).join("") || `<span class="auto" style="font-size:${S(12)}px; color:#bbb;">${_prod ? "날짜 미지정" : "출고일 미입력"}</span>`;
+  const nameRow = groups.map(g => `<th style="${TD} text-align:center; font-weight:800; font-size:${nameFs}px; background:#e7e4dd;">${_prod ? (g.shipDate ? _schedMD(g.shipDate) : "—") : esc(g.name || "—")}</th>`).join("");
   const shipRow = groups.map(g => `<td style="${TD} text-align:center; font-weight:800; font-size:${dateSize}px; color:${ec("date", "inherit")};">${g.shipDate ? _schedMD(g.shipDate) : "—"}</td>`).join("");
   const partnerRow = groups.map(g => `<td style="${TD} text-align:center; font-weight:700; color:#2f3fa0;">${esc(g.partner || "") || "—"}</td>`).join("");
   // 발주량: '항목=표의 한 행'으로 렌더 → 같은 행(가로줄)의 칸들은 높이가 같아 열끼리 위치가 정확히 맞는다.
@@ -11727,13 +11754,13 @@ function buildScheduleDoc(d, week) {
       <div style="width:230px; font-size:${S(12)}px; text-align:right; white-space:pre-wrap; color:#333;">${esc(d.legend || "")}</div>
     </div>
     <div style="text-align:center; color:#666; font-size:${S(13)}px; margin:2px 0 8px;">${esc(d.note || "")}</div>
-    <div style="text-align:center; margin-bottom:8px;"><b style="color:#555; font-size:${S(13)}px;">주간 출고일</b> ${ribbon || "—"}</div>
+    <div style="text-align:center; margin-bottom:8px;"><b style="color:#555; font-size:${S(13)}px;">${_prod ? "생산일(요일)" : "주간 출고일"}</b> ${ribbon || "—"}</div>
     ${empty || `<div class="sched-tblwrap" style="flex:1 1 auto;"><table class="sched-main" style="width:100%; height:100%; border-collapse:collapse; table-layout:fixed;">
       ${colgroup}
-      <thead><tr><th style="${LB}">제품</th>${nameRow}</tr></thead>
+      <thead><tr><th style="${LB}">${_prod ? "날짜" : "제품"}</th>${nameRow}</tr></thead>
       <tbody>
-        <tr><td style="${LB}">거래처</td>${partnerRow}</tr>
-        <tr><td style="${LB}">출고일</td>${shipRow}</tr>
+        ${_prod ? "" : `<tr><td style="${LB}">거래처</td>${partnerRow}</tr>`}
+        ${_prod ? "" : `<tr><td style="${LB}">${_schedDateLabel()}</td>${shipRow}</tr>`}
         ${orderRows}
         <tr><td style="${LB}">소비기한</td>${expRow}</tr>
         <tr><td style="${LB} font-size:${labelFs - 1}px;">예정<br>소비기한</td>${exp2Row}</tr>
@@ -11765,12 +11792,13 @@ function buildScheduleDocEdit(d, week) {
   const colgroup = `<colgroup><col style="width:${labelW}px;">${_schedGroupCols(groups)}<col style="width:${Math.round(labelW * 0.7)}px;"></colgroup>`;
   const g_ = (gi, f, val, cls, extra) => `<input class="sched-ei ${cls || ""}" data-g="${gi}" data-f="${f}" value="${esc(val)}"${extra || ""}>`;
   const it_ = (gi, ii, f, val, cls, extra) => `<input class="sched-ei ${cls || ""}" data-g="${gi}" data-i="${ii}" data-f="${f}" value="${esc(val)}"${extra || ""}>`;
-  // 주간 출고일 리본(읽기전용 — 출고일 편집하면 갱신)
+  // 주간 출고일 / 생산일(요일) 리본
+  const _prod = SCHED.kind === "prod";   // 생산: 상단에 날짜(요일)만, 제품군명·거래처 숨김
   const _shipMap = {};
   groups.forEach(g => { if (g.shipDate) _shipMap[g.shipDate] = (_shipMap[g.shipDate] || 0) + (g.items || []).length; });
   const ribbon = Object.keys(_shipMap).sort().map(x =>
     `<span style="display:inline-block; min-width:84px; text-align:center; border:1px solid #999; border-radius:5px; padding:2px 9px; margin:2px; font-size:${S(13)}px; line-height:1.25;">${_schedMD(x)}<br><b style="color:#0a7a2f;">${_shipMap[x]}개</b></span>`
-  ).join("") || `<span class="auto" style="font-size:${S(12)}px; color:#bbb;">출고일 미입력</span>`;
+  ).join("") || `<span class="auto" style="font-size:${S(12)}px; color:#bbb;">${_prod ? "날짜 미지정" : "출고일 미입력"}</span>`;
   const _gclip = _schedClipGet();   // 복사해 둔 제품군이 있으면 '붙여넣기'를 복사 옆에 표시
   const gctl = gi =>`<div class="sched-ectl" style="position:absolute; top:calc(100% - 7px); left:50%; transform:translateX(-50%);">
     <button data-schedgmove="${gi}:-1" title="왼쪽으로" ${gi === 0 ? "disabled" : ""}>◀</button>
@@ -11779,8 +11807,12 @@ function buildScheduleDocEdit(d, week) {
     ${_gclip ? `<button data-schedgpaste="${gi}" title="복사한 '${esc(_gclip.group.name || "제품군")}'을(를) 이 열 오른쪽에 붙여넣기 (날짜 자동 이동)" style="color:#1e5f2f;">📋붙여넣기</button>` : ""}
     <span class="sep"></span>
     <button class="danger" data-schedgdel="${gi}" title="제품군 삭제">✕</button></div>`;
-  const nameRow = groups.map((g, gi) => `<th class="sched-celledit" style="${TD} text-align:center; font-weight:800; font-size:${nameFs}px; background:#e7e4dd; position:relative;">${g_(gi, "name", g.name, "", ` placeholder="제품군명" style="text-align:center; font-weight:800;"`)}${gctl(gi)}</th>`).join("")
-    + `<th style="${TD} text-align:center; background:#f2f1ec;"><button class="sched-addbtn" data-schedgaddcol="1" title="제품군(열) 추가" style="padding:6px 8px; font-size:${labelFs}px;">＋<br>제품군</button></th>`;
+  // 생산: 상단 머리 = 날짜(달력) 입력, 제품군명 대신. 출고: 제품군명 입력.
+  const nameCell = (g, gi) => _prod
+    ? g_(gi, "shipDate", g.shipDate, "datepick", ` readonly placeholder="📅 날짜" style="text-align:center; font-weight:800; cursor:pointer;"`)
+    : g_(gi, "name", g.name, "", ` placeholder="제품군명" style="text-align:center; font-weight:800;"`);
+  const nameRow = groups.map((g, gi) => `<th class="sched-celledit" style="${TD} text-align:center; font-weight:800; font-size:${nameFs}px; background:#e7e4dd; position:relative;">${nameCell(g, gi)}${gctl(gi)}</th>`).join("")
+    + `<th style="${TD} text-align:center; background:#f2f1ec;"><button class="sched-addbtn" data-schedgaddcol="1" title="${_prod ? "날짜(열) 추가" : "제품군(열) 추가"}" style="padding:6px 8px; font-size:${labelFs}px;">＋<br>${_prod ? "날짜" : "제품군"}</button></th>`;
   const shipRow = groups.map((g, gi) => `<td style="${TD} text-align:center; font-weight:800; font-size:${dateSize}px; color:${ec("date", "inherit")};">${g_(gi, "shipDate", g.shipDate, "datepick", ` readonly placeholder="📅 출고일" style="text-align:center; font-weight:800; cursor:pointer;"`)}</td>`).join("") + `<td style="${TD}"></td>`;
   const partnerRow = groups.map((g, gi) => `<td style="${TD} text-align:center; font-weight:700; color:#2f3fa0;">${g_(gi, "partner", g.partner, "", ` list="schedPartnerDl" placeholder="거래처(열 공통)" style="text-align:center; font-weight:700; color:#2f3fa0;"`)}</td>`).join("") + `<td style="${TD}"></td>`;
   // 발주량: '항목=표의 한 행' — 같은 행 칸들은 높이가 같아 열끼리 위치가 맞는다. 항목 없는 칸은 빈 칸.
@@ -11838,13 +11870,13 @@ function buildScheduleDocEdit(d, week) {
       <div style="width:230px; font-size:${S(12)}px; color:#333;">${g_("", "legend", d.legend, "", ` placeholder="범례 (우상단)" style="text-align:right;"`)}</div>
     </div>
     <div style="text-align:center; color:#666; font-size:${S(13)}px; margin:2px 0 8px;">${g_("", "note", d.note, "", ` placeholder="안내문 (제목 아래)" style="text-align:center; color:#666;"`)}</div>
-    <div style="text-align:center; margin-bottom:8px;"><b style="color:#555; font-size:${S(13)}px;">주간 출고일</b> ${ribbon}</div>
+    <div style="text-align:center; margin-bottom:8px;"><b style="color:#555; font-size:${S(13)}px;">${_prod ? "생산일(요일)" : "주간 출고일"}</b> ${ribbon}</div>
     ${empty || `<div class="sched-tblwrap" style="flex:1 1 auto;"><table class="sched-main" style="width:100%; height:100%; border-collapse:collapse; table-layout:fixed;">
       ${colgroup}
-      <thead><tr><th style="${LB}">제품</th>${nameRow}</tr></thead>
+      <thead><tr><th style="${LB}">${_prod ? "날짜" : "제품"}</th>${nameRow}</tr></thead>
       <tbody>
-        <tr><td style="${LB}">거래처</td>${partnerRow}</tr>
-        <tr><td style="${LB}">출고일</td>${shipRow}</tr>
+        ${_prod ? "" : `<tr><td style="${LB}">거래처</td>${partnerRow}</tr>`}
+        ${_prod ? "" : `<tr><td style="${LB}">${_schedDateLabel()}</td>${shipRow}</tr>`}
         ${orderRows}
         <tr><td style="${LB}">소비기한</td>${expRow}</tr>
         <tr><td style="${LB} font-size:${labelFs - 1}px;">예정<br>소비기한</td>${exp2Row}</tr>
