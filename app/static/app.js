@@ -10970,79 +10970,6 @@ function _schedApplyKindUI() {
   const kb = $("schedKindBadge"); if (kb) kb.textContent = prod ? "\ud83d\uddd3 \uc0dd\uc0b0 \uc2a4\ucf00\uc904" : "\ud83d\ude9a \ucd9c\uace0 \uc2a4\ucf00\uc904";
   const th = $("schedTopTitle"); if (th) th.textContent = prod ? "\ud83d\uddd3 \uc8fc\uac04 \uc0dd\uc0b0 \uc2a4\ucf00\uc904" : "\ud83d\uddd3 \uc8fc\uac04 \ucd9c\uace0 \uc2a4\ucf00\uc904";
 }
-// \ucd9c\uace0 \uc2a4\ucf00\uc904 \uc81c\ud488\uc744 \uc18c\uc2a4 \ud328\ub110\uc5d0 \ub098\uc5f4(\ub4dc\ub798\uadf8 \uc6d0\ubcf8)
-const _schedNum = x => Number(String(x == null ? "" : x).replace(/[^\d.]/g, "")) || 0;
-async function loadSchedSource() {
-  const host = $("schedSrcList"); if (!host) return;
-  let data = {};
-  try { const r = await api("/api/schedule?week=" + SCHED.week); data = r.data || {}; } catch (e) {}
-  const items = [];
-  (data.groups || []).forEach(g => (g.items || []).forEach(it => {
-    if (!(it.label || "").trim()) return;
-    items.push({ label: it.label, qty: it.qty || "", pack: it.pack || "", partner: it.partner || g.partner || "",
-                 expiry: it.expiry || "", expiry2: it.expiry2 || "", group: g.name || "" });
-  }));
-  SCHED._srcItems = items;
-  _renderSchedSource();
-}
-function _renderSchedSource() {
-  const host = $("schedSrcList"); if (!host) return;
-  const sort = ($("schedSrcSort") || {}).value || "name";
-  const items = (SCHED._srcItems || []).slice();
-  if (sort === "name") items.sort((a, b) => a.label.localeCompare(b.label, "ko"));
-  else if (sort === "group") items.sort((a, b) => (a.group || "").localeCompare(b.group || "", "ko") || a.label.localeCompare(b.label, "ko"));
-  else if (sort === "qty") items.sort((a, b) => _schedNum(b.qty) - _schedNum(a.qty));
-  SCHED._srcSorted = items;
-  // \uc774\ubbf8 \uc0dd\uc0b0 \ud45c\uc5d0 \uc788\ub294 \uc81c\ud488(\ub77c\ubca8) \u2014 \ud750\ub9ac\uac8c '\ubc30\uce58\ub428' \ud45c\uc2dc, \ub4dc\ub798\uadf8 \ube44\ud65c\uc131
-  const placed = new Set();
-  ((SCHED.data && SCHED.data.groups) || []).forEach(g => (g.items || []).forEach(x => { const l = (x.label || "").trim(); if (l) placed.add(l); }));
-  host.innerHTML = items.map((it, i) => {
-    const done = placed.has((it.label || "").trim());
-    return `<div class="sched-src-tile" ${done ? "" : 'draggable="true"'} data-si="${i}"
-     style="border:1px solid var(--line); border-left:3px solid ${done ? "#bbb" : "var(--accent,#2f6df0)"}; border-radius:8px; padding:4px 8px; background:${done ? "#f1f1f1" : "#fff"}; ${done ? "opacity:.55; cursor:default;" : "cursor:grab;"} font-size:12px;">
-     <b>${esc(it.label)}</b> <span class="num">${esc(it.qty)}</span>${it.pack ? ` <span class="auto" style="font-size:10.5px">${esc(it.pack)}</span>` : ""}${done ? ` <span class="chip ok" style="font-size:9.5px;">\ubc30\uce58\ub428</span>` : ""}${it.group ? `<div class="auto" style="font-size:10px">${esc(it.group)}${it.partner ? " \u00b7 " + esc(it.partner) : ""}</div>` : ""}</div>`;
-  }).join("")
-    || `<div class="auto" style="font-size:12px; padding:8px;">\uc774 \uc8fc\uc758 \ucd9c\uace0 \uc2a4\ucf00\uc904\uc5d0 \uc81c\ud488\uc774 \uc5c6\uc2b5\ub2c8\ub2e4</div>`;
-}
-if ($("schedSrcSort")) $("schedSrcSort").onchange = _renderSchedSource;
-if ($("schedSrcReload")) $("schedSrcReload").onclick = loadSchedSource;
-// \uc18c\uc2a4 \ud0c0\uc77c \u2192 \uc0dd\uc0b0 \ud45c(#schedDoc)\ub85c \ub4dc\ub798\uadf8\uc564\ub4dc\ub78d (\uac00\uc7a5 \uac00\uae4c\uc6b4 \uc81c\ud488\uad70\uc5d0 \ucd94\uac00)
-let _schedSrcDrag = null;
-document.addEventListener("dragstart", e => {
-  const t = e.target.closest(".sched-src-tile"); if (!t) return;
-  _schedSrcDrag = (SCHED._srcSorted || [])[+t.dataset.si] || null;
-  try { e.dataTransfer.effectAllowed = "copy"; e.dataTransfer.setData("text/plain", ""); } catch (x) {}
-});
-document.addEventListener("dragover", e => { if (_schedSrcDrag && e.target.closest("#schedDoc")) e.preventDefault(); });
-document.addEventListener("drop", e => {
-  if (!_schedSrcDrag) return;
-  if (!e.target.closest("#schedDoc")) { _schedSrcDrag = null; return; }
-  e.preventDefault();
-  const it = _schedSrcDrag; _schedSrcDrag = null;
-  if (!SCHED.data) return;
-  const groups = SCHED.data.groups || (SCHED.data.groups = []);
-  // 중복 방지 — 같은 제품이 이미 생산 표(어느 제품군이든)에 있으면 추가하지 않음
-  const lbl = (it.label || "").trim();
-  if (lbl && groups.some(g => (g.items || []).some(x => (x.label || "").trim() === lbl))) {
-    toast(`'${it.label}'은(는) 이미 생산 스케줄에 있습니다`);
-    return;
-  }
-  if (!SCHED.editMode) { SCHED.editMode = true; _schedSyncEditUI(); renderSchedule(); }
-  const gEl = e.target.closest("[data-g]");
-  const gv = gEl ? gEl.dataset.g : "";   // 문서 레벨 필드는 data-g="" → 그룹 아님
-  let gi = gv === "" ? -1 : +gv;
-  if (gi < 0 || !groups[gi]) {
-    if (groups.length) gi = groups.length - 1;
-    else { groups.push({ name: it.group || "", shipDate: "", partner: it.partner || "", memo: "", w: 1, items: [] }); gi = 0; }
-  }
-  const ni = _schedBlankItem();
-  ni.label = it.label; ni.qty = it.qty; ni.pack = it.pack; ni.partner = it.partner; ni.expiry = it.expiry; ni.expiry2 = it.expiry2;
-  groups[gi].items.push(ni);
-  SCHED.dirty = true;
-  renderSchedule();
-  _renderSchedSource();   // \ubc29\uae08 \ub123\uc740 \uc81c\ud488\uc744 \uc18c\uc2a4\uc5d0\uc11c '\ubc30\uce58\ub428'\uc73c\ub85c \ud45c\uc2dc
-  toast(`'${it.label}' \u2192 ${groups[gi].name || "\uc81c\ud488\uad70"}\uc5d0 \ucd94\uac00\ub428`);
-});
 function loadProdSched() {
   SCHED.kind = "prod";
   document.querySelectorAll(".screen").forEach(s => s.classList.toggle("on", s.id === "scr-sched"));
@@ -11086,19 +11013,15 @@ function _schedPickFillTargets() {
 function _schedPickRender() {
   const host = $("schedPickBody"); if (!host) return;
   const groups = (SPICK.ship && SPICK.ship.groups) || [];
-  // '담김' 표시는 지금 고른 '담을 날짜(열)'에 이미 있는 제품만 — 같은 제품을 다른 요일엔 담을 수 있게
-  const tv = ($("schedPickTarget") || {}).value;
-  const tgt = (tv && tv !== "__new__") ? ((SCHED.data && SCHED.data.groups) || [])[+tv] : null;
+  // 생산 표 어디든 이미 담긴 제품(정보용 '담김' 표시) — 카드는 계속 끌 수 있음(같은 날짜만 중복 방지)
   const placed = new Set();
-  if (tgt) (tgt.items || []).forEach(x => { const l = (x.label || "").trim(); if (l) placed.add(l); });
-  let cnt = 0;
+  ((SCHED.data && SCHED.data.groups) || []).forEach(g => (g.items || []).forEach(x => { const l = (x.label || "").trim(); if (l) placed.add(l); }));
   const cols = groups.map(g => {
     const cards = (g.items || []).filter(it => (it.label || "").trim()).map(it => {
       const done = placed.has((it.label || "").trim());
-      if (!done) cnt++;
       const payload = esc(JSON.stringify({ label: it.label, qty: it.qty, pack: it.pack, partner: it.partner || g.partner || "", expiry: it.expiry, expiry2: it.expiry2 }));
-      return `<button class="sched-pick-card" ${done ? "disabled" : `draggable="true"`} data-pick="${payload}"
-        style="display:block; width:100%; text-align:left; border:1px solid var(--line); border-left:3px solid ${done ? "#bbb" : "var(--accent,#2f6df0)"}; border-radius:8px; padding:5px 8px; margin-bottom:5px; background:${done ? "#f1f1f1" : "#fff"}; ${done ? "opacity:.55; cursor:default;" : "cursor:grab;"} font-size:12px;">
+      return `<button class="sched-pick-card" draggable="true" data-pick="${payload}"
+        style="display:block; width:100%; text-align:left; border:1px solid var(--line); border-left:3px solid ${done ? "#37a24a" : "var(--accent,#2f6df0)"}; border-radius:8px; padding:5px 8px; margin-bottom:5px; background:#fff; cursor:grab; font-size:12px;">
         <b>${esc(it.label)}</b> <span class="num">${esc(it.qty)}</span>${it.pack ? ` <span class="auto" style="font-size:10.5px">${esc(it.pack)}</span>` : ""}${done ? ` <span class="chip ok" style="font-size:9.5px;">담김</span>` : ""}</button>`;
     }).join("") || `<div class="auto" style="font-size:11.5px; padding:6px;">제품 없음</div>`;
     return `<div style="flex:0 0 165px; border:1px solid var(--line); border-radius:8px; padding:6px; background:#fff;">
@@ -11106,54 +11029,70 @@ function _schedPickRender() {
       ${cards}</div>`;
   }).join("") || `<div class="auto" style="padding:20px; text-align:center;">이 주의 출고 스케줄에 제품이 없습니다</div>`;
   host.innerHTML = `<div style="display:flex; gap:8px; align-items:flex-start; min-width:min-content;">${cols}</div>`;
-  if ($("schedPickCount")) $("schedPickCount").textContent = cnt ? "담을 수 있는 제품 " + cnt + "종" : "모두 담았습니다";
+  if ($("schedPickCount")) $("schedPickCount").textContent = "제품을 아래 생산 표의 요일 열로 끌어다 놓으세요";
 }
-// 제품 담기 — gEl이 있으면 그 날짜 열(드롭 위치), 없으면 상단에서 고른 '담을 날짜(열)'
-function _schedPickAdd(it, gEl) {
-  const lbl = (it.label || "").trim();
+function _schedPickRefresh() { const ov = $("schedPickOverlay"); if (ov && ov.classList.contains("on")) _schedPickRender(); }
+// 출고 제품 카드 하나를 gi(요일 열)에 담기 — 드롭 전용
+function _schedPickAdd(it, gi) {
   const groups = SCHED.data.groups || (SCHED.data.groups = []);
-  let gi;
-  if (gEl && gEl.dataset.g !== "") gi = Math.min(+gEl.dataset.g, groups.length - 1);
-  else {
-    const tv = ($("schedPickTarget") || {}).value;
-    if (tv === "__new__" || !groups.length) { groups.push({ name: "", shipDate: "", partner: "", memo: "", w: 1, items: [] }); gi = groups.length - 1; }
-    else gi = Math.min(+tv, groups.length - 1);
-  }
+  if (gi == null || gi < 0 || !groups[gi]) return;
+  const lbl = (it.label || "").trim();
   const g = groups[gi];
-  // 같은 날짜 열에만 중복 방지 (다른 요일엔 같은 제품 담기 허용)
   if (lbl && (g.items || []).some(x => (x.label || "").trim() === lbl)) { toast("'" + it.label + "'은(는) 이 날짜에 이미 담겨 있습니다"); return; }
-  // 새 열은 빈 제품칸이 하나 자동 생성돼 있음 → 그 칸을 채워 중복 행이 생기지 않게 함 (없으면 새 행 추가)
-  const empty = (g.items || []).find(x => !(x.label || "").trim() && !x.spacer);
+  const empty = (g.items || []).find(x => !(x.label || "").trim() && !x.spacer);   // 자동 생성된 빈 칸 채우기
   const ni = empty || _schedBlankItem();
   ni.label = it.label; ni.qty = it.qty; ni.pack = it.pack; ni.partner = it.partner; ni.expiry = it.expiry; ni.expiry2 = it.expiry2;
   if (!empty) g.items.push(ni);
   SCHED.dirty = true;
   if (!SCHED.editMode) { SCHED.editMode = true; _schedSyncEditUI(); }
   renderSchedule();
-  _schedPickFillTargets(); if ($("schedPickTarget")) $("schedPickTarget").value = String(gi);
-  _schedPickRender();
   toast("'" + it.label + "' 담았습니다");
 }
-if ($("schedPickBody")) $("schedPickBody").addEventListener("click", e => {
-  const b = e.target.closest(".sched-pick-card"); if (!b || b.disabled) return;
-  let it; try { it = JSON.parse(b.dataset.pick); } catch (x) { return; }
-  _schedPickAdd(it, null);
-});
-// 카드 → 생산 표(#schedDoc)로 드래그앤드랍 (팝업은 배경 통과라 뒤 표에 드롭됨)
-let _schedPickDrag = null;
+// 생산 표 안에서 항목을 다른 요일 열로 이동
+function _schedMoveItem(fromGi, fromIi, toGi) {
+  const groups = (SCHED.data && SCHED.data.groups) || [];
+  if (!groups[fromGi] || !groups[toGi] || fromGi === toGi) return;
+  const it = (groups[fromGi].items || [])[fromIi]; if (!it) return;
+  const lbl = (it.label || "").trim();
+  if (lbl && (groups[toGi].items || []).some(x => (x.label || "").trim() === lbl)) { toast("'" + it.label + "'은(는) 그 날짜에 이미 있습니다"); return; }
+  groups[fromGi].items.splice(fromIi, 1);
+  if (!groups[fromGi].items.length) groups[fromGi].items.push(_schedBlankItem());   // 최소 한 칸 유지
+  const empty = (groups[toGi].items || []).find(x => !(x.label || "").trim() && !x.spacer);
+  if (empty) Object.assign(empty, it); else groups[toGi].items.push(it);
+  SCHED.dirty = true;
+  renderSchedule();
+  toast("'" + it.label + "' 이동됨");
+}
+// ── 통합 드래그: 팝업 카드(추가) + 표 안 항목 핸들(이동) → 생산 표 열에 드롭, 대상 열 하이라이트 ──
+let _schedPickDrag = null, _schedItemDrag = null;
+function _schedHiClear() { document.querySelectorAll("#schedDoc .sched-gcol-hi").forEach(el => el.classList.remove("sched-gcol-hi")); }
+function _schedHiCol(gi) { _schedHiClear(); if (gi == null) return; document.querySelectorAll(`#schedDoc [data-gcol="${gi}"]`).forEach(el => el.classList.add("sched-gcol-hi")); }
 document.addEventListener("dragstart", e => {
-  const c = e.target.closest(".sched-pick-card"); if (!c || c.disabled) return;
-  try { _schedPickDrag = JSON.parse(c.dataset.pick); } catch (x) { _schedPickDrag = null; return; }
-  try { e.dataTransfer.effectAllowed = "copy"; e.dataTransfer.setData("text/plain", ""); } catch (x) {}
+  const c = e.target.closest(".sched-pick-card");
+  if (c) { try { _schedPickDrag = JSON.parse(c.dataset.pick); } catch (x) { _schedPickDrag = null; } _schedItemDrag = null; try { e.dataTransfer.effectAllowed = "copy"; e.dataTransfer.setData("text/plain", ""); } catch (x) {} return; }
+  const h = e.target.closest(".sched-ihandle");
+  if (h) { const p = (h.dataset.sdrag || "").split(":"); _schedItemDrag = { gi: +p[0], ii: +p[1] }; _schedPickDrag = null; try { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", ""); } catch (x) {} }
 });
-document.addEventListener("dragover", e => { if (_schedPickDrag && e.target.closest("#schedDoc")) e.preventDefault(); });
-document.addEventListener("drop", e => {
-  if (!_schedPickDrag) return;
-  if (!e.target.closest("#schedDoc")) { _schedPickDrag = null; return; }
+document.addEventListener("dragover", e => {
+  if (!_schedPickDrag && !_schedItemDrag) return;
+  if (!e.target.closest("#schedDoc")) { _schedHiClear(); return; }
   e.preventDefault();
-  const it = _schedPickDrag; _schedPickDrag = null;
-  _schedPickAdd(it, e.target.closest("[data-g]"));
+  const cell = e.target.closest("#schedDoc [data-gcol]");
+  _schedHiCol(cell ? +cell.dataset.gcol : null);
 });
+document.addEventListener("drop", e => {
+  if (!_schedPickDrag && !_schedItemDrag) return;
+  const inDoc = e.target.closest("#schedDoc");
+  const cell = e.target.closest("#schedDoc [data-gcol]");
+  const gi = cell ? +cell.dataset.gcol : null;
+  const pick = _schedPickDrag, item = _schedItemDrag;
+  _schedPickDrag = null; _schedItemDrag = null; _schedHiClear();
+  if (!inDoc || gi == null) return;
+  e.preventDefault();
+  if (pick) _schedPickAdd(pick, gi);
+  else if (item) _schedMoveItem(item.gi, item.ii, gi);
+});
+document.addEventListener("dragend", () => { _schedPickDrag = null; _schedItemDrag = null; _schedHiClear(); });
 // 팝업 이동(제목 잡고 끌기)
 let _pickMove = null;
 function _schedPickInit() {
@@ -11179,15 +11118,21 @@ function _schedPickShow() {
   ov.classList.add("on");
   ov.style.pointerEvents = "none"; ov.style.background = "transparent";   // 배경 통과 → 뒤 생산 표로 드롭 가능
   if (modal) { modal.style.pointerEvents = "auto"; modal.style.position = ""; modal.style.left = ""; modal.style.top = ""; modal.style.margin = ""; }
+  _schedPickApplyZoom();
   _schedPickInit();
 }
+// 팝업 크기(비율) 조절 — 내용 유지, zoom으로만 축소/확대. 기본 80%.
+function _schedPickZoom() { let z; try { z = parseFloat(localStorage.getItem("schedPickZoom")); } catch (e) {} return z > 0 ? z : 0.8; }
+function _schedPickApplyZoom() { const b = $("schedPickBody"); if (b) b.style.zoom = _schedPickZoom(); const l = $("schedPickZoomLbl"); if (l) l.textContent = Math.round(_schedPickZoom() * 100) + "%"; }
+function _schedPickSetZoom(d) { const z = Math.max(0.5, Math.min(1.5, Math.round((_schedPickZoom() + d) * 20) / 20)); try { localStorage.setItem("schedPickZoom", z); } catch (e) {} _schedPickApplyZoom(); }
+if ($("schedPickZoomOut")) $("schedPickZoomOut").onclick = () => _schedPickSetZoom(-0.1);
+if ($("schedPickZoomIn")) $("schedPickZoomIn").onclick = () => _schedPickSetZoom(0.1);
 function _schedPickHide() {
   const ov = $("schedPickOverlay"); ov.classList.remove("on");
   ov.style.pointerEvents = ""; ov.style.background = "";
 }
 if ($("schedPickBtn")) $("schedPickBtn").onclick = openSchedPick;
 if ($("schedPickClose")) $("schedPickClose").onclick = _schedPickHide;
-if ($("schedPickTarget")) $("schedPickTarget").onchange = () => _schedPickRender();   // 담을 날짜 바꾸면 그 열 기준으로 담김 표시 갱신
 // 표시 설정 패널 접기/펴기 — 마지막 상태를 브라우저에 저장(출고·생산 공통)
 function _schedStyleOpen() { try { return localStorage.getItem("schedStyleOpen") !== "0"; } catch (e) { return true; } }
 function _schedApplyStylePanel() {
@@ -11962,13 +11907,14 @@ function buildScheduleDocEdit(d, week) {
   const itemCellEdit = (g, gi, ii, pad) => {
     const P = `padding-top:${pad}px; padding-bottom:${pad}px;`;
     const it = (g.items || [])[ii];
-    if (!it) return `<td style="${TDI} ${P}"></td>`;
-    if (it.spacer) return `<td style="${TDI} ${P}"><div class="sched-celledit" style="position:relative; min-height:${Math.round(qtySize)}px; display:flex; align-items:center; justify-content:center; color:#c4c4c4; font-size:${subSize}px;">· 빈 칸 ·<div class="sched-ectl" style="position:absolute; top:0; right:0;">
+    if (!it) return `<td style="${TDI} ${P}" data-gcol="${gi}"></td>`;
+    if (it.spacer) return `<td style="${TDI} ${P}" data-gcol="${gi}"><div class="sched-celledit" style="position:relative; min-height:${Math.round(qtySize)}px; display:flex; align-items:center; justify-content:center; color:#c4c4c4; font-size:${subSize}px;">· 빈 칸 ·<div class="sched-ectl" style="position:absolute; top:0; right:0;">
       <button data-schedimove="${gi}:${ii}:-1" title="위로" ${ii === 0 ? "disabled" : ""}>▲</button>
       <button data-schedimove="${gi}:${ii}:1" title="아래로" ${ii === (g.items.length - 1) ? "disabled" : ""}>▼</button>
       <button class="danger" data-schedidel="${gi}:${ii}" title="빈 칸 삭제">✕</button></div></div></td>`;
     const icol = (it.color || "").trim();  // 제품별 개별 글자색(비우면 전체 색)
-    return `<td style="${TDI} ${P}"><div class="sched-celledit" style="position:relative;">
+    return `<td style="${TDI} ${P}" data-gcol="${gi}"><div class="sched-celledit" style="position:relative;">
+      ${_prod && (it.label || "").trim() ? `<span class="sched-ihandle" draggable="true" data-sdrag="${gi}:${ii}" title="끌어서 다른 요일로 이동" style="position:absolute; top:-2px; left:-2px; cursor:grab; color:#bbb; font-size:12px; z-index:2; padding:0 2px;">⠿</span>` : ""}
       ${it_(gi, ii, "label", it.label, "", ` list="schedProdDl" placeholder="제품/품목" style="font-weight:700; font-size:${labelSize}px; color:${icol || ec("label", "inherit")};"`)}
       <div style="display:flex; align-items:baseline; gap:2px; margin:1px 0;">
         ${it_(gi, ii, "qty", it.qty, "", ` inputmode="numeric" placeholder="수량" style="font-size:${qtySize}px; font-weight:900; text-align:right; flex:1 1 auto; color:${icol || ec("qty", "inherit")};"`)}
@@ -11995,7 +11941,7 @@ function buildScheduleDocEdit(d, week) {
   const orderRows = Array.from({ length: maxItems }, (_, k) =>
     `<tr class="order-row">${k === 0 ? `<td style="${LB}" rowspan="${maxItems + 1}">발주량</td>` : ""}${groups.map((g, gi) => itemCellEdit(g, gi, k, rowPad(k))).join("")}<td style="${TDI}"></td></tr>`
   ).join("")
-    + `<tr>${groups.map((g, gi) => `<td style="${TD}"><button class="sched-addbtn" data-schediadd="${gi}" style="width:100%; padding:4px; font-size:${Math.max(12, subSize)}px;">＋ 항목</button></td>`).join("")}<td style="${TD}"></td></tr>`;
+    + `<tr>${groups.map((g, gi) => `<td style="${TD}" data-gcol="${gi}"><button class="sched-addbtn" data-schediadd="${gi}" style="width:100%; padding:4px; font-size:${Math.max(12, subSize)}px;">＋ 항목</button></td>`).join("")}<td style="${TD}"></td></tr>`;
   const gExp = (g, key) => { const u = [...new Set((g.items || []).map(it => it[key]).filter(Boolean))]; return u[0] || ""; };
   const expRow = groups.map((g, gi) => `<td style="${TD} text-align:center; font-weight:700; font-size:${dateSize}px; color:${ec("date", "inherit")};">${g_(gi, "gexp", gExp(g, "expiry"), "datepick", ` readonly placeholder="📅 소비기한" style="text-align:center; font-weight:700; cursor:pointer;"`)}</td>`).join("") + `<td style="${TD}"></td>`;
   const exp2Row = groups.map((g, gi) => `<td style="${TD} text-align:center; font-size:${dateSize}px; color:${ec("date", "#666")};">${g_(gi, "gexp2", gExp(g, "expiry2"), "datepick", ` readonly placeholder="📅 예정" style="text-align:center; cursor:pointer;"`)}</td>`).join("") + `<td style="${TD}"></td>`;
@@ -12120,6 +12066,7 @@ function renderSchedDoc() {
     host.innerHTML = dl + `<div style="zoom:${z.toFixed(4)}; width:${SH.w}px; margin:0 auto;">
       <div style="background:#fff; box-sizing:border-box; padding:${SCHED_A4_PAD}px; box-shadow:0 1px 6px rgba(0,0,0,.15);">
         <div style="width:${SCHED_A4.w}px;">${buildScheduleDocEdit(SCHED.data, SCHED.week)}</div></div></div>`;
+    _schedPickRefresh();   // 표가 바뀌면(추가·삭제·이동) 담기 팝업의 '담김' 표시도 갱신
     return;
   }
   // ── 미리보기(완료) 모드: A4 한 장에 맞춰 축소 + 가운데 정렬 (실제 인쇄본과 동일) ──
