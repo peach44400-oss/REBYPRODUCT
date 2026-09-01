@@ -10928,11 +10928,18 @@ const SCHED = { week: "", data: null, saved: "", weeks: [], kind: "ship", gridMo
 
 // ── 생산 스케줄 = 출고 스케줄과 동일한 편집기, 저장 데이터셋만 다름(kind='prod') ──
 function _schedBase() { return SCHED.kind === "prod" ? "/api/prodschedule" : "/api/schedule"; }
+function _schedKindTitle() { return SCHED.kind === "prod" ? "주간 생산 스케줄" : "주간 출고 스케줄"; }
+// 문서 큰 제목 — 비었거나 옛 기본값("주간 생산·출고 스케줄")이면 모드별 제목으로, 사용자가 바꾼 제목은 그대로
+function _schedDocTitle(d) {
+  const t = (d && d.title || "").trim();
+  return (!t || t === "주간 생산·출고 스케줄") ? _schedKindTitle() : t;
+}
 function _schedApplyKindUI() {
   const prod = SCHED.kind === "prod";
   const imp = $("schedFromShip"); if (imp) imp.style.display = prod ? "" : "none";
   const src = $("schedSource"); if (src) src.style.display = prod ? "" : "none";
   const kb = $("schedKindBadge"); if (kb) kb.textContent = prod ? "\ud83d\uddd3 \uc0dd\uc0b0 \uc2a4\ucf00\uc904" : "\ud83d\ude9a \ucd9c\uace0 \uc2a4\ucf00\uc904";
+  const th = $("schedTopTitle"); if (th) th.textContent = prod ? "\ud83d\uddd3 \uc8fc\uac04 \uc0dd\uc0b0 \uc2a4\ucf00\uc904" : "\ud83d\uddd3 \uc8fc\uac04 \ucd9c\uace0 \uc2a4\ucf00\uc904";
   if (prod) loadSchedSource();
 }
 // \ucd9c\uace0 \uc2a4\ucf00\uc904 \uc81c\ud488\uc744 \uc18c\uc2a4 \ud328\ub110\uc5d0 \ub098\uc5f4(\ub4dc\ub798\uadf8 \uc6d0\ubcf8)
@@ -11703,7 +11710,7 @@ function buildScheduleDoc(d, week) {
   return `<div class="sched-doc" style="color:${ink}; font-family:${fam}; display:flex; flex-direction:column;">
     <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:2px;">
       <div style="width:210px; font-size:${S(12)}px; color:#555;">${week} ~ ${_schedAddDays(week, 5)}<br>작성자 : <b>${esc(d.author || "—")}</b></div>
-      <h1 style="text-align:center; letter-spacing:8px; font-size:${titleFs}px; margin:0; flex:1 1 0; min-width:0; word-break:keep-all;">${esc(d.title || "주간 생산·출고 스케줄")}</h1>
+      <h1 style="text-align:center; letter-spacing:8px; font-size:${titleFs}px; margin:0; flex:1 1 0; min-width:0; word-break:keep-all;">${esc(_schedDocTitle(d))}</h1>
       <div style="width:230px; font-size:${S(12)}px; text-align:right; white-space:pre-wrap; color:#333;">${esc(d.legend || "")}</div>
     </div>
     <div style="text-align:center; color:#666; font-size:${S(13)}px; margin:2px 0 8px;">${esc(d.note || "")}</div>
@@ -11814,7 +11821,7 @@ function buildScheduleDocEdit(d, week) {
   return `<div class="sched-doc" style="color:${ink}; font-family:${fam}; display:flex; flex-direction:column;">
     <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:2px;">
       <div style="width:220px; font-size:${S(12)}px; color:#555;">${week} ~ ${_schedAddDays(week, 5)}<br>작성자 : ${g_("", "author", d.author, "", ` placeholder="작성자" style="font-weight:700; width:120px; color:#333;"`)}</div>
-      <h1 style="text-align:center; flex:1 1 0; min-width:0; margin:0;">${g_("", "title", d.title || "주간 생산·출고 스케줄", "", ` placeholder="제목" style="text-align:center; letter-spacing:8px; font-size:${titleFs}px; font-weight:800;"`)}</h1>
+      <h1 style="text-align:center; flex:1 1 0; min-width:0; margin:0;">${g_("", "title", _schedDocTitle(d), "", ` placeholder="제목" style="text-align:center; letter-spacing:8px; font-size:${titleFs}px; font-weight:800;"`)}</h1>
       <div style="width:230px; font-size:${S(12)}px; color:#333;">${g_("", "legend", d.legend, "", ` placeholder="범례 (우상단)" style="text-align:right;"`)}</div>
     </div>
     <div style="text-align:center; color:#666; font-size:${S(13)}px; margin:2px 0 8px;">${g_("", "note", d.note, "", ` placeholder="안내문 (제목 아래)" style="text-align:center; color:#666;"`)}</div>
