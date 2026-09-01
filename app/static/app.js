@@ -10965,9 +10965,15 @@ function _renderSchedSource() {
   else if (sort === "group") items.sort((a, b) => (a.group || "").localeCompare(b.group || "", "ko") || a.label.localeCompare(b.label, "ko"));
   else if (sort === "qty") items.sort((a, b) => _schedNum(b.qty) - _schedNum(a.qty));
   SCHED._srcSorted = items;
-  host.innerHTML = items.map((it, i) => `<div class="sched-src-tile" draggable="true" data-si="${i}"
-     style="border:1px solid var(--line); border-left:3px solid var(--accent,#2f6df0); border-radius:8px; padding:4px 8px; background:#fff; cursor:grab; font-size:12px;">
-     <b>${esc(it.label)}</b> <span class="num">${esc(it.qty)}</span>${it.pack ? ` <span class="auto" style="font-size:10.5px">${esc(it.pack)}</span>` : ""}${it.group ? `<div class="auto" style="font-size:10px">${esc(it.group)}${it.partner ? " \u00b7 " + esc(it.partner) : ""}</div>` : ""}</div>`).join("")
+  // \uc774\ubbf8 \uc0dd\uc0b0 \ud45c\uc5d0 \uc788\ub294 \uc81c\ud488(\ub77c\ubca8) \u2014 \ud750\ub9ac\uac8c '\ubc30\uce58\ub428' \ud45c\uc2dc, \ub4dc\ub798\uadf8 \ube44\ud65c\uc131
+  const placed = new Set();
+  ((SCHED.data && SCHED.data.groups) || []).forEach(g => (g.items || []).forEach(x => { const l = (x.label || "").trim(); if (l) placed.add(l); }));
+  host.innerHTML = items.map((it, i) => {
+    const done = placed.has((it.label || "").trim());
+    return `<div class="sched-src-tile" ${done ? "" : 'draggable="true"'} data-si="${i}"
+     style="border:1px solid var(--line); border-left:3px solid ${done ? "#bbb" : "var(--accent,#2f6df0)"}; border-radius:8px; padding:4px 8px; background:${done ? "#f1f1f1" : "#fff"}; ${done ? "opacity:.55; cursor:default;" : "cursor:grab;"} font-size:12px;">
+     <b>${esc(it.label)}</b> <span class="num">${esc(it.qty)}</span>${it.pack ? ` <span class="auto" style="font-size:10.5px">${esc(it.pack)}</span>` : ""}${done ? ` <span class="chip ok" style="font-size:9.5px;">\ubc30\uce58\ub428</span>` : ""}${it.group ? `<div class="auto" style="font-size:10px">${esc(it.group)}${it.partner ? " \u00b7 " + esc(it.partner) : ""}</div>` : ""}</div>`;
+  }).join("")
     || `<div class="auto" style="font-size:12px; padding:8px;">\uc774 \uc8fc\uc758 \ucd9c\uace0 \uc2a4\ucf00\uc904\uc5d0 \uc81c\ud488\uc774 \uc5c6\uc2b5\ub2c8\ub2e4</div>`;
 }
 if ($("schedSrcSort")) $("schedSrcSort").onchange = _renderSchedSource;
@@ -10986,8 +10992,14 @@ document.addEventListener("drop", e => {
   e.preventDefault();
   const it = _schedSrcDrag; _schedSrcDrag = null;
   if (!SCHED.data) return;
-  if (!SCHED.editMode) { SCHED.editMode = true; _schedSyncEditUI(); renderSchedule(); }
   const groups = SCHED.data.groups || (SCHED.data.groups = []);
+  // 중복 방지 — 같은 제품이 이미 생산 표(어느 제품군이든)에 있으면 추가하지 않음
+  const lbl = (it.label || "").trim();
+  if (lbl && groups.some(g => (g.items || []).some(x => (x.label || "").trim() === lbl))) {
+    toast(`'${it.label}'은(는) 이미 생산 스케줄에 있습니다`);
+    return;
+  }
+  if (!SCHED.editMode) { SCHED.editMode = true; _schedSyncEditUI(); renderSchedule(); }
   const gEl = e.target.closest("[data-g]");
   const gv = gEl ? gEl.dataset.g : "";   // 문서 레벨 필드는 data-g="" → 그룹 아님
   let gi = gv === "" ? -1 : +gv;
@@ -11000,6 +11012,7 @@ document.addEventListener("drop", e => {
   groups[gi].items.push(ni);
   SCHED.dirty = true;
   renderSchedule();
+  _renderSchedSource();   // \ubc29\uae08 \ub123\uc740 \uc81c\ud488\uc744 \uc18c\uc2a4\uc5d0\uc11c '\ubc30\uce58\ub428'\uc73c\ub85c \ud45c\uc2dc
   toast(`'${it.label}' \u2192 ${groups[gi].name || "\uc81c\ud488\uad70"}\uc5d0 \ucd94\uac00\ub428`);
 });
 function loadProdSched() {
