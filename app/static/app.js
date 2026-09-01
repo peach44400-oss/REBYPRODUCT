@@ -11075,8 +11075,11 @@ function _schedPickFillTargets() {
 function _schedPickRender() {
   const host = $("schedPickBody"); if (!host) return;
   const groups = (SPICK.ship && SPICK.ship.groups) || [];
+  // '담김' 표시는 지금 고른 '담을 날짜(열)'에 이미 있는 제품만 — 같은 제품을 다른 요일엔 담을 수 있게
+  const tv = ($("schedPickTarget") || {}).value;
+  const tgt = (tv && tv !== "__new__") ? ((SCHED.data && SCHED.data.groups) || [])[+tv] : null;
   const placed = new Set();
-  ((SCHED.data && SCHED.data.groups) || []).forEach(g => (g.items || []).forEach(x => { const l = (x.label || "").trim(); if (l) placed.add(l); }));
+  if (tgt) (tgt.items || []).forEach(x => { const l = (x.label || "").trim(); if (l) placed.add(l); });
   let cnt = 0;
   const cols = groups.map(g => {
     const cards = (g.items || []).filter(it => (it.label || "").trim()).map(it => {
@@ -11098,7 +11101,6 @@ function _schedPickRender() {
 function _schedPickAdd(it, gEl) {
   const lbl = (it.label || "").trim();
   const groups = SCHED.data.groups || (SCHED.data.groups = []);
-  if (lbl && groups.some(g => (g.items || []).some(x => (x.label || "").trim() === lbl))) { toast("'" + it.label + "'은(는) 이미 담겨 있습니다"); return; }
   let gi;
   if (gEl && gEl.dataset.g !== "") gi = Math.min(+gEl.dataset.g, groups.length - 1);
   else {
@@ -11107,6 +11109,8 @@ function _schedPickAdd(it, gEl) {
     else gi = Math.min(+tv, groups.length - 1);
   }
   const g = groups[gi];
+  // 같은 날짜 열에만 중복 방지 (다른 요일엔 같은 제품 담기 허용)
+  if (lbl && (g.items || []).some(x => (x.label || "").trim() === lbl)) { toast("'" + it.label + "'은(는) 이 날짜에 이미 담겨 있습니다"); return; }
   // 새 열은 빈 제품칸이 하나 자동 생성돼 있음 → 그 칸을 채워 중복 행이 생기지 않게 함 (없으면 새 행 추가)
   const empty = (g.items || []).find(x => !(x.label || "").trim() && !x.spacer);
   const ni = empty || _schedBlankItem();
@@ -11172,6 +11176,7 @@ function _schedPickHide() {
 }
 if ($("schedPickBtn")) $("schedPickBtn").onclick = openSchedPick;
 if ($("schedPickClose")) $("schedPickClose").onclick = _schedPickHide;
+if ($("schedPickTarget")) $("schedPickTarget").onchange = () => _schedPickRender();   // 담을 날짜 바꾸면 그 열 기준으로 담김 표시 갱신
 // 표시 설정 패널 접기/펴기 — 마지막 상태를 브라우저에 저장(출고·생산 공통)
 function _schedStyleOpen() { try { return localStorage.getItem("schedStyleOpen") !== "0"; } catch (e) { return true; } }
 function _schedApplyStylePanel() {
