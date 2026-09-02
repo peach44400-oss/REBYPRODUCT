@@ -11131,6 +11131,16 @@ document.addEventListener("drop", e => {
   else if (item) _schedMoveItem(item.gi, item.ii, gcol, grow);
 });
 document.addEventListener("dragend", () => { _schedPickDrag = null; _schedItemDrag = null; _schedHiClear(); });
+// 생산 스케줄의 작은 빈 칸을 더블클릭 → 그 칸만 입력칸(편집기)으로 연다
+document.addEventListener("dblclick", e => {
+  const td = e.target.closest("#schedDoc td.sched-empty"); if (!td || !SCHED.data || SCHED.kind !== "prod") return;
+  const gi = +td.dataset.gcol, ii = +td.dataset.grow; const g = (SCHED.data.groups || [])[gi]; if (!g) return;
+  g.items = g.items || [];
+  while (g.items.length <= ii) g.items.push({ label: "", qty: "", pack: "", boxes: "", partner: "", memo: "" });
+  SCHED._openCell = gi + ":" + ii; SCHED.dirty = true;
+  renderSchedDoc();
+  const inp = document.querySelector(`#schedDoc input[data-g="${gi}"][data-i="${ii}"][data-f="label"]`); if (inp) inp.focus();
+});
 // ── 제품 셀 아래 손잡이를 끌어 '시간 길이'(여러 행에 걸치기) 조절 ──
 let _spanDrag = null;
 document.addEventListener("mousedown", e => {
@@ -12031,13 +12041,16 @@ function buildScheduleDocEdit(d, week) {
     const P = `padding-top:${pad}px; padding-bottom:${pad}px;`;
     const RS = span > 1 ? ` rowspan="${span}"` : "";
     const it = (g.items || [])[ii];
-    if (!it) return `<td style="${TDI} ${P}" data-gcol="${gi}" data-grow="${ii}"></td>`;
+    if (!it) return `<td class="sched-empty" style="${TDI} ${P}" data-gcol="${gi}" data-grow="${ii}" title="출고 제품을 끌어다 놓기 · 더블클릭하면 직접 입력"></td>`;
+    // 생산: 아무것도 없는 빈 항목은 미리보기처럼 '작은 빈 칸'으로(시간 행이 제품 높이로만 커지게). 더블클릭하면 입력칸이 열림.
+    if (_prod && !it.spacer && !((it.label || "").trim() || it.qty || it.pack || it.boxes || (it.partner || "").trim() || (it.memo || "").trim()) && SCHED._openCell !== gi + ":" + ii)
+      return `<td class="sched-empty" style="${TDI} ${P}" data-gcol="${gi}" data-grow="${ii}" title="출고 제품을 끌어다 놓기 · 더블클릭하면 직접 입력"><div style="min-height:${Math.round(subSize * 1.4)}px;"></div></td>`;
     if (it.spacer) return `<td style="${TDI} ${P}" data-gcol="${gi}" data-grow="${ii}"><div class="sched-celledit" style="position:relative; min-height:${Math.round(qtySize)}px; display:flex; align-items:center; justify-content:center; color:#c4c4c4; font-size:${subSize}px;">· 빈 칸 ·<div class="sched-ectl" style="position:absolute; top:0; right:0;">
       <button data-schedimove="${gi}:${ii}:-1" title="위로" ${ii === 0 ? "disabled" : ""}>▲</button>
       <button data-schedimove="${gi}:${ii}:1" title="아래로" ${ii === (g.items.length - 1) ? "disabled" : ""}>▼</button>
       <button class="danger" data-schedidel="${gi}:${ii}" title="빈 칸 삭제">✕</button></div></div></td>`;
     const icol = (it.color || "").trim();  // 제품별 개별 글자색(비우면 전체 색)
-    return `<td style="${TDI} ${P}${_prod ? " vertical-align:middle;" : ""}" data-gcol="${gi}" data-grow="${ii}"${RS}><div class="sched-celledit" style="position:relative; height:100%;${_prod ? " display:flex; flex-direction:column; justify-content:center; text-align:center;" : ""}">
+    return `<td style="${TDI} ${P}${_prod ? " vertical-align:middle;" : ""}" data-gcol="${gi}" data-grow="${ii}"${RS}><div class="sched-celledit" style="position:relative;${_prod ? " text-align:center;" : ""}">
       ${_prod && (it.label || "").trim() ? `<span class="sched-ihandle" draggable="true" data-sdrag="${gi}:${ii}" title="끌어서 다른 요일로 이동" style="position:absolute; top:-2px; left:-2px; cursor:grab; color:#bbb; font-size:12px; z-index:2; padding:0 2px;">⠿</span>` : ""}
       ${_prod && (it.label || "").trim() ? `<span class="sched-shandle" data-sspan="${gi}:${ii}" title="아래로 끌어 시간 길이 조절" style="position:absolute; left:0; right:0; bottom:-4px; height:9px; cursor:ns-resize; z-index:2; text-align:center; line-height:7px; font-size:10px; color:#7a9bd8;">⣀</span>` : ""}
       ${it_(gi, ii, "label", it.label, "", ` list="schedProdDl" placeholder="제품/품목" style="font-weight:700; font-size:${labelSize}px; color:${icol || ec("label", "inherit")};${_prod ? " text-align:center;" : ""}"`)}
@@ -12172,6 +12185,22 @@ function _fitSchedPage(doc) {
   h = doc.scrollHeight;
   applyCentered(Math.min(1, W0 / W, H0 / h) * 0.998);
 }
+// 여러 시간에 걸친 제품(rowspan) — 브라우저는 걸친 셀의 높이를 첫 행에 몰아주므로(첫 행만 커짐),
+// 걸친 셀의 내용 높이를 행 수로 나눠 각 행의 최소 높이로 주어 균등하게 커지게 한다. (생산 스케줄)
+function _schedEvenSpans(host) {
+  if (!host || SCHED.kind !== "prod") return;
+  const rows = [...host.querySelectorAll(".sched-main tr.order-row")]; if (!rows.length) return;
+  rows.forEach(tr => { tr.style.height = ""; });
+  const need = new Map();   // 행 index → 필요한 최소 높이(px)
+  host.querySelectorAll(".sched-main td[rowspan]").forEach(td => {
+    const n = +td.getAttribute("rowspan") || 1; if (n < 2) return;
+    const i0 = rows.indexOf(td.parentElement); if (i0 < 0) return;
+    const h = [...td.children].reduce((a, c) => a + c.offsetHeight, 0) + 14;   // 내용 높이 + 패딩 여유
+    const per = Math.ceil(h / n);
+    for (let i = i0; i < i0 + n && i < rows.length; i++) need.set(i, Math.max(need.get(i) || 0, per));
+  });
+  need.forEach((px, i) => { rows[i].style.height = px + "px"; });
+}
 // 행 높이 맞춤 — A4 폭에서 각 발주량 줄의 실제 높이를 재서 '가장 높은 줄'에 모두 맞춘다(진짜 균일). 이후 _fitSchedPage가 축소.
 function _schedEqualizeRows(doc) {
   if (!doc) return;
@@ -12198,6 +12227,7 @@ function renderSchedDoc() {
     host.innerHTML = dl + `<div style="zoom:${z.toFixed(4)}; width:${SH.w}px; margin:0 auto;">
       <div style="background:#fff; box-sizing:border-box; padding:${SCHED_A4_PAD}px; box-shadow:0 1px 6px rgba(0,0,0,.15);">
         <div style="width:${SCHED_A4.w}px;">${buildScheduleDocEdit(SCHED.data, SCHED.week)}</div></div></div>`;
+    _schedEvenSpans(host);   // 여러 시간에 걸친 제품은 행 높이를 균등 분배
     _schedPickRefresh();   // 표가 바뀌면(추가·삭제·이동) 담기 팝업의 '담김' 표시도 갱신
     return;
   }
@@ -12212,6 +12242,7 @@ function renderSchedDoc() {
   host.style.height = Math.round(SH.h * outer + 8) + "px";
   const docEl = host.querySelector(".sched-doc");
   docEl.dataset.fill = SCHED.data.fillPage === false ? "0" : "1";   // 페이지 꽉 채우기 여부
+  _schedEvenSpans(host);   // 여러 시간에 걸친 제품은 행 높이를 균등 분배
   if (SCHED.data.rowsEqual) _schedEqualizeRows(docEl);   // 줄 높이 균일 맞춤(실측)
   _fitSchedPage(docEl);
 }
