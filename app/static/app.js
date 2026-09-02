@@ -10947,9 +10947,9 @@ function _schedProdLbl(iso) {
   const d = _schedDowOf(iso);
   return d && /^\d{4}-\d{2}-\d{2}$/.test(iso || "") ? `${d}(${iso.slice(2).replace(/-/g, ".")})` : (iso || "—");
 }
-// 생산 스케줄 행(시간) — 기본 09:00~18:00 30분 간격. 편집 가능.
+// 생산 스케줄 행(시간) — 기본 08:00~19:00 30분 간격. 편집 가능. ([⭐ 기본값]으로 저장한 목록이 있으면 그게 우선)
 function _schedTimesDefault() {
-  const a = []; for (let h = 9; h <= 18; h++) { a.push((h < 10 ? "0" : "") + h + ":00"); if (h < 18) a.push((h < 10 ? "0" : "") + h + ":30"); } return a;
+  const a = []; for (let h = 8; h <= 19; h++) { a.push((h < 10 ? "0" : "") + h + ":00"); if (h < 19) a.push((h < 10 ? "0" : "") + h + ":30"); } return a;
 }
 function _schedTimes(d) {
   if (!Array.isArray(d.times) || !d.times.length) {
@@ -12044,7 +12044,7 @@ function buildScheduleDocEdit(d, week) {
     + `<th style="${TD} text-align:center; background:#f2f1ec;"><button class="sched-addbtn" data-schedgaddcol="1" title="${_prod ? "날짜(열) 추가" : "제품군(열) 추가"}" style="padding:6px 8px; font-size:${labelFs}px;">＋<br>${_prod ? "날짜" : "제품군"}</button></th>`;
   const shipRow = groups.map((g, gi) => `<td style="${TD} text-align:center; font-weight:800; font-size:${dateSize}px; color:${ec("date", "inherit")};">${g_(gi, "shipDate", g.shipDate, "datepick", ` readonly placeholder="📅 출고일" style="text-align:center; font-weight:800; cursor:pointer;"`)}</td>`).join("") + `<td style="${TD}"></td>`;
   const partnerRow = groups.map((g, gi) => `<td style="${TD} text-align:center; font-weight:700; color:#2f3fa0;">${g_(gi, "partner", g.partner, "", ` list="schedPartnerDl" placeholder="거래처(열 공통)" style="text-align:center; font-weight:700; color:#2f3fa0;"`)}</td>`).join("") + `<td style="${TD}"></td>`;
-  // 발주량(출고): 항목=행. 생산: 시간=행(09:00~18:00 30분, 편집).
+  // 발주량(출고): 항목=행. 생산: 시간=행(기본 08:00~19:00 30분, 편집).
   const _times = _prod ? _schedTimes(d) : null;
   const maxItems = _prod ? Math.max(_times.length, ...groups.map(g => (g.items || []).length))
                          : Math.max(1, ...groups.map(g => (g.items || []).length));
