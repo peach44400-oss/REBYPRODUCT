@@ -11912,7 +11912,7 @@ function buildScheduleDoc(d, week) {
     const icol = (it.color || "").trim();
     const isBlank = !(it.label || NFq(it.qty) || pb || ovp || it.memo);
     if (isBlank) return `<td style="${TDI} ${P}">&nbsp;</td>`;
-    return `<td style="${TDI} ${P}"${RS}>
+    return `<td style="${TDI} ${P}${_prod ? " vertical-align:middle; text-align:center;" : ""}"${RS}>
       <div style="font-weight:700; font-size:${labelSize}px; color:${icol || ec("label", "inherit")};">${esc(it.label || "") || "&nbsp;"}</div>
       <div style="font-size:${qtySize}px; font-weight:900; line-height:1.05; margin:1px 0; color:${icol || ec("qty", "inherit")};">${NFq(it.qty) ? NFq(it.qty) + '<span style="font-size:' + Math.round(qtySize * 0.6) + 'px; font-weight:700;">개</span>' : "&nbsp;"}</div>
       ${(pb || ovp) ? `<div style="font-size:${subSize}px;"><span style="color:${ec("sub", "#c26a1f")}; font-weight:700;">${esc(pb)}</span>${ovp ? ` <span style="color:#2f3fa0;">· ${esc(ovp)}</span>` : ""}</div>` : ""}
@@ -12016,10 +12016,10 @@ function buildScheduleDocEdit(d, week) {
       <button data-schedimove="${gi}:${ii}:1" title="아래로" ${ii === (g.items.length - 1) ? "disabled" : ""}>▼</button>
       <button class="danger" data-schedidel="${gi}:${ii}" title="빈 칸 삭제">✕</button></div></div></td>`;
     const icol = (it.color || "").trim();  // 제품별 개별 글자색(비우면 전체 색)
-    return `<td style="${TDI} ${P}" data-gcol="${gi}" data-grow="${ii}"${RS}><div class="sched-celledit" style="position:relative; height:100%;">
+    return `<td style="${TDI} ${P}${_prod ? " vertical-align:middle;" : ""}" data-gcol="${gi}" data-grow="${ii}"${RS}><div class="sched-celledit" style="position:relative; height:100%;${_prod ? " display:flex; flex-direction:column; justify-content:center; text-align:center;" : ""}">
       ${_prod && (it.label || "").trim() ? `<span class="sched-ihandle" draggable="true" data-sdrag="${gi}:${ii}" title="끌어서 다른 요일로 이동" style="position:absolute; top:-2px; left:-2px; cursor:grab; color:#bbb; font-size:12px; z-index:2; padding:0 2px;">⠿</span>` : ""}
       ${_prod && (it.label || "").trim() ? `<span class="sched-shandle" data-sspan="${gi}:${ii}" title="아래로 끌어 시간 길이 조절" style="position:absolute; left:0; right:0; bottom:-4px; height:9px; cursor:ns-resize; z-index:2; text-align:center; line-height:7px; font-size:10px; color:#7a9bd8;">⣀</span>` : ""}
-      ${it_(gi, ii, "label", it.label, "", ` list="schedProdDl" placeholder="제품/품목" style="font-weight:700; font-size:${labelSize}px; color:${icol || ec("label", "inherit")};"`)}
+      ${it_(gi, ii, "label", it.label, "", ` list="schedProdDl" placeholder="제품/품목" style="font-weight:700; font-size:${labelSize}px; color:${icol || ec("label", "inherit")};${_prod ? " text-align:center;" : ""}"`)}
       <div style="display:flex; align-items:baseline; gap:2px; margin:1px 0;">
         ${it_(gi, ii, "qty", it.qty, "", ` inputmode="numeric" placeholder="수량" style="font-size:${qtySize}px; font-weight:900; text-align:right; flex:1 1 auto; color:${icol || ec("qty", "inherit")};"`)}
         <span style="font-size:${Math.round(qtySize * 0.6)}px; font-weight:700;">개</span></div>
