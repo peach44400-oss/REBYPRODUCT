@@ -10951,7 +10951,13 @@ function _schedProdLbl(iso) {
 function _schedTimesDefault() {
   const a = []; for (let h = 9; h <= 18; h++) { a.push((h < 10 ? "0" : "") + h + ":00"); if (h < 18) a.push((h < 10 ? "0" : "") + h + ":30"); } return a;
 }
-function _schedTimes(d) { if (!Array.isArray(d.times) || !d.times.length) d.times = _schedTimesDefault(); return d.times; }
+function _schedTimes(d) {
+  if (!Array.isArray(d.times) || !d.times.length) {
+    const sd = (typeof SCHED !== "undefined" && SCHED.styleDefault && Array.isArray(SCHED.styleDefault.times) && SCHED.styleDefault.times.length) ? SCHED.styleDefault.times : null;
+    d.times = sd ? sd.slice() : _schedTimesDefault();   // 사용자가 저장한 시간 기본값이 있으면 그걸로 시작
+  }
+  return d.times;
+}
 // 제품이 걸치는 시간(행) 수(item.span) → 열별 커버 행 집합 + 시작행별 span (rowspan 렌더용)
 function _schedSpanMap(groups, nRows, prod) {
   const cover = groups.map(() => new Set()), span = groups.map(() => ({}));
@@ -11579,11 +11585,15 @@ async function saveSchedStyleDefault() {
   const d = SCHED.data; if (!d) return;
   const style = { fontScale: d.fontScale, fontFamily: d.fontFamily, textColor: d.textColor,
     elem: JSON.parse(JSON.stringify(d.elem || {})) };
+  const prodTimes = (SCHED.kind === "prod" && Array.isArray(d.times) && d.times.length) ? d.times.slice() : null;
+  const keepTimes = SCHED.styleDefault && Array.isArray(SCHED.styleDefault.times) ? SCHED.styleDefault.times.slice() : null;
+  if (prodTimes || keepTimes) style.times = prodTimes || keepTimes;   // 생산 시간 목록도 기본값에 포함
   try {
     await api("/api/schedule/style", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ style }) });
     SCHED.styleDefault = style;
-    toast("표시 설정을 기본값으로 저장했습니다 — 새 주 스케줄이 이 설정으로 시작합니다");
+    toast(prodTimes ? "표시 설정·시간을 기본값으로 저장했습니다 — 새 생산 스케줄이 이 시간으로 시작합니다"
+                    : "표시 설정을 기본값으로 저장했습니다 — 새 주 스케줄이 이 설정으로 시작합니다");
   } catch (e) { /* api 토스트 */ }
 }
 function renderSchedGroups() {
@@ -11706,7 +11716,16 @@ function _schedPaste(e) {
 function _schedFieldUpdate(e) {
   if (!SCHED.data) return;
   const st = e.target.closest("[data-stime]");   // 생산 시간 행 편집
-  if (st) { SCHED.dirty = true; const dd = SCHED.data; dd.times = _schedTimes(dd); dd.times[+st.dataset.stime] = st.value; return; }
+  if (st) {
+    SCHED.dirty = true; const dd = SCHED.data; dd.times = _schedTimes(dd);
+    const k = +st.dataset.stime; dd.times[k] = st.value;
+    // 입력 확정(change) 시: 아래 행들을 이 시간부터 30분 간격으로 자동 갱신 (예: 09:00→08:00 이면 08:30, 09:00, …)
+    if (e.type === "change" && /^\d{1,2}:\d{2}$/.test((st.value || "").trim())) {
+      for (let j = k + 1; j < dd.times.length; j++) dd.times[j] = _schedNextTime(dd.times[j - 1]);
+      renderSchedDoc();
+    }
+    return;
+  }
   const inp = e.target.closest("[data-f]"); if (!inp) return;
   SCHED.dirty = true;
   const d = SCHED.data, f = inp.dataset.f;
@@ -11739,6 +11758,8 @@ function _schedClick(e) {
   if (!SCHED.data) return;
   // 구조를 바꾸는 버튼(제품군·항목 추가/복사/붙여넣기/이동/삭제/빈칸/색기본/행높이)을 누르면 '저장 안 됨'으로 표시
   if (e.target.closest("[data-schedgmove],[data-schedgdel],[data-schedgcopy],[data-schedgpaste],[data-schediblank],[data-schedicopy],[data-schedidel],[data-schedimove],[data-schediadd],[data-schedgaddcol],[data-schedicolorclr],[data-schedrowh],[data-schedtadd]")) SCHED.dirty = true;
+  const tsave = e.target.closest("[data-schedtsave]");
+  if (tsave) { saveSchedStyleDefault(); return; }   // 시간 목록을 기본값으로 저장
   const tadd = e.target.closest("[data-schedtadd]");
   if (tadd) {   // 생산 스케줄: 시간(행) 한 칸 추가 — 마지막 시간 +30분
     const d = SCHED.data; d.times = _schedTimes(d);
@@ -12051,7 +12072,7 @@ function buildScheduleDocEdit(d, week) {
     `<tr class="order-row">${timeCell(k)}${groups.map((g, gi) => _sp.cover[gi].has(k) ? "" : itemCellEdit(g, gi, k, rowPad(k), _sp.span[gi][k] || 1)).join("")}<td style="${TDI}"></td></tr>`
   ).join("")
     + (_prod
-      ? `<tr><td style="${LB}"><button class="sched-addbtn" data-schedtadd="1" title="시간(행) 추가" style="width:100%; padding:4px; font-size:${labelFs}px;">＋ 시간</button></td>${groups.map((g, gi) => `<td style="${TDI}" data-gcol="${gi}" data-grow="${maxItems}"></td>`).join("")}<td style="${TDI}"></td></tr>`
+      ? `<tr><td style="${LB}"><button class="sched-addbtn" data-schedtadd="1" title="시간(행) 추가" style="width:100%; padding:4px; font-size:${labelFs}px;">＋ 시간</button><button class="sched-addbtn" data-schedtsave="1" title="지금 시간 목록을 기본값으로 저장 — 새 생산 스케줄이 이 시간으로 시작합니다" style="width:100%; padding:3px; margin-top:3px; font-size:${Math.max(10, labelFs - 2)}px; color:#1e5f2f; border-color:#bcd9bc; background:#eef6ee;">⭐ 기본값</button></td>${groups.map((g, gi) => `<td style="${TDI}" data-gcol="${gi}" data-grow="${maxItems}"></td>`).join("")}<td style="${TDI}"></td></tr>`
       : `<tr>${groups.map((g, gi) => `<td style="${TD}" data-gcol="${gi}"><button class="sched-addbtn" data-schediadd="${gi}" style="width:100%; padding:4px; font-size:${Math.max(12, subSize)}px;">＋ 항목</button></td>`).join("")}<td style="${TD}"></td></tr>`);
   const gExp = (g, key) => { const u = [...new Set((g.items || []).map(it => it[key]).filter(Boolean))]; return u[0] || ""; };
   const expRow = groups.map((g, gi) => `<td style="${TD} text-align:center; font-weight:700; font-size:${dateSize}px; color:${ec("date", "inherit")};">${g_(gi, "gexp", gExp(g, "expiry"), "datepick", ` readonly placeholder="📅 소비기한" style="text-align:center; font-weight:700; cursor:pointer;"`)}</td>`).join("") + `<td style="${TD}"></td>`;
