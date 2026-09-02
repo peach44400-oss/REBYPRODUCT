@@ -10947,6 +10947,16 @@ function _schedProdLbl(iso) {
   const d = _schedDowOf(iso);
   return d && /^\d{4}-\d{2}-\d{2}$/.test(iso || "") ? `${d}(${iso.slice(2).replace(/-/g, ".")})` : (iso || "—");
 }
+// 생산 스케줄 행(시간) — 기본 09:00~18:00 30분 간격. 편집 가능.
+function _schedTimesDefault() {
+  const a = []; for (let h = 9; h <= 18; h++) { a.push((h < 10 ? "0" : "") + h + ":00"); if (h < 18) a.push((h < 10 ? "0" : "") + h + ":30"); } return a;
+}
+function _schedTimes(d) { if (!Array.isArray(d.times) || !d.times.length) d.times = _schedTimesDefault(); return d.times; }
+function _schedNextTime(t) {   // "17:30" → "18:00"
+  const m = /^(\d{1,2}):(\d{2})$/.exec((t || "").trim()); if (!m) return "";
+  let mm = (+m[1]) * 60 + (+m[2]) + 30; mm %= 1440;
+  return (mm / 60 | 0).toString().padStart(2, "0") + ":" + (mm % 60).toString().padStart(2, "0");
+}
 // 새 생산 스케줄 기본 열 — 월~금 5개(요일·날짜 자동). 토·일은 사용자가 +날짜로 추가.
 function _schedProdBlankGroups(week) {
   const gs = [];
@@ -11033,40 +11043,47 @@ function _schedPickRender() {
 }
 function _schedPickRefresh() { const ov = $("schedPickOverlay"); if (ov && ov.classList.contains("on")) _schedPickRender(); }
 // 출고 제품 카드 하나를 gi(요일 열)에 담기 — 드롭 전용
-function _schedPickAdd(it, gi) {
+// 출고 제품 카드를 (열 gcol, 행 grow) 칸에 담기 — 드롭 위치의 셀에 정확히
+function _schedPickAdd(it, gcol, grow) {
   const groups = SCHED.data.groups || (SCHED.data.groups = []);
-  if (gi == null || gi < 0 || !groups[gi]) return;
+  if (gcol == null || gcol < 0 || !groups[gcol]) return;
+  const g = groups[gcol]; g.items = g.items || [];
   const lbl = (it.label || "").trim();
-  const g = groups[gi];
-  if (lbl && (g.items || []).some(x => (x.label || "").trim() === lbl)) { toast("'" + it.label + "'은(는) 이 날짜에 이미 담겨 있습니다"); return; }
-  const empty = (g.items || []).find(x => !(x.label || "").trim() && !x.spacer);   // 자동 생성된 빈 칸 채우기
-  const ni = empty || _schedBlankItem();
-  ni.label = it.label; ni.qty = it.qty; ni.pack = it.pack; ni.partner = it.partner; ni.expiry = it.expiry; ni.expiry2 = it.expiry2;
-  if (!empty) g.items.push(ni);
+  if (lbl && g.items.some(x => (x.label || "").trim() === lbl)) { toast("'" + it.label + "'은(는) 이 날짜에 이미 담겨 있습니다"); return; }
+  const isEmpty = i => { const x = g.items[i]; return !x || (!(x.label || "").trim() && !x.spacer); };
+  let k = grow;
+  if (k == null || k < 0) { k = g.items.findIndex((x, i) => isEmpty(i)); if (k < 0) k = g.items.length; }
+  else if (!isEmpty(k)) { toast("그 칸엔 이미 제품이 있어요"); return; }
+  while (g.items.length <= k) g.items.push(_schedBlankItem());
+  const ni = g.items[k];
+  ni.label = it.label; ni.qty = it.qty; ni.pack = it.pack; ni.partner = it.partner; ni.expiry = it.expiry; ni.expiry2 = it.expiry2; ni.spacer = false;
   SCHED.dirty = true;
   if (!SCHED.editMode) { SCHED.editMode = true; _schedSyncEditUI(); }
   renderSchedule();
   toast("'" + it.label + "' 담았습니다");
 }
-// 생산 표 안에서 항목을 다른 요일 열로 이동
-function _schedMoveItem(fromGi, fromIi, toGi) {
+// 생산 표 안에서 항목을 (열,행)에서 (열,행)으로 이동 — 대상 칸이 차있으면 서로 맞바꿈
+function _schedMoveItem(fromGc, fromGr, toGc, toGr) {
   const groups = (SCHED.data && SCHED.data.groups) || [];
-  if (!groups[fromGi] || !groups[toGi] || fromGi === toGi) return;
-  const it = (groups[fromGi].items || [])[fromIi]; if (!it) return;
-  const lbl = (it.label || "").trim();
-  if (lbl && (groups[toGi].items || []).some(x => (x.label || "").trim() === lbl)) { toast("'" + it.label + "'은(는) 그 날짜에 이미 있습니다"); return; }
-  groups[fromGi].items.splice(fromIi, 1);
-  if (!groups[fromGi].items.length) groups[fromGi].items.push(_schedBlankItem());   // 최소 한 칸 유지
-  const empty = (groups[toGi].items || []).find(x => !(x.label || "").trim() && !x.spacer);
-  if (empty) Object.assign(empty, it); else groups[toGi].items.push(it);
-  SCHED.dirty = true;
-  renderSchedule();
-  toast("'" + it.label + "' 이동됨");
+  if (!groups[fromGc] || !groups[toGc]) return;
+  const g1 = groups[fromGc]; g1.items = g1.items || [];
+  const from = g1.items[fromGr]; if (!from || !(from.label || "").trim()) return;
+  if (fromGc === toGc && fromGr === toGr) return;
+  const g2 = groups[toGc]; g2.items = g2.items || [];
+  if (toGr == null || toGr < 0) toGr = g2.items.length;
+  const lbl = (from.label || "").trim();
+  if (lbl && g2.items.some((x, i) => (x.label || "").trim() === lbl && !(toGc === fromGc && i === fromGr) && i !== toGr)) { toast("'" + from.label + "'은(는) 그 날짜에 이미 있어요"); return; }
+  while (g2.items.length <= toGr) g2.items.push(_schedBlankItem());
+  const dest = g2.items[toGr], destFilled = dest && (dest.label || "").trim() && !dest.spacer;
+  if (destFilled) { g1.items[fromGr] = dest; g2.items[toGr] = from; }        // 맞바꿈
+  else { g2.items[toGr] = from; g1.items[fromGr] = _schedBlankItem(); }       // 이동(원 자리 빈칸)
+  SCHED.dirty = true; renderSchedule();
+  toast("'" + from.label + "' 이동됨");
 }
-// ── 통합 드래그: 팝업 카드(추가) + 표 안 항목 핸들(이동) → 생산 표 열에 드롭, 대상 열 하이라이트 ──
+// ── 통합 드래그: 팝업 카드(추가) + 표 안 항목 핸들(이동) → 생산 표 셀(열·행)에 드롭, 대상 셀 하이라이트 ──
 let _schedPickDrag = null, _schedItemDrag = null;
 function _schedHiClear() { document.querySelectorAll("#schedDoc .sched-gcol-hi").forEach(el => el.classList.remove("sched-gcol-hi")); }
-function _schedHiCol(gi) { _schedHiClear(); if (gi == null) return; document.querySelectorAll(`#schedDoc [data-gcol="${gi}"]`).forEach(el => el.classList.add("sched-gcol-hi")); }
+function _schedHiCell(cell) { _schedHiClear(); if (cell) cell.classList.add("sched-gcol-hi"); }
 document.addEventListener("dragstart", e => {
   const c = e.target.closest(".sched-pick-card");
   if (c) { try { _schedPickDrag = JSON.parse(c.dataset.pick); } catch (x) { _schedPickDrag = null; } _schedItemDrag = null; try { e.dataTransfer.effectAllowed = "copy"; e.dataTransfer.setData("text/plain", ""); } catch (x) {} return; }
@@ -11077,20 +11094,20 @@ document.addEventListener("dragover", e => {
   if (!_schedPickDrag && !_schedItemDrag) return;
   if (!e.target.closest("#schedDoc")) { _schedHiClear(); return; }
   e.preventDefault();
-  const cell = e.target.closest("#schedDoc [data-gcol]");
-  _schedHiCol(cell ? +cell.dataset.gcol : null);
+  _schedHiCell(e.target.closest("#schedDoc [data-gcol]"));
 });
 document.addEventListener("drop", e => {
   if (!_schedPickDrag && !_schedItemDrag) return;
   const inDoc = e.target.closest("#schedDoc");
   const cell = e.target.closest("#schedDoc [data-gcol]");
-  const gi = cell ? +cell.dataset.gcol : null;
+  const gcol = cell ? +cell.dataset.gcol : null;
+  const grow = (cell && cell.dataset.grow != null) ? +cell.dataset.grow : null;
   const pick = _schedPickDrag, item = _schedItemDrag;
   _schedPickDrag = null; _schedItemDrag = null; _schedHiClear();
-  if (!inDoc || gi == null) return;
+  if (!inDoc || gcol == null) return;
   e.preventDefault();
-  if (pick) _schedPickAdd(pick, gi);
-  else if (item) _schedMoveItem(item.gi, item.ii, gi);
+  if (pick) _schedPickAdd(pick, gcol, grow);
+  else if (item) _schedMoveItem(item.gi, item.ii, gcol, grow);
 });
 document.addEventListener("dragend", () => { _schedPickDrag = null; _schedItemDrag = null; _schedHiClear(); });
 // 팝업 이동(제목 잡고 끌기)
@@ -11650,7 +11667,10 @@ function _schedPaste(e) {
   toast(`엑셀 데이터 ${rows.length}행을 붙여넣었습니다`);
 }
 function _schedFieldUpdate(e) {
-  const inp = e.target.closest("[data-f]"); if (!inp || !SCHED.data) return;
+  if (!SCHED.data) return;
+  const st = e.target.closest("[data-stime]");   // 생산 시간 행 편집
+  if (st) { SCHED.dirty = true; const dd = SCHED.data; dd.times = _schedTimes(dd); dd.times[+st.dataset.stime] = st.value; return; }
+  const inp = e.target.closest("[data-f]"); if (!inp) return;
   SCHED.dirty = true;
   const d = SCHED.data, f = inp.dataset.f;
   const hasG = inp.dataset.g != null && inp.dataset.g !== "";
@@ -11681,7 +11701,13 @@ function _schedFieldUpdate(e) {
 function _schedClick(e) {
   if (!SCHED.data) return;
   // 구조를 바꾸는 버튼(제품군·항목 추가/복사/붙여넣기/이동/삭제/빈칸/색기본/행높이)을 누르면 '저장 안 됨'으로 표시
-  if (e.target.closest("[data-schedgmove],[data-schedgdel],[data-schedgcopy],[data-schedgpaste],[data-schediblank],[data-schedicopy],[data-schedidel],[data-schedimove],[data-schediadd],[data-schedgaddcol],[data-schedicolorclr],[data-schedrowh]")) SCHED.dirty = true;
+  if (e.target.closest("[data-schedgmove],[data-schedgdel],[data-schedgcopy],[data-schedgpaste],[data-schediblank],[data-schedicopy],[data-schedidel],[data-schedimove],[data-schediadd],[data-schedgaddcol],[data-schedicolorclr],[data-schedrowh],[data-schedtadd]")) SCHED.dirty = true;
+  const tadd = e.target.closest("[data-schedtadd]");
+  if (tadd) {   // 생산 스케줄: 시간(행) 한 칸 추가 — 마지막 시간 +30분
+    const d = SCHED.data; d.times = _schedTimes(d);
+    d.times.push(_schedNextTime(d.times[d.times.length - 1]) || "");
+    renderSchedDoc(); return;
+  }
   const gac = e.target.closest("[data-schedgaddcol]");
   if (gac) {
     const gs = SCHED.data.groups, prevPack = gs.length ? ((gs[gs.length - 1].items[0] || {}).pack || "") : "";
@@ -11832,7 +11858,9 @@ function buildScheduleDoc(d, week) {
   const shipRow = groups.map(g => `<td style="${TD} text-align:center; font-weight:800; font-size:${dateSize}px; color:${ec("date", "inherit")};">${g.shipDate ? _schedMD(g.shipDate) : "—"}</td>`).join("");
   const partnerRow = groups.map(g => `<td style="${TD} text-align:center; font-weight:700; color:#2f3fa0;">${esc(g.partner || "") || "—"}</td>`).join("");
   // 발주량: '항목=표의 한 행'으로 렌더 → 같은 행(가로줄)의 칸들은 높이가 같아 열끼리 위치가 정확히 맞는다.
-  const maxItems = Math.max(1, ...groups.map(g => (g.items || []).length));
+  const _timesP = _prod ? _schedTimes(d) : null;
+  const maxItems = _prod ? Math.max(_timesP.length, ...groups.map(g => (g.items || []).length))
+                         : Math.max(1, ...groups.map(g => (g.items || []).length));
   const rowWFn = k => (d.rowW && d.rowW[k] > 0) ? d.rowW[k] : 1;   // 행(줄) 높이 가중치(기본 1)
   const rowPad = k => Math.max(1, Math.round(S(5) + S(10) * (rowWFn(k) - 1)));   // 가중치를 세로 여백(px)으로 — 1이면 기본, 클수록 큰 폭으로 높아짐 → 줄 높이 조절
   const itemCell = (it, pad, gpartner) => {
@@ -11852,7 +11880,7 @@ function buildScheduleDoc(d, week) {
       ${it.memo ? `<div style="color:#888; font-size:${subSize}px;">${esc(it.memo)}</div>` : ""}</td>`;
   };
   const orderRows = Array.from({ length: maxItems }, (_, k) =>
-    `<tr class="order-row">${k === 0 ? `<td style="${LB}" rowspan="${maxItems}">발주량</td>` : ""}${groups.map(g => itemCell((g.items || [])[k], rowPad(k), g.partner)).join("")}</tr>`
+    `<tr class="order-row">${_prod ? `<td style="${LB} font-size:${labelFs}px;">${esc(_timesP[k] || "")}</td>` : (k === 0 ? `<td style="${LB}" rowspan="${maxItems}">발주량</td>` : "")}${groups.map(g => itemCell((g.items || [])[k], rowPad(k), g.partner)).join("")}</tr>`
   ).join("");
   const expRow = groups.map(g => {
     const exps = [...new Set((g.items || []).map(it => it.expiry).filter(Boolean))];
@@ -11933,20 +11961,22 @@ function buildScheduleDocEdit(d, week) {
     + `<th style="${TD} text-align:center; background:#f2f1ec;"><button class="sched-addbtn" data-schedgaddcol="1" title="${_prod ? "날짜(열) 추가" : "제품군(열) 추가"}" style="padding:6px 8px; font-size:${labelFs}px;">＋<br>${_prod ? "날짜" : "제품군"}</button></th>`;
   const shipRow = groups.map((g, gi) => `<td style="${TD} text-align:center; font-weight:800; font-size:${dateSize}px; color:${ec("date", "inherit")};">${g_(gi, "shipDate", g.shipDate, "datepick", ` readonly placeholder="📅 출고일" style="text-align:center; font-weight:800; cursor:pointer;"`)}</td>`).join("") + `<td style="${TD}"></td>`;
   const partnerRow = groups.map((g, gi) => `<td style="${TD} text-align:center; font-weight:700; color:#2f3fa0;">${g_(gi, "partner", g.partner, "", ` list="schedPartnerDl" placeholder="거래처(열 공통)" style="text-align:center; font-weight:700; color:#2f3fa0;"`)}</td>`).join("") + `<td style="${TD}"></td>`;
-  // 발주량: '항목=표의 한 행' — 같은 행 칸들은 높이가 같아 열끼리 위치가 맞는다. 항목 없는 칸은 빈 칸.
-  const maxItems = Math.max(1, ...groups.map(g => (g.items || []).length));
+  // 발주량(출고): 항목=행. 생산: 시간=행(09:00~18:00 30분, 편집).
+  const _times = _prod ? _schedTimes(d) : null;
+  const maxItems = _prod ? Math.max(_times.length, ...groups.map(g => (g.items || []).length))
+                         : Math.max(1, ...groups.map(g => (g.items || []).length));
   const rowWFn = k => (d.rowW && d.rowW[k] > 0) ? d.rowW[k] : 1;   // 행(줄) 높이 가중치(기본 1)
   const rowPad = k => Math.max(1, Math.round(S(5) + S(10) * (rowWFn(k) - 1)));   // 가중치를 세로 여백(px)으로 — 1이면 기본, 클수록 큰 폭으로 높아짐
   const itemCellEdit = (g, gi, ii, pad) => {
     const P = `padding-top:${pad}px; padding-bottom:${pad}px;`;
     const it = (g.items || [])[ii];
-    if (!it) return `<td style="${TDI} ${P}" data-gcol="${gi}"></td>`;
-    if (it.spacer) return `<td style="${TDI} ${P}" data-gcol="${gi}"><div class="sched-celledit" style="position:relative; min-height:${Math.round(qtySize)}px; display:flex; align-items:center; justify-content:center; color:#c4c4c4; font-size:${subSize}px;">· 빈 칸 ·<div class="sched-ectl" style="position:absolute; top:0; right:0;">
+    if (!it) return `<td style="${TDI} ${P}" data-gcol="${gi}" data-grow="${ii}"></td>`;
+    if (it.spacer) return `<td style="${TDI} ${P}" data-gcol="${gi}" data-grow="${ii}"><div class="sched-celledit" style="position:relative; min-height:${Math.round(qtySize)}px; display:flex; align-items:center; justify-content:center; color:#c4c4c4; font-size:${subSize}px;">· 빈 칸 ·<div class="sched-ectl" style="position:absolute; top:0; right:0;">
       <button data-schedimove="${gi}:${ii}:-1" title="위로" ${ii === 0 ? "disabled" : ""}>▲</button>
       <button data-schedimove="${gi}:${ii}:1" title="아래로" ${ii === (g.items.length - 1) ? "disabled" : ""}>▼</button>
       <button class="danger" data-schedidel="${gi}:${ii}" title="빈 칸 삭제">✕</button></div></div></td>`;
     const icol = (it.color || "").trim();  // 제품별 개별 글자색(비우면 전체 색)
-    return `<td style="${TDI} ${P}" data-gcol="${gi}"><div class="sched-celledit" style="position:relative;">
+    return `<td style="${TDI} ${P}" data-gcol="${gi}" data-grow="${ii}"><div class="sched-celledit" style="position:relative;">
       ${_prod && (it.label || "").trim() ? `<span class="sched-ihandle" draggable="true" data-sdrag="${gi}:${ii}" title="끌어서 다른 요일로 이동" style="position:absolute; top:-2px; left:-2px; cursor:grab; color:#bbb; font-size:12px; z-index:2; padding:0 2px;">⠿</span>` : ""}
       ${it_(gi, ii, "label", it.label, "", ` list="schedProdDl" placeholder="제품/품목" style="font-weight:700; font-size:${labelSize}px; color:${icol || ec("label", "inherit")};"`)}
       <div style="display:flex; align-items:baseline; gap:2px; margin:1px 0;">
@@ -11971,10 +12001,15 @@ function buildScheduleDocEdit(d, week) {
     </div></td>`;
   };
   // 행 높이 맞춤은 렌더 후 실측해서 가장 높은 줄에 맞춘다(_schedEqualizeRows). '발주량' 라벨은 rowspan 병합.
+  const timeCell = k => _prod
+    ? `<td style="${LB} padding:2px;"><input class="sched-ei" data-stime="${k}" value="${esc((_times[k] || ""))}" placeholder="시간" style="text-align:center; font-weight:800; font-size:${labelFs}px; width:100%;"></td>`
+    : (k === 0 ? `<td style="${LB}" rowspan="${maxItems + 1}">발주량</td>` : "");
   const orderRows = Array.from({ length: maxItems }, (_, k) =>
-    `<tr class="order-row">${k === 0 ? `<td style="${LB}" rowspan="${maxItems + 1}">발주량</td>` : ""}${groups.map((g, gi) => itemCellEdit(g, gi, k, rowPad(k))).join("")}<td style="${TDI}"></td></tr>`
+    `<tr class="order-row">${timeCell(k)}${groups.map((g, gi) => itemCellEdit(g, gi, k, rowPad(k))).join("")}<td style="${TDI}"></td></tr>`
   ).join("")
-    + `<tr>${groups.map((g, gi) => `<td style="${TD}" data-gcol="${gi}"><button class="sched-addbtn" data-schediadd="${gi}" style="width:100%; padding:4px; font-size:${Math.max(12, subSize)}px;">＋ 항목</button></td>`).join("")}<td style="${TD}"></td></tr>`;
+    + (_prod
+      ? `<tr><td style="${LB}"><button class="sched-addbtn" data-schedtadd="1" title="시간(행) 추가" style="width:100%; padding:4px; font-size:${labelFs}px;">＋ 시간</button></td>${groups.map((g, gi) => `<td style="${TDI}" data-gcol="${gi}" data-grow="${maxItems}"></td>`).join("")}<td style="${TDI}"></td></tr>`
+      : `<tr>${groups.map((g, gi) => `<td style="${TD}" data-gcol="${gi}"><button class="sched-addbtn" data-schediadd="${gi}" style="width:100%; padding:4px; font-size:${Math.max(12, subSize)}px;">＋ 항목</button></td>`).join("")}<td style="${TD}"></td></tr>`);
   const gExp = (g, key) => { const u = [...new Set((g.items || []).map(it => it[key]).filter(Boolean))]; return u[0] || ""; };
   const expRow = groups.map((g, gi) => `<td style="${TD} text-align:center; font-weight:700; font-size:${dateSize}px; color:${ec("date", "inherit")};">${g_(gi, "gexp", gExp(g, "expiry"), "datepick", ` readonly placeholder="📅 소비기한" style="text-align:center; font-weight:700; cursor:pointer;"`)}</td>`).join("") + `<td style="${TD}"></td>`;
   const exp2Row = groups.map((g, gi) => `<td style="${TD} text-align:center; font-size:${dateSize}px; color:${ec("date", "#666")};">${g_(gi, "gexp2", gExp(g, "expiry2"), "datepick", ` readonly placeholder="📅 예정" style="text-align:center; cursor:pointer;"`)}</td>`).join("") + `<td style="${TD}"></td>`;
