@@ -10952,6 +10952,21 @@ function _schedTimesDefault() {
   const a = []; for (let h = 9; h <= 18; h++) { a.push((h < 10 ? "0" : "") + h + ":00"); if (h < 18) a.push((h < 10 ? "0" : "") + h + ":30"); } return a;
 }
 function _schedTimes(d) { if (!Array.isArray(d.times) || !d.times.length) d.times = _schedTimesDefault(); return d.times; }
+// 제품이 걸치는 시간(행) 수(item.span) → 열별 커버 행 집합 + 시작행별 span (rowspan 렌더용)
+function _schedSpanMap(groups, nRows, prod) {
+  const cover = groups.map(() => new Set()), span = groups.map(() => ({}));
+  if (prod) groups.forEach((g, gi) => {
+    const its = g.items || [];
+    its.forEach((it, k) => {
+      if (!it || it.spacer || !(it.label || "").trim()) return;
+      let s = Math.max(1, Math.floor(+it.span || 1)), cap = nRows - k;
+      for (let j = k + 1; j < k + s && j < nRows; j++) { const x = its[j]; if (x && (x.label || "").trim() && !x.spacer) { cap = j - k; break; } }
+      s = Math.min(s, cap); span[gi][k] = s;
+      for (let j = k + 1; j < k + s; j++) cover[gi].add(j);
+    });
+  });
+  return { cover, span };
+}
 function _schedNextTime(t) {   // "17:30" → "18:00"
   const m = /^(\d{1,2}):(\d{2})$/.exec((t || "").trim()); if (!m) return "";
   let mm = (+m[1]) * 60 + (+m[2]) + 30; mm %= 1440;
@@ -11110,6 +11125,28 @@ document.addEventListener("drop", e => {
   else if (item) _schedMoveItem(item.gi, item.ii, gcol, grow);
 });
 document.addEventListener("dragend", () => { _schedPickDrag = null; _schedItemDrag = null; _schedHiClear(); });
+// ── 제품 셀 아래 손잡이를 끌어 '시간 길이'(여러 행에 걸치기) 조절 ──
+let _spanDrag = null;
+document.addEventListener("mousedown", e => {
+  const h = e.target.closest(".sched-shandle"); if (!h) return;
+  const p = (h.dataset.sspan || "").split(":"); _spanDrag = { gi: +p[0], ii: +p[1] };
+  e.preventDefault(); e.stopPropagation();
+}, true);
+document.addEventListener("mousemove", e => {
+  if (!_spanDrag) return;
+  // 커서 Y에 해당하는 시간 행(화면 밖도 OK — elementFromPoint 대신 직접 비교)
+  let row = _spanDrag.ii;
+  document.querySelectorAll("#schedDoc [data-stime]").forEach(td => { if (td.getBoundingClientRect().top <= e.clientY) row = +td.dataset.stime; });
+  if (isNaN(row)) return;
+  const grp = ((SCHED.data && SCHED.data.groups) || [])[_spanDrag.gi]; if (!grp) return;
+  const it = (grp.items || [])[_spanDrag.ii]; if (!it) return;
+  const nRows = (SCHED.data.times && SCHED.data.times.length) || grp.items.length;
+  let cap = nRows - _spanDrag.ii;
+  for (let j = _spanDrag.ii + 1; j < grp.items.length; j++) { const x = grp.items[j]; if (x && (x.label || "").trim() && !x.spacer) { cap = j - _spanDrag.ii; break; } }
+  const span = Math.max(1, Math.min(row - _spanDrag.ii + 1, cap));
+  if ((it.span || 1) !== span) { it.span = span; SCHED.dirty = true; renderSchedDoc(); }
+});
+document.addEventListener("mouseup", () => { _spanDrag = null; });
 // 팝업 이동(제목 잡고 끌기)
 let _pickMove = null;
 function _schedPickInit() {
@@ -11863,8 +11900,10 @@ function buildScheduleDoc(d, week) {
                          : Math.max(1, ...groups.map(g => (g.items || []).length));
   const rowWFn = k => (d.rowW && d.rowW[k] > 0) ? d.rowW[k] : 1;   // 행(줄) 높이 가중치(기본 1)
   const rowPad = k => Math.max(1, Math.round(S(5) + S(10) * (rowWFn(k) - 1)));   // 가중치를 세로 여백(px)으로 — 1이면 기본, 클수록 큰 폭으로 높아짐 → 줄 높이 조절
-  const itemCell = (it, pad, gpartner) => {
+  const _spP = _schedSpanMap(groups, maxItems, _prod);
+  const itemCell = (it, pad, gpartner, span) => {
     const P = `padding-top:${pad}px; padding-bottom:${pad}px;`;
+    const RS = span > 1 ? ` rowspan="${span}"` : "";
     if (!it || it.spacer) return `<td style="${TDI} ${P}">${it ? "&nbsp;" : ""}</td>`;
     const pb = _schedPackBox(it);
     // 항목 거래처가 열 공통과 다를 때만 개별 표시(같으면 열 거래처 줄로 충분)
@@ -11873,14 +11912,14 @@ function buildScheduleDoc(d, week) {
     const icol = (it.color || "").trim();
     const isBlank = !(it.label || NFq(it.qty) || pb || ovp || it.memo);
     if (isBlank) return `<td style="${TDI} ${P}">&nbsp;</td>`;
-    return `<td style="${TDI} ${P}">
+    return `<td style="${TDI} ${P}"${RS}>
       <div style="font-weight:700; font-size:${labelSize}px; color:${icol || ec("label", "inherit")};">${esc(it.label || "") || "&nbsp;"}</div>
       <div style="font-size:${qtySize}px; font-weight:900; line-height:1.05; margin:1px 0; color:${icol || ec("qty", "inherit")};">${NFq(it.qty) ? NFq(it.qty) + '<span style="font-size:' + Math.round(qtySize * 0.6) + 'px; font-weight:700;">개</span>' : "&nbsp;"}</div>
       ${(pb || ovp) ? `<div style="font-size:${subSize}px;"><span style="color:${ec("sub", "#c26a1f")}; font-weight:700;">${esc(pb)}</span>${ovp ? ` <span style="color:#2f3fa0;">· ${esc(ovp)}</span>` : ""}</div>` : ""}
       ${it.memo ? `<div style="color:#888; font-size:${subSize}px;">${esc(it.memo)}</div>` : ""}</td>`;
   };
   const orderRows = Array.from({ length: maxItems }, (_, k) =>
-    `<tr class="order-row">${_prod ? `<td style="${LB} font-size:${labelFs}px;">${esc(_timesP[k] || "")}</td>` : (k === 0 ? `<td style="${LB}" rowspan="${maxItems}">발주량</td>` : "")}${groups.map(g => itemCell((g.items || [])[k], rowPad(k), g.partner)).join("")}</tr>`
+    `<tr class="order-row">${_prod ? `<td style="${LB} font-size:${labelFs}px;">${esc(_timesP[k] || "")}</td>` : (k === 0 ? `<td style="${LB}" rowspan="${maxItems}">발주량</td>` : "")}${groups.map((g, gi) => _spP.cover[gi].has(k) ? "" : itemCell((g.items || [])[k], rowPad(k), g.partner, _spP.span[gi][k] || 1)).join("")}</tr>`
   ).join("");
   const expRow = groups.map(g => {
     const exps = [...new Set((g.items || []).map(it => it.expiry).filter(Boolean))];
@@ -11967,8 +12006,9 @@ function buildScheduleDocEdit(d, week) {
                          : Math.max(1, ...groups.map(g => (g.items || []).length));
   const rowWFn = k => (d.rowW && d.rowW[k] > 0) ? d.rowW[k] : 1;   // 행(줄) 높이 가중치(기본 1)
   const rowPad = k => Math.max(1, Math.round(S(5) + S(10) * (rowWFn(k) - 1)));   // 가중치를 세로 여백(px)으로 — 1이면 기본, 클수록 큰 폭으로 높아짐
-  const itemCellEdit = (g, gi, ii, pad) => {
+  const itemCellEdit = (g, gi, ii, pad, span) => {
     const P = `padding-top:${pad}px; padding-bottom:${pad}px;`;
+    const RS = span > 1 ? ` rowspan="${span}"` : "";
     const it = (g.items || [])[ii];
     if (!it) return `<td style="${TDI} ${P}" data-gcol="${gi}" data-grow="${ii}"></td>`;
     if (it.spacer) return `<td style="${TDI} ${P}" data-gcol="${gi}" data-grow="${ii}"><div class="sched-celledit" style="position:relative; min-height:${Math.round(qtySize)}px; display:flex; align-items:center; justify-content:center; color:#c4c4c4; font-size:${subSize}px;">· 빈 칸 ·<div class="sched-ectl" style="position:absolute; top:0; right:0;">
@@ -11976,8 +12016,9 @@ function buildScheduleDocEdit(d, week) {
       <button data-schedimove="${gi}:${ii}:1" title="아래로" ${ii === (g.items.length - 1) ? "disabled" : ""}>▼</button>
       <button class="danger" data-schedidel="${gi}:${ii}" title="빈 칸 삭제">✕</button></div></div></td>`;
     const icol = (it.color || "").trim();  // 제품별 개별 글자색(비우면 전체 색)
-    return `<td style="${TDI} ${P}" data-gcol="${gi}" data-grow="${ii}"><div class="sched-celledit" style="position:relative;">
+    return `<td style="${TDI} ${P}" data-gcol="${gi}" data-grow="${ii}"${RS}><div class="sched-celledit" style="position:relative; height:100%;">
       ${_prod && (it.label || "").trim() ? `<span class="sched-ihandle" draggable="true" data-sdrag="${gi}:${ii}" title="끌어서 다른 요일로 이동" style="position:absolute; top:-2px; left:-2px; cursor:grab; color:#bbb; font-size:12px; z-index:2; padding:0 2px;">⠿</span>` : ""}
+      ${_prod && (it.label || "").trim() ? `<span class="sched-shandle" data-sspan="${gi}:${ii}" title="아래로 끌어 시간 길이 조절" style="position:absolute; left:0; right:0; bottom:-4px; height:9px; cursor:ns-resize; z-index:2; text-align:center; line-height:7px; font-size:10px; color:#7a9bd8;">⣀</span>` : ""}
       ${it_(gi, ii, "label", it.label, "", ` list="schedProdDl" placeholder="제품/품목" style="font-weight:700; font-size:${labelSize}px; color:${icol || ec("label", "inherit")};"`)}
       <div style="display:flex; align-items:baseline; gap:2px; margin:1px 0;">
         ${it_(gi, ii, "qty", it.qty, "", ` inputmode="numeric" placeholder="수량" style="font-size:${qtySize}px; font-weight:900; text-align:right; flex:1 1 auto; color:${icol || ec("qty", "inherit")};"`)}
@@ -12000,12 +12041,14 @@ function buildScheduleDocEdit(d, week) {
         <button class="danger" data-schedidel="${gi}:${ii}" title="항목 삭제">✕</button></div></div>
     </div></td>`;
   };
+  // 생산: 제품이 여러 시간(행)에 걸침 — item.span. 커버되는 아래 칸은 셀 생략(rowspan).
+  const _sp = _schedSpanMap(groups, maxItems, _prod);
   // 행 높이 맞춤은 렌더 후 실측해서 가장 높은 줄에 맞춘다(_schedEqualizeRows). '발주량' 라벨은 rowspan 병합.
   const timeCell = k => _prod
     ? `<td style="${LB} padding:2px;"><input class="sched-ei" data-stime="${k}" value="${esc((_times[k] || ""))}" placeholder="시간" style="text-align:center; font-weight:800; font-size:${labelFs}px; width:100%;"></td>`
     : (k === 0 ? `<td style="${LB}" rowspan="${maxItems + 1}">발주량</td>` : "");
   const orderRows = Array.from({ length: maxItems }, (_, k) =>
-    `<tr class="order-row">${timeCell(k)}${groups.map((g, gi) => itemCellEdit(g, gi, k, rowPad(k))).join("")}<td style="${TDI}"></td></tr>`
+    `<tr class="order-row">${timeCell(k)}${groups.map((g, gi) => _sp.cover[gi].has(k) ? "" : itemCellEdit(g, gi, k, rowPad(k), _sp.span[gi][k] || 1)).join("")}<td style="${TDI}"></td></tr>`
   ).join("")
     + (_prod
       ? `<tr><td style="${LB}"><button class="sched-addbtn" data-schedtadd="1" title="시간(행) 추가" style="width:100%; padding:4px; font-size:${labelFs}px;">＋ 시간</button></td>${groups.map((g, gi) => `<td style="${TDI}" data-gcol="${gi}" data-grow="${maxItems}"></td>`).join("")}<td style="${TDI}"></td></tr>`
