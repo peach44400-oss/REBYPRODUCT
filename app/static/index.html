@@ -61,7 +61,8 @@
   .sched-celledit:hover .sched-ectl, .sched-ectl:hover, .sched-ectl:focus-within{ opacity:1; pointer-events:auto; transition-delay:0s; }
   .sched-addbtn{ border:1px dashed #b9b9b9; background:rgba(0,0,0,.02); border-radius:6px; cursor:pointer; color:#666; font:inherit; }
   /* 드래그 대상 요일 열 하이라이트 */
-  .sched-gcol-hi{ background:rgba(47,109,240,.12) !important; box-shadow:inset 0 0 0 2px var(--accent,#2f6df0); }
+  .sched-span-hi>td{background:rgba(47,109,240,.10)!important;} .sched-span-hi>td:first-child{box-shadow:inset 3px 0 0 var(--accent);}
+    .sched-gcol-hi{ background:rgba(47,109,240,.12) !important; box-shadow:inset 0 0 0 2px var(--accent,#2f6df0); }
   .sched-ihandle{ opacity:.35; } .sched-celledit:hover .sched-ihandle{ opacity:1; }
   .sched-addbtn:hover{ border-color:#4C7FE0; color:#2f6bd6; }
   .sched-ectl button{ border:0; background:transparent; border-radius:6px; cursor:pointer; line-height:1; white-space:nowrap;

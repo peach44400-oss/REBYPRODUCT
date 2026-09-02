@@ -11145,24 +11145,37 @@ document.addEventListener("dblclick", e => {
 let _spanDrag = null;
 document.addEventListener("mousedown", e => {
   const h = e.target.closest(".sched-shandle"); if (!h) return;
-  const p = (h.dataset.sspan || "").split(":"); _spanDrag = { gi: +p[0], ii: +p[1] };
+  const p = (h.dataset.sspan || "").split(":"); const gi = +p[0], ii = +p[1];
+  const grp = ((SCHED.data && SCHED.data.groups) || [])[gi]; const it = grp && (grp.items || [])[ii]; if (!it) return;
+  // 끌기 시작 시점의 시간 행 위치를 스냅샷 — 끄는 동안 표를 다시 그리지 않으므로(행이 커지며 경계가 움직이는 되먹임 방지) 이 기준으로만 판단
+  const rows = [...document.querySelectorAll("#schedDoc [data-stime]")].map(td => ({ k: +td.dataset.stime, top: td.getBoundingClientRect().top })).filter(r => !isNaN(r.k));
+  const nRows = (SCHED.data.times && SCHED.data.times.length) || grp.items.length;
+  let cap = nRows - ii;   // 다음 제품 직전까지만 늘릴 수 있음
+  for (let j = ii + 1; j < grp.items.length; j++) { const x = grp.items[j]; if (x && (x.label || "").trim() && !x.spacer) { cap = j - ii; break; } }
+  _spanDrag = { gi, ii, rows, cap, span: it.span || 1, start: it.span || 1 };
+  _schedSpanHi(ii, _spanDrag.span);
   e.preventDefault(); e.stopPropagation();
 }, true);
+// 끄는 동안 걸칠 시간 행을 시간칸 강조로 미리 보여준다(표 재렌더 없음)
+function _schedSpanHi(ii, span) {
+  document.querySelectorAll("#schedDoc [data-stime]").forEach(td => {
+    const k = +td.dataset.stime; const tr = td.closest("tr"); if (tr) tr.classList.toggle("sched-span-hi", k >= ii && k < ii + span);
+  });
+}
 document.addEventListener("mousemove", e => {
   if (!_spanDrag) return;
-  // 커서 Y에 해당하는 시간 행(화면 밖도 OK — elementFromPoint 대신 직접 비교)
   let row = _spanDrag.ii;
-  document.querySelectorAll("#schedDoc [data-stime]").forEach(td => { if (td.getBoundingClientRect().top <= e.clientY) row = +td.dataset.stime; });
-  if (isNaN(row)) return;
-  const grp = ((SCHED.data && SCHED.data.groups) || [])[_spanDrag.gi]; if (!grp) return;
-  const it = (grp.items || [])[_spanDrag.ii]; if (!it) return;
-  const nRows = (SCHED.data.times && SCHED.data.times.length) || grp.items.length;
-  let cap = nRows - _spanDrag.ii;
-  for (let j = _spanDrag.ii + 1; j < grp.items.length; j++) { const x = grp.items[j]; if (x && (x.label || "").trim() && !x.spacer) { cap = j - _spanDrag.ii; break; } }
-  const span = Math.max(1, Math.min(row - _spanDrag.ii + 1, cap));
-  if ((it.span || 1) !== span) { it.span = span; SCHED.dirty = true; renderSchedDoc(); }
+  _spanDrag.rows.forEach(r => { if (r.top <= e.clientY) row = r.k; });   // 커서 Y에 해당하는 행(스냅샷 기준, 화면 밖도 OK)
+  const span = Math.max(1, Math.min(row - _spanDrag.ii + 1, _spanDrag.cap));
+  if (span !== _spanDrag.span) { _spanDrag.span = span; _schedSpanHi(_spanDrag.ii, span); }
 });
-document.addEventListener("mouseup", () => { _spanDrag = null; });
+document.addEventListener("mouseup", () => {
+  if (!_spanDrag) return;
+  const d = _spanDrag; _spanDrag = null;
+  document.querySelectorAll("#schedDoc .sched-span-hi").forEach(tr => tr.classList.remove("sched-span-hi"));
+  const grp = ((SCHED.data && SCHED.data.groups) || [])[d.gi]; const it = grp && (grp.items || [])[d.ii]; if (!it) return;
+  if (d.span !== d.start) { it.span = d.span; SCHED.dirty = true; renderSchedDoc(); }   // 놓을 때 한 번만 적용
+});
 // 팝업 이동(제목 잡고 끌기)
 let _pickMove = null;
 function _schedPickInit() {
