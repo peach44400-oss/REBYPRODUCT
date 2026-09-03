@@ -11028,6 +11028,7 @@ async function openSchedPick() {
   let data = {};
   try { const r = await api("/api/schedule?week=" + SCHED.week); data = r.data || {}; } catch (e) { return; }
   SPICK.ship = data;
+  if (!SCHED.editMode) { SCHED.editMode = true; _schedSyncEditUI(); renderSchedule(); }   // 담기는 편집 중에만 — 팝업 열면 자동으로 편집 모드
   if ($("schedPickWeek")) $("schedPickWeek").textContent = SCHED.week + " 주";
   _schedPickFillTargets();
   _schedPickRender();
@@ -11041,19 +11042,34 @@ function _schedPickFillTargets() {
     + `<option value="__new__">＋ 새 날짜 열</option>`;
   if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
 }
+// 출고 제품의 출처 키(제품명|거래처|출고일) — 생산 표에 담긴 항목은 src로 이 키를 기억해 수량을 합산한다
+function _schedSrcKey(it, g) { return [(it.label || "").trim(), (it.partner || (g && g.partner) || "").trim(), (g && g.shipDate) || ""].join("|"); }
+const _schedQtyNum = v => { const n = Number(String(v == null ? "" : v).replace(/[^\d.-]/g, "")); return isFinite(n) ? n : 0; };
+// 생산 표 전체에서 이 출처 제품으로 담긴 수량 합계 (예전 항목(src 없음)은 제품명으로 매칭)
+function _schedPlacedQty(key) {
+  const lbl = key.split("|")[0]; let sum = 0;
+  ((SCHED.data && SCHED.data.groups) || []).forEach(g => (g.items || []).forEach(x => {
+    if (x.spacer || !(x.label || "").trim()) return;
+    if (x.src ? x.src === key : (x.label || "").trim() === lbl) sum += _schedQtyNum(x.qty);
+  }));
+  return sum;
+}
 function _schedPickRender() {
   const host = $("schedPickBody"); if (!host) return;
   const groups = (SPICK.ship && SPICK.ship.groups) || [];
-  // 생산 표 어디든 이미 담긴 제품(정보용 '담김' 표시) — 카드는 계속 끌 수 있음(같은 날짜만 중복 방지)
-  const placed = new Set();
-  ((SCHED.data && SCHED.data.groups) || []).forEach(g => (g.items || []).forEach(x => { const l = (x.label || "").trim(); if (l) placed.add(l); }));
+  // 수량 기준: 출고 수량 − 담긴 수량 = 남은 수량. 일부만 담았으면 남은 수량으로 다시 끌 수 있고(다른 요일·시간 OK), 0이면 잠김
   const cols = groups.map(g => {
     const cards = (g.items || []).filter(it => (it.label || "").trim()).map(it => {
-      const done = placed.has((it.label || "").trim());
-      const payload = esc(JSON.stringify({ label: it.label, qty: it.qty, pack: it.pack, partner: it.partner || g.partner || "", expiry: it.expiry, expiry2: it.expiry2 }));
-      return `<button class="sched-pick-card" draggable="true" data-pick="${payload}"
-        style="display:block; width:100%; text-align:left; border:1px solid var(--line); border-left:3px solid ${done ? "#37a24a" : "var(--accent,#2f6df0)"}; border-radius:8px; padding:5px 8px; margin-bottom:5px; background:#fff; cursor:grab; font-size:12px;">
-        <b>${esc(it.label)}</b> <span class="num">${esc(it.qty)}</span>${it.pack ? ` <span class="auto" style="font-size:10.5px">${esc(it.pack)}</span>` : ""}${done ? ` <span class="chip ok" style="font-size:9.5px;">담김</span>` : ""}</button>`;
+      const key = _schedSrcKey(it, g), shipQ = _schedQtyNum(it.qty), used = _schedPlacedQty(key);
+      const rem = shipQ - used, budget = shipQ > 0;
+      const full = budget ? rem <= 0 : false, partial = budget && used > 0 && rem > 0, anyPlaced = used > 0;
+      const payload = esc(JSON.stringify({ label: it.label, qty: partial ? String(rem) : it.qty, shipQty: shipQ, src: key, pack: it.pack, partner: it.partner || g.partner || "", expiry: it.expiry, expiry2: it.expiry2 }));
+      const badge = full ? `<span class="chip ok" style="font-size:9.5px;">담김 완료</span>`
+        : partial ? `<span class="chip" style="font-size:9.5px; background:#fff3e0; color:#b45f06;">남음 ${NF(rem)}</span>`
+        : (anyPlaced ? `<span class="chip ok" style="font-size:9.5px;">담김</span>` : "");
+      return `<button class="sched-pick-card" draggable="${full ? "false" : "true"}" data-pick="${payload}" ${full ? 'disabled title="출고 수량을 모두 담았습니다 — 생산 표에서 수량을 줄이면 다시 담을 수 있어요"' : (partial ? `title="남은 ${NF(rem)}개를 끌어다 놓으면 담깁니다"` : "")}
+        style="display:block; width:100%; text-align:left; border:1px solid var(--line); border-left:3px solid ${full ? "#37a24a" : (partial ? "#e08a1e" : "var(--accent,#2f6df0)")}; border-radius:8px; padding:5px 8px; margin-bottom:5px; background:#fff; cursor:${full ? "not-allowed" : "grab"}; font-size:12px;${full ? " opacity:.45;" : ""}">
+        <b>${esc(it.label)}</b> <span class="num">${esc(it.qty)}</span>${it.pack ? ` <span class="auto" style="font-size:10.5px">${esc(it.pack)}</span>` : ""} ${badge}</button>`;
     }).join("") || `<div class="auto" style="font-size:11.5px; padding:6px;">제품 없음</div>`;
     return `<div style="flex:0 0 165px; border:1px solid var(--line); border-radius:8px; padding:6px; background:#fff;">
       <div style="font-weight:800; font-size:12.5px; text-align:center; padding-bottom:4px; border-bottom:1px solid var(--line-soft); margin-bottom:6px;">${esc(g.name || "—")}${g.partner ? `<div class="auto" style="font-weight:500; font-size:10.5px;">${esc(g.partner)}</div>` : ""}${g.shipDate ? `<div class="auto" style="font-weight:500; font-size:10px;">${esc(_schedMD(g.shipDate))}</div>` : ""}</div>
@@ -11069,19 +11085,25 @@ function _schedPickAdd(it, gcol, grow) {
   const groups = SCHED.data.groups || (SCHED.data.groups = []);
   if (gcol == null || gcol < 0 || !groups[gcol]) return;
   const g = groups[gcol]; g.items = g.items || [];
-  const lbl = (it.label || "").trim();
-  if (lbl && g.items.some(x => (x.label || "").trim() === lbl)) { toast("'" + it.label + "'은(는) 이 날짜에 이미 담겨 있습니다"); return; }
+  // 수량 기준 — 남은 수량이 없으면 못 담고, 있으면 남은 수량으로 담는다(같은 제품을 여러 요일·시간으로 나누어 담기 OK)
+  let qty = it.qty;
+  if (it.src && it.shipQty > 0) {
+    const rem = it.shipQty - _schedPlacedQty(it.src);
+    if (rem <= 0) { toast("'" + it.label + "'은(는) 출고 수량을 모두 담았습니다"); return; }
+    qty = String(rem);
+  }
   const isEmpty = i => { const x = g.items[i]; return !x || (!(x.label || "").trim() && !x.spacer); };
   let k = grow;
   if (k == null || k < 0) { k = g.items.findIndex((x, i) => isEmpty(i)); if (k < 0) k = g.items.length; }
   else if (!isEmpty(k)) { toast("그 칸엔 이미 제품이 있어요"); return; }
   while (g.items.length <= k) g.items.push(_schedBlankItem());
   const ni = g.items[k];
-  ni.label = it.label; ni.qty = it.qty; ni.pack = it.pack; ni.partner = it.partner; ni.expiry = it.expiry; ni.expiry2 = it.expiry2; ni.spacer = false;
+  ni.label = it.label; ni.qty = qty; ni.pack = it.pack; ni.partner = it.partner; ni.expiry = it.expiry; ni.expiry2 = it.expiry2; ni.spacer = false; ni.src = it.src || "";
+  if (ni.boxesAuto !== false) { const q = _schedQtyNum(qty), pk = _schedQtyNum(it.pack); ni.boxes = (q > 0 && pk > 0) ? String(Math.round(q / pk)) : ""; }
   SCHED.dirty = true;
   if (!SCHED.editMode) { SCHED.editMode = true; _schedSyncEditUI(); }
   renderSchedule();
-  toast("'" + it.label + "' 담았습니다");
+  toast("'" + it.label + "' " + (NF(_schedQtyNum(qty)) || "") + "개 담았습니다");
 }
 // 생산 표 안에서 항목을 (열,행)에서 (열,행)으로 이동 — 대상 칸이 차있으면 서로 맞바꿈
 function _schedMoveItem(fromGc, fromGr, toGc, toGr) {
@@ -11092,8 +11114,6 @@ function _schedMoveItem(fromGc, fromGr, toGc, toGr) {
   if (fromGc === toGc && fromGr === toGr) return;
   const g2 = groups[toGc]; g2.items = g2.items || [];
   if (toGr == null || toGr < 0) toGr = g2.items.length;
-  const lbl = (from.label || "").trim();
-  if (lbl && g2.items.some((x, i) => (x.label || "").trim() === lbl && !(toGc === fromGc && i === fromGr) && i !== toGr)) { toast("'" + from.label + "'은(는) 그 날짜에 이미 있어요"); return; }
   while (g2.items.length <= toGr) g2.items.push(_schedBlankItem());
   const dest = g2.items[toGr], destFilled = dest && (dest.label || "").trim() && !dest.spacer;
   if (destFilled) { g1.items[fromGr] = dest; g2.items[toGr] = from; }        // 맞바꿈
@@ -11768,6 +11788,7 @@ function _schedFieldUpdate(e) {
       const bi = document.querySelector(`#schedDoc [data-g="${inp.dataset.g}"][data-i="${inp.dataset.i}"][data-f="boxes"]`);
       if (bi && bi.value !== it.boxes) bi.value = it.boxes;   // 재렌더 없이 값만 갱신(포커스 유지)
     }
+    if (f === "qty" && SCHED.kind === "prod") _schedPickRefresh();   // 담기 팝업의 '남음' 수량 갱신
   } else if (f === "gexp" || f === "gexp2") {
     // 제품군 단위 소비기한/예정 — 그 제품군의 모든 항목에 일괄 적용
     const key = f === "gexp" ? "expiry" : "expiry2";
@@ -12064,7 +12085,7 @@ function buildScheduleDocEdit(d, week) {
       <button class="danger" data-schedidel="${gi}:${ii}" title="빈 칸 삭제">✕</button></div></div></td>`;
     const icol = (it.color || "").trim();  // 제품별 개별 글자색(비우면 전체 색)
     return `<td style="${TDI} ${P}${_prod ? " vertical-align:middle;" : ""}" data-gcol="${gi}" data-grow="${ii}"${RS}><div class="sched-celledit" style="position:relative;${_prod ? " text-align:center;" : ""}">
-      ${_prod && (it.label || "").trim() ? `<span class="sched-ihandle" draggable="true" data-sdrag="${gi}:${ii}" title="끌어서 다른 요일로 이동" style="position:absolute; top:-2px; left:-2px; cursor:grab; color:#bbb; font-size:12px; z-index:2; padding:0 2px;">⠿</span>` : ""}
+      ${(it.label || "").trim() ? `<span class="sched-ihandle" draggable="true" data-sdrag="${gi}:${ii}" title="${_prod ? "끌어서 다른 요일·시간으로 이동" : "끌어서 다른 칸으로 이동(찬 칸이면 맞바꿈)"}" style="position:absolute; top:-2px; left:-2px; cursor:grab; color:#bbb; font-size:12px; z-index:2; padding:0 2px;">⠿</span>` : ""}
       ${_prod && (it.label || "").trim() ? `<span class="sched-shandle" data-sspan="${gi}:${ii}" title="아래로 끌어 시간 길이 조절" style="position:absolute; left:0; right:0; bottom:-4px; height:9px; cursor:ns-resize; z-index:2; text-align:center; line-height:7px; font-size:10px; color:#7a9bd8;">⣀</span>` : ""}
       ${it_(gi, ii, "label", it.label, "", ` list="schedProdDl" placeholder="제품/품목" style="font-weight:700; font-size:${labelSize}px; color:${icol || ec("label", "inherit")};${_prod ? " text-align:center;" : ""}"`)}
       <div style="display:flex; align-items:baseline; gap:2px; margin:1px 0;">
