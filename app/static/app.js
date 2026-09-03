@@ -11125,11 +11125,24 @@ function _schedMoveItem(fromGc, fromGr, toGc, toGr) {
 let _schedPickDrag = null, _schedItemDrag = null;
 function _schedHiClear() { document.querySelectorAll("#schedDoc .sched-gcol-hi").forEach(el => el.classList.remove("sched-gcol-hi")); }
 function _schedHiCell(cell) { _schedHiClear(); if (cell) cell.classList.add("sched-gcol-hi"); }
+// 제품 칸의 빈 곳(입력칸·버튼 제외)을 잡으면 그 칸 전체를 끌 수 있게 — 항상 draggable로 두면 안의 입력칸 글자 선택이 안 되므로 mousedown 때만 켠다
+let _schedCellArm = null;
+document.addEventListener("mousedown", e => {
+  if (e.button !== 0) return;
+  const grab = e.target.closest("#schedDoc .sched-cell-grab"); if (!grab) return;
+  if (e.target.closest("input,select,textarea,button,.sched-ectl,.sched-shandle")) return;
+  const td = grab.closest("td[data-gcol]"); if (!td) return;
+  td.setAttribute("draggable", "true"); _schedCellArm = td;
+}, true);
+function _schedCellDisarm() { if (_schedCellArm) { _schedCellArm.removeAttribute("draggable"); _schedCellArm = null; } }
+document.addEventListener("mouseup", _schedCellDisarm);
 document.addEventListener("dragstart", e => {
   const c = e.target.closest(".sched-pick-card");
   if (c) { try { _schedPickDrag = JSON.parse(c.dataset.pick); } catch (x) { _schedPickDrag = null; } _schedItemDrag = null; try { e.dataTransfer.effectAllowed = "copy"; e.dataTransfer.setData("text/plain", ""); } catch (x) {} return; }
   const h = e.target.closest(".sched-ihandle");
-  if (h) { const p = (h.dataset.sdrag || "").split(":"); _schedItemDrag = { gi: +p[0], ii: +p[1] }; _schedPickDrag = null; try { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", ""); } catch (x) {} }
+  if (h) { const p = (h.dataset.sdrag || "").split(":"); _schedItemDrag = { gi: +p[0], ii: +p[1] }; _schedPickDrag = null; try { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", ""); } catch (x) {} return; }
+  const td = e.target.closest("#schedDoc td[data-gcol][draggable='true']");   // 칸 전체 잡고 끌기
+  if (td) { _schedItemDrag = { gi: +td.dataset.gcol, ii: +td.dataset.grow }; _schedPickDrag = null; try { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", ""); } catch (x) {} }
 });
 document.addEventListener("dragover", e => {
   if (!_schedPickDrag && !_schedItemDrag) return;
@@ -11150,7 +11163,7 @@ document.addEventListener("drop", e => {
   if (pick) _schedPickAdd(pick, gcol, grow);
   else if (item) _schedMoveItem(item.gi, item.ii, gcol, grow);
 });
-document.addEventListener("dragend", () => { _schedPickDrag = null; _schedItemDrag = null; _schedHiClear(); });
+document.addEventListener("dragend", () => { _schedPickDrag = null; _schedItemDrag = null; _schedHiClear(); _schedCellDisarm(); });
 // 생산 스케줄의 작은 빈 칸을 더블클릭 → 그 칸만 입력칸(편집기)으로 연다
 document.addEventListener("dblclick", e => {
   const td = e.target.closest("#schedDoc td.sched-empty"); if (!td || !SCHED.data || SCHED.kind !== "prod") return;
@@ -12084,8 +12097,8 @@ function buildScheduleDocEdit(d, week) {
       <button data-schedimove="${gi}:${ii}:1" title="아래로" ${ii === (g.items.length - 1) ? "disabled" : ""}>▼</button>
       <button class="danger" data-schedidel="${gi}:${ii}" title="빈 칸 삭제">✕</button></div></div></td>`;
     const icol = (it.color || "").trim();  // 제품별 개별 글자색(비우면 전체 색)
-    return `<td style="${TDI} ${P}${_prod ? " vertical-align:middle;" : ""}" data-gcol="${gi}" data-grow="${ii}"${RS}><div class="sched-celledit" style="position:relative;${_prod ? " text-align:center;" : ""}">
-      ${(it.label || "").trim() ? `<span class="sched-ihandle" draggable="true" data-sdrag="${gi}:${ii}" title="${_prod ? "끌어서 다른 요일·시간으로 이동" : "끌어서 다른 칸으로 이동(찬 칸이면 맞바꿈)"}" style="position:absolute; top:-2px; left:-2px; cursor:grab; color:#bbb; font-size:12px; z-index:2; padding:0 2px;">⠿</span>` : ""}
+    return `<td style="${TDI} ${P}${_prod ? " vertical-align:middle;" : ""}" data-gcol="${gi}" data-grow="${ii}"${RS}><div class="sched-celledit${(it.label || "").trim() ? " sched-cell-grab" : ""}" style="position:relative;${_prod ? " text-align:center;" : ""}">
+      ${(it.label || "").trim() ? `<span class="sched-ihandle" draggable="true" data-sdrag="${gi}:${ii}" title="${_prod ? "끌어서 다른 요일·시간으로 이동" : "끌어서 다른 칸으로 이동(찬 칸이면 맞바꿈)"}" style="position:absolute; top:-3px; left:-3px; cursor:grab; color:#777; font-size:15px; line-height:1; z-index:2; padding:0 3px;">⠿</span>` : ""}
       ${_prod && (it.label || "").trim() ? `<span class="sched-shandle" data-sspan="${gi}:${ii}" title="아래로 끌어 시간 길이 조절" style="position:absolute; left:0; right:0; bottom:-4px; height:9px; cursor:ns-resize; z-index:2; text-align:center; line-height:7px; font-size:10px; color:#7a9bd8;">⣀</span>` : ""}
       ${it_(gi, ii, "label", it.label, "", ` list="schedProdDl" placeholder="제품/품목" style="font-weight:700; font-size:${labelSize}px; color:${icol || ec("label", "inherit")};${_prod ? " text-align:center;" : ""}"`)}
       <div style="display:flex; align-items:baseline; gap:2px; margin:1px 0;">
