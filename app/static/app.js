@@ -11074,38 +11074,69 @@ function _schedPickFillTargets() {
     + `<option value="__new__">＋ 새 날짜 열</option>`;
   if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
 }
-// 출고 제품의 출처 키(제품명|거래처|출고일) — 생산 표에 담긴 항목은 src로 이 키를 기억해 수량을 합산한다
-function _schedSrcKey(it, g) { return [(it.label || "").trim(), (it.partner || (g && g.partner) || "").trim(), (g && g.shipDate) || ""].join("|"); }
+// 출고 제품의 출처 키 — 출고 표의 줄 하나가 카드 하나(제품명|거래처|출고일|개입). 완전히 같은 줄이 또 있으면 #2, #3…으로 구분.
+// 생산 표에 담긴 항목은 src(하나) 또는 srcs({키: 수량}, 여러 출처를 한 칸에 합친 경우)로 출처를 기억해 카드별 남은 수량을 계산한다.
+function _schedShipKeys(groups) {
+  const cnt = new Map(), keyOf = new Map();
+  groups.forEach(g => (g.items || []).forEach(it => {
+    if (!it || !(it.label || "").trim()) return;
+    const base = [(it.label || "").trim(), (it.partner || g.partner || "").trim(), g.shipDate || "", String(it.pack || "").trim()].join("|");
+    const n = cnt.get(base) || 0; cnt.set(base, n + 1);
+    keyOf.set(it, n ? base + "#" + (n + 1) : base);
+  }));
+  return keyOf;
+}
 const _schedQtyNum = v => { const n = Number(String(v == null ? "" : v).replace(/[^\d.-]/g, "")); return isFinite(n) ? n : 0; };
-// 생산 표 전체에서 이 출처 제품으로 담긴 수량 합계 (예전 항목(src 없음)은 제품명으로 매칭)
+// 항목의 출처별 수량 맵 — srcs가 있으면 그것, 아니면 {src: qty}
+function _schedItemSrcs(x) {
+  if (x.srcs && typeof x.srcs === "object") return x.srcs;
+  return x.src ? { [x.src]: _schedQtyNum(x.qty) } : null;
+}
+// 생산 표 전체에서 이 출처(카드)로 담긴 수량 합계 (예전 항목(출처 없음)은 제품명으로 매칭)
 function _schedPlacedQty(key) {
   const lbl = key.split("|")[0]; let sum = 0;
   ((SCHED.data && SCHED.data.groups) || []).forEach(g => (g.items || []).forEach(x => {
     if (x.spacer || !(x.label || "").trim()) return;
-    if (x.src ? x.src === key : (x.label || "").trim() === lbl) sum += _schedQtyNum(x.qty);
+    const m = _schedItemSrcs(x);
+    if (m) sum += _schedQtyNum(m[key] || 0);
+    else if ((x.label || "").trim() === lbl) sum += _schedQtyNum(x.qty);
   }));
   return sum;
+}
+// dest 칸에 수량·출처를 합친다(같은 제품을 같은 칸에 또 놓았을 때)
+function _schedMergeInto(dest, addQty, addSrcs) {
+  const cur = Object.assign({}, _schedItemSrcs(dest) || {});
+  Object.keys(addSrcs || {}).forEach(k => { cur[k] = _schedQtyNum(cur[k] || 0) + _schedQtyNum(addSrcs[k]); });
+  dest.qty = String(_schedQtyNum(dest.qty) + _schedQtyNum(addQty));
+  if (Object.keys(cur).length) { dest.srcs = cur; dest.src = Object.keys(cur)[0]; }
+  if (dest.boxesAuto !== false) { const q = _schedQtyNum(dest.qty), pk = _schedQtyNum(dest.pack); dest.boxes = (q > 0 && pk > 0) ? String(Math.round(q / pk)) : ""; }
+}
+// 합쳐진 칸의 수량을 직접 고치면 차이를 마지막 출처부터 반영해 출처별 수량 합 = 칸 수량을 유지
+function _schedSrcsAfterQtyEdit(x) {
+  if (!x.srcs) return;
+  const keys = Object.keys(x.srcs); let delta = _schedQtyNum(x.qty) - keys.reduce((a, k) => a + _schedQtyNum(x.srcs[k]), 0);
+  for (let i = keys.length - 1; i >= 0 && delta !== 0; i--) {
+    const v = _schedQtyNum(x.srcs[keys[i]]), nv = Math.max(0, v + delta); delta -= (nv - v); x.srcs[keys[i]] = nv;
+  }
+  if (delta > 0) x.srcs[keys[keys.length - 1]] = _schedQtyNum(x.srcs[keys[keys.length - 1]]) + delta;
 }
 function _schedPickRender() {
   const host = $("schedPickBody"); if (!host) return;
   const groups = (SPICK.ship && SPICK.ship.groups) || [];
-  // 같은 출처 키가 출고 표에 여러 줄이면(같은 제품이 두 번) 한 카드로 합산 — 총 수량 = 각 줄의 합
-  const tot = new Map(), parts = new Map();
-  groups.forEach(g => (g.items || []).forEach(it => { if (!(it.label || "").trim()) return; const k = _schedSrcKey(it, g); tot.set(k, (tot.get(k) || 0) + _schedQtyNum(it.qty)); parts.set(k, (parts.get(k) || 0) + 1); }));
-  const seen = new Set();
-  // 수량 기준: 출고 수량 − 담긴 수량 = 남은 수량. 일부만 담았으면 남은 수량으로 다시 끌 수 있고(다른 요일·시간 OK), 0이면 잠김
+  const keyOf = _schedShipKeys(groups);   // 출고 표의 줄 하나 = 카드 하나(출고 표와 동일한 분류)
+  // 수량 기준: 카드 수량 − 담긴 수량 = 남은 수량. 일부만 담았으면 남은 수량으로 다시 끌 수 있고(다른 요일·시간 OK), 0이면 잠김
   const cols = groups.map(g => {
-    const cards = (g.items || []).filter(it => (it.label || "").trim()).filter(it => { const k = _schedSrcKey(it, g); if (seen.has(k)) return false; seen.add(k); return true; }).map(it => {
-      const key = _schedSrcKey(it, g), shipQ = tot.get(key) || _schedQtyNum(it.qty), used = _schedPlacedQty(key), nParts = parts.get(key) || 1;
+    const cards = (g.items || []).filter(it => (it.label || "").trim()).map(it => {
+      const key = keyOf.get(it), shipQ = _schedQtyNum(it.qty), used = _schedPlacedQty(key);
       const rem = shipQ - used, budget = shipQ > 0;
       const full = budget ? rem <= 0 : false, partial = budget && used > 0 && rem > 0, anyPlaced = used > 0;
-      const payload = esc(JSON.stringify({ label: it.label, qty: partial ? String(rem) : String(shipQ || it.qty), shipQty: shipQ, src: key, pack: it.pack, partner: it.partner || g.partner || "", expiry: it.expiry, expiry2: it.expiry2 }));
+      const payload = esc(JSON.stringify({ label: it.label, qty: partial ? String(rem) : it.qty, shipQty: shipQ, src: key, pack: it.pack, partner: it.partner || g.partner || "", expiry: it.expiry, expiry2: it.expiry2 }));
       const badge = full ? `<span class="chip ok" style="font-size:9.5px;">담김 완료</span>`
         : partial ? `<span class="chip" style="font-size:9.5px; background:#fff3e0; color:#b45f06;">남음 ${NF(rem)}</span>`
         : (anyPlaced ? `<span class="chip ok" style="font-size:9.5px;">담김</span>` : "");
       return `<button class="sched-pick-card" draggable="${full ? "false" : "true"}" data-pick="${payload}" ${full ? 'disabled title="출고 수량을 모두 담았습니다 — 생산 표에서 수량을 줄이면 다시 담을 수 있어요"' : (partial ? `title="남은 ${NF(rem)}개를 끌어다 놓으면 담깁니다"` : "")}
         style="display:block; width:100%; text-align:left; border:1px solid var(--line); border-left:3px solid ${full ? "#37a24a" : (partial ? "#e08a1e" : "var(--accent,#2f6df0)")}; border-radius:8px; padding:5px 8px; margin-bottom:5px; background:#fff; cursor:${full ? "not-allowed" : "grab"}; font-size:12px;${full ? " opacity:.45;" : ""}">
-        <b>${esc(it.label)}</b> <span class="num">${shipQ ? NF(shipQ) : esc(it.qty)}</span>${it.pack ? ` <span class="auto" style="font-size:10.5px">${esc(it.pack)}</span>` : ""}${nParts > 1 ? ` <span class="auto" style="font-size:10px;" title="출고 표에 같은 제품이 ${nParts}줄 — 합산">(${nParts}줄 합산)</span>` : ""} ${badge}</button>`;
+        <b>${esc(it.label)}</b> <span class="num">${esc(it.qty)}</span>${it.pack ? ` <span class="auto" style="font-size:10.5px">${esc(it.pack)}</span>` : ""} ${badge}</button>`;
     }).join("") || `<div class="auto" style="font-size:11.5px; padding:6px;">제품 없음</div>`;
     return `<div style="flex:0 0 165px; border:1px solid var(--line); border-radius:8px; padding:6px; background:#fff;">
       <div style="font-weight:800; font-size:12.5px; text-align:center; padding-bottom:4px; border-bottom:1px solid var(--line-soft); margin-bottom:6px;">${esc(g.name || "—")}${g.partner ? `<div class="auto" style="font-weight:500; font-size:10.5px;">${esc(g.partner)}</div>` : ""}${g.shipDate ? `<div class="auto" style="font-weight:500; font-size:10px;">${esc(_schedMD(g.shipDate))}</div>` : ""}</div>
@@ -11131,10 +11162,18 @@ function _schedPickAdd(it, gcol, grow) {
   const isEmpty = i => { const x = g.items[i]; return !x || (!(x.label || "").trim() && !x.spacer); };
   let k = grow;
   if (k == null || k < 0) { k = g.items.findIndex((x, i) => isEmpty(i)); if (k < 0) k = g.items.length; }
-  else if (!isEmpty(k)) { toast("그 칸엔 이미 제품이 있어요"); return; }
+  else if (!isEmpty(k)) {
+    const occ = g.items[k];
+    if ((occ.label || "").trim() === (it.label || "").trim()) {   // 같은 제품 위에 놓음 → 수량 합치기
+      _schedMergeInto(occ, qty, it.src ? { [it.src]: _schedQtyNum(qty) } : null);
+      SCHED.dirty = true; renderSchedule();
+      toast("'" + it.label + "' " + NF(_schedQtyNum(qty)) + "개를 합쳐 " + NF(_schedQtyNum(occ.qty)) + "개가 되었습니다"); return;
+    }
+    toast("그 칸엔 다른 제품이 있어요"); return;
+  }
   while (g.items.length <= k) g.items.push(_schedBlankItem());
   const ni = g.items[k];
-  ni.label = it.label; ni.qty = qty; ni.pack = it.pack; ni.partner = it.partner; ni.expiry = it.expiry; ni.expiry2 = it.expiry2; ni.spacer = false; ni.src = it.src || "";
+  ni.label = it.label; ni.qty = qty; ni.pack = it.pack; ni.partner = it.partner; ni.expiry = it.expiry; ni.expiry2 = it.expiry2; ni.spacer = false; ni.src = it.src || ""; delete ni.srcs;
   if (ni.boxesAuto !== false) { const q = _schedQtyNum(qty), pk = _schedQtyNum(it.pack); ni.boxes = (q > 0 && pk > 0) ? String(Math.round(q / pk)) : ""; }
   SCHED.dirty = true;
   if (!SCHED.editMode) { SCHED.editMode = true; _schedSyncEditUI(); }
@@ -11152,6 +11191,11 @@ function _schedMoveItem(fromGc, fromGr, toGc, toGr) {
   if (toGr == null || toGr < 0) toGr = g2.items.length;
   while (g2.items.length <= toGr) g2.items.push(_schedBlankItem());
   const dest = g2.items[toGr], destFilled = dest && (dest.label || "").trim() && !dest.spacer;
+  if (destFilled && (dest.label || "").trim() === (from.label || "").trim()) {   // 같은 제품 → 수량 합치기
+    _schedMergeInto(dest, from.qty, _schedItemSrcs(from));
+    g1.items[fromGr] = _schedBlankItem(); SCHED.dirty = true; renderSchedule();
+    toast("'" + from.label + "' 합쳐서 " + NF(_schedQtyNum(dest.qty)) + "개"); return;
+  }
   if (destFilled) { g1.items[fromGr] = dest; g2.items[toGr] = from; }        // 맞바꿈
   else { g2.items[toGr] = from; g1.items[fromGr] = _schedBlankItem(); }       // 이동(원 자리 빈칸)
   SCHED.dirty = true; renderSchedule();
@@ -11837,7 +11881,7 @@ function _schedFieldUpdate(e) {
       const bi = document.querySelector(`#schedDoc [data-g="${inp.dataset.g}"][data-i="${inp.dataset.i}"][data-f="boxes"]`);
       if (bi && bi.value !== it.boxes) bi.value = it.boxes;   // 재렌더 없이 값만 갱신(포커스 유지)
     }
-    if (f === "qty" && SCHED.kind === "prod") _schedPickRefresh();   // 담기 팝업의 '남음' 수량 갱신
+    if (f === "qty" && SCHED.kind === "prod") { _schedSrcsAfterQtyEdit(it); _schedPickRefresh(); }   // 출처별 수량 보정 + 담기 팝업의 '남음' 갱신
   } else if (f === "gexp" || f === "gexp2") {
     // 제품군 단위 소비기한/예정 — 그 제품군의 모든 항목에 일괄 적용
     const key = f === "gexp" ? "expiry" : "expiry2";
