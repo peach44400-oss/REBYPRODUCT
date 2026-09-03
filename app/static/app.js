@@ -10959,6 +10959,38 @@ function _schedTimes(d) {
   return d.times;
 }
 // 제품이 걸치는 시간(행) 수(item.span) → 열별 커버 행 집합 + 시작행별 span (rowspan 렌더용)
+// 미리보기용 — 같은 요일 열에서 시간이 바로 이어지는 같은 제품(라벨 동일)을 한 칸으로 합침: 수량 합산, 걸친 행 합침, 박스 재계산. 원본 데이터는 바꾸지 않는다.
+function _schedMergeSameForView(groups) {
+  const nRows = Math.max((SCHED.data && Array.isArray(SCHED.data.times) ? SCHED.data.times.length : 0), ...groups.map(g => (g.items || []).length), 1);
+  const num = v => { const n = Number(String(v == null ? "" : v).replace(/,/g, "")); return isFinite(n) ? n : 0; };
+  const eff = (its, k) => {   // 실제 걸친 행 수(다음 제품 직전까지로 제한)
+    let sp = Math.max(1, Math.floor(+its[k].span || 1)), cap = nRows - k;
+    for (let j = k + 1; j < k + sp && j < nRows; j++) { const x = its[j]; if (x && (x.label || "").trim() && !x.spacer) { cap = j - k; break; } }
+    return Math.min(sp, cap);
+  };
+  return groups.map(g => {
+    const its = (g.items || []).map(x => x ? Object.assign({}, x) : x);
+    for (let k = 0; k < its.length; k++) {
+      const it = its[k]; if (!it || it.spacer || !(it.label || "").trim()) continue;
+      let sp = eff(its, k), merged = false;
+      while (true) {
+        const nx = its[k + sp];
+        if (!nx || nx.spacer || (nx.label || "").trim() !== (it.label || "").trim()) break;
+        const sp2 = eff(its, k + sp);
+        it.qty = String(num(it.qty) + num(nx.qty));
+        if (!it.memo && nx.memo) it.memo = nx.memo;
+        its[k + sp] = _schedBlankItem();
+        sp += sp2; merged = true;
+      }
+      if (merged) {
+        it.span = sp;
+        const q = num(it.qty), pk = num(it.pack);
+        it.boxes = (q > 0 && pk > 0) ? String(Math.round(q / pk)) : "";   // 합산 수량으로 박스 재계산
+      }
+    }
+    return Object.assign({}, g, { items: its });
+  });
+}
 function _schedSpanMap(groups, nRows, prod) {
   const cover = groups.map(() => new Set()), span = groups.map(() => ({}));
   if (prod) groups.forEach((g, gi) => {
@@ -11057,19 +11089,23 @@ function _schedPlacedQty(key) {
 function _schedPickRender() {
   const host = $("schedPickBody"); if (!host) return;
   const groups = (SPICK.ship && SPICK.ship.groups) || [];
+  // 같은 출처 키가 출고 표에 여러 줄이면(같은 제품이 두 번) 한 카드로 합산 — 총 수량 = 각 줄의 합
+  const tot = new Map(), parts = new Map();
+  groups.forEach(g => (g.items || []).forEach(it => { if (!(it.label || "").trim()) return; const k = _schedSrcKey(it, g); tot.set(k, (tot.get(k) || 0) + _schedQtyNum(it.qty)); parts.set(k, (parts.get(k) || 0) + 1); }));
+  const seen = new Set();
   // 수량 기준: 출고 수량 − 담긴 수량 = 남은 수량. 일부만 담았으면 남은 수량으로 다시 끌 수 있고(다른 요일·시간 OK), 0이면 잠김
   const cols = groups.map(g => {
-    const cards = (g.items || []).filter(it => (it.label || "").trim()).map(it => {
-      const key = _schedSrcKey(it, g), shipQ = _schedQtyNum(it.qty), used = _schedPlacedQty(key);
+    const cards = (g.items || []).filter(it => (it.label || "").trim()).filter(it => { const k = _schedSrcKey(it, g); if (seen.has(k)) return false; seen.add(k); return true; }).map(it => {
+      const key = _schedSrcKey(it, g), shipQ = tot.get(key) || _schedQtyNum(it.qty), used = _schedPlacedQty(key), nParts = parts.get(key) || 1;
       const rem = shipQ - used, budget = shipQ > 0;
       const full = budget ? rem <= 0 : false, partial = budget && used > 0 && rem > 0, anyPlaced = used > 0;
-      const payload = esc(JSON.stringify({ label: it.label, qty: partial ? String(rem) : it.qty, shipQty: shipQ, src: key, pack: it.pack, partner: it.partner || g.partner || "", expiry: it.expiry, expiry2: it.expiry2 }));
+      const payload = esc(JSON.stringify({ label: it.label, qty: partial ? String(rem) : String(shipQ || it.qty), shipQty: shipQ, src: key, pack: it.pack, partner: it.partner || g.partner || "", expiry: it.expiry, expiry2: it.expiry2 }));
       const badge = full ? `<span class="chip ok" style="font-size:9.5px;">담김 완료</span>`
         : partial ? `<span class="chip" style="font-size:9.5px; background:#fff3e0; color:#b45f06;">남음 ${NF(rem)}</span>`
         : (anyPlaced ? `<span class="chip ok" style="font-size:9.5px;">담김</span>` : "");
       return `<button class="sched-pick-card" draggable="${full ? "false" : "true"}" data-pick="${payload}" ${full ? 'disabled title="출고 수량을 모두 담았습니다 — 생산 표에서 수량을 줄이면 다시 담을 수 있어요"' : (partial ? `title="남은 ${NF(rem)}개를 끌어다 놓으면 담깁니다"` : "")}
         style="display:block; width:100%; text-align:left; border:1px solid var(--line); border-left:3px solid ${full ? "#37a24a" : (partial ? "#e08a1e" : "var(--accent,#2f6df0)")}; border-radius:8px; padding:5px 8px; margin-bottom:5px; background:#fff; cursor:${full ? "not-allowed" : "grab"}; font-size:12px;${full ? " opacity:.45;" : ""}">
-        <b>${esc(it.label)}</b> <span class="num">${esc(it.qty)}</span>${it.pack ? ` <span class="auto" style="font-size:10.5px">${esc(it.pack)}</span>` : ""} ${badge}</button>`;
+        <b>${esc(it.label)}</b> <span class="num">${shipQ ? NF(shipQ) : esc(it.qty)}</span>${it.pack ? ` <span class="auto" style="font-size:10.5px">${esc(it.pack)}</span>` : ""}${nParts > 1 ? ` <span class="auto" style="font-size:10px;" title="출고 표에 같은 제품이 ${nParts}줄 — 합산">(${nParts}줄 합산)</span>` : ""} ${badge}</button>`;
     }).join("") || `<div class="auto" style="font-size:11.5px; padding:6px;">제품 없음</div>`;
     return `<div style="flex:0 0 165px; border:1px solid var(--line); border-radius:8px; padding:6px; background:#fff;">
       <div style="font-weight:800; font-size:12.5px; text-align:center; padding-bottom:4px; border-bottom:1px solid var(--line-soft); margin-bottom:6px;">${esc(g.name || "—")}${g.partner ? `<div class="auto" style="font-weight:500; font-size:10.5px;">${esc(g.partner)}</div>` : ""}${g.shipDate ? `<div class="auto" style="font-weight:500; font-size:10px;">${esc(_schedMD(g.shipDate))}</div>` : ""}</div>
@@ -11939,7 +11975,7 @@ function _schedGroupCols(groups) {
 }
 function buildScheduleDoc(d, week) {
   const NFq = v => { v = String(v == null ? "" : v).replace(/,/g, ""); if (v === "") return ""; const n = Number(v); return isNaN(n) ? esc(v) : n.toLocaleString("ko-KR"); };
-  const groups = d.groups || [];
+  const groups = (SCHED.kind === "prod") ? _schedMergeSameForView(d.groups || []) : (d.groups || []);   // 생산 미리보기: 이어지는 같은 제품 합쳐 표시
   const n = groups.length || 1;
   const scale = d.fontScale > 0 ? d.fontScale : 1;
   const S = px => Math.max(8, Math.round(px * scale));   // 글자 배율 적용
