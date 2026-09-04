@@ -1392,6 +1392,15 @@
           </div>
           <div class="card" data-esec="prod">
             <h2>인원 · 가동 <span class="sub">가동률 = 실가동 ÷ 라인 정상가동시간 · 정직원은 이름 선택, 용역은 [＋ 용역]으로 추가</span></h2>
+            <div id="staffBulk" style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:2px 0 10px; padding:7px 10px; background:#f6f6f4; border:1px solid var(--line); border-radius:8px; font-size:12px;">
+              <b>⏱ 전체 시간</b>
+              <span class="auto">출근</span><select class="mini-sel" id="bulkSh"></select><span class="auto">:</span><select class="mini-sel" id="bulkSm"></select>
+              <span class="auto" style="margin-left:4px;">~ 퇴근</span><select class="mini-sel" id="bulkEh"></select><span class="auto">:</span><select class="mini-sel" id="bulkEm"></select>
+              <span class="auto" style="margin-left:4px;">휴게</span><input class="mini-input num" id="bulkBrk" value="60" style="width:46px;" title="휴게(분)"><span class="auto">분</span>
+              <button class="btn sm primary" id="bulkApplyAll" style="margin-left:6px;" title="아래 모든 라인의 모든 인원(정직원·용역)에 이 출근·퇴근·휴게를 넣습니다">모든 인원에 적용</button>
+              <button class="btn sm" id="bulkApplyEmpty" title="출근·퇴근이 비어 있는 인원에게만 넣습니다">시간 없는 인원만</button>
+              <span class="auto" id="bulkHint" style="font-size:11px;"></span>
+            </div>
             <div class="tbl-wrap"><table>
               <thead><tr><th>라인/공정</th><th>투입 인원</th><th class="r">인원수</th><th class="r">목표가동(h)</th><th class="r">실가동(h)</th><th class="r">가동률</th><th>정지사유</th><th></th></tr></thead>
               <tbody class="num" id="eStaff"></tbody>

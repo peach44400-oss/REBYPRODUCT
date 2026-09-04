@@ -3109,6 +3109,14 @@ function staffRate(r) {   // 가동률 = 실가동 ÷ 목표가동(그날 입력
   const std = Number(r.target_hours) > 0 ? Number(r.target_hours) : (line ? line.std_hours : 0);
   return std > 0 && r.work_hours ? PCT(r.work_hours, std) : "—";
 }
+// 새 인원의 기본 출근·퇴근 — 08:00 ~ 19:00 (휴게 60분 → 10h). '전체 시간' 툴바의 마지막 값이 있으면 그걸 기본으로.
+const STAFF_DEF_START = "08:00", STAFF_DEF_END = "19:00";
+function _staffDefTimes() {
+  let d = null; try { d = JSON.parse(localStorage.getItem("staffBulkTime") || "null"); } catch (e) { d = null; }
+  const t = { start: (d && d.start) || STAFF_DEF_START, end: (d && d.end) || STAFF_DEF_END, brk: (d && d.brk != null && d.brk !== "") ? String(d.brk) : "60" };
+  const hh = memberHours(t); if (hh != null) t.h = hh;
+  return t;
+}
 // 출근·퇴근(HH:MM) + 휴게(분) → 근무시간. 시각이 불완전하면 null(→ 수동 h 사용).
 function hhmmToMin(t) {
   if (!t || t.indexOf(":") < 0) return null;
@@ -3212,6 +3220,30 @@ function renderStaff() {
 // addProd/addShip/addMat/addMatIn 버튼은 아래 wireQuickAdd가 연결 (검색어 있으면 그 항목으로, 없으면 빈 행)
 $("addStaff").onclick = () => { mustDate() && (E.staff.push({ line_id: null, headcount: "", agency: [], agency_wage: "", target_hours: "", work_hours: "", stop_reason: "", members: [] }), renderStaff()); };
 // 칩의 개인별 투입 시간 입력 (data-mh=정직원 / data-ah=용역 — 재렌더 없이 값만 갱신해 포커스 유지)
+// ── 전체 시간 툴바: 출근·퇴근·휴게를 모든 인원(또는 시간 없는 인원)에 한 번에 적용 ──
+(function _staffBulkInit() {
+  const sh = $("bulkSh"), sm = $("bulkSm"), eh = $("bulkEh"), em = $("bulkEm"), bk = $("bulkBrk"); if (!sh) return;
+  const hours = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, "0")), mins = ["00", "10", "20", "30", "40", "50"];
+  const fill = (sel, arr) => { sel.innerHTML = arr.map(v => `<option value="${v}">${v}</option>`).join(""); };
+  fill(sh, hours); fill(eh, hours); fill(sm, mins); fill(em, mins);
+  const d = _staffDefTimes();
+  [sh.value, sm.value] = d.start.split(":"); [eh.value, em.value] = d.end.split(":"); bk.value = d.brk;
+  const cur = () => ({ start: sh.value + ":" + sm.value, end: eh.value + ":" + em.value, brk: String(bk.value || "").trim() === "" ? "60" : String(bk.value).trim() });
+  const hint = () => { const t = cur(); const hh = memberHours(t); $("bulkHint").textContent = hh != null ? `= ${hh}h · 새로 추가하는 인원도 이 시간으로 시작` : ""; };
+  [sh, sm, eh, em, bk].forEach(el => el.addEventListener("input", hint)); hint();
+  const apply = onlyEmpty => {
+    const t = cur(); let n = 0;
+    (E.staff || []).forEach(r => {
+      const each = m => { if (onlyEmpty && m.start && m.end) return; m.start = t.start; m.end = t.end; m.brk = t.brk; const hh = memberHours(m); if (hh != null) m.h = hh; n++; };
+      (r.members || []).forEach(each); (r.agency || []).forEach(each);
+    });
+    try { localStorage.setItem("staffBulkTime", JSON.stringify(t)); } catch (e) {}
+    renderStaff();
+    toast(n ? `${n}명에게 ${t.start}~${t.end} (휴게 ${t.brk}분) 적용했습니다` : (onlyEmpty ? "시간이 비어 있는 인원이 없습니다" : "적용할 인원이 없습니다"));
+  };
+  $("bulkApplyAll").onclick = () => apply(false);
+  $("bulkApplyEmpty").onclick = () => apply(true);
+})();
 $("eStaff").addEventListener("input", e => {
   const tr = e.target.closest("tr[data-i]"); if (!tr) return;
   const row = E.staff[+tr.dataset.i];
@@ -3388,13 +3420,15 @@ function wireEntryTable(tbodyId, arr, rerender, liveUpdate) {
       // 새 인원의 시간 기본값 = 라인 실가동 시간 (비어있으면 직접 입력)
       if (e.target.value === "__agency__") {   // 이름 없는 용역 한 명 추가 (여러 번 = 여러 명)
         const last = (row.agency || [])[row.agency ? row.agency.length - 1 : -1];
-        row.agency = (row.agency || []).concat({ h: row.work_hours || "",
+        const dt = _staffDefTimes();   // 기본 08:00~19:00·휴게 60 (전체 시간 툴바 마지막 값 우선)
+        row.agency = (row.agency || []).concat({ h: dt.h != null ? dt.h : (row.work_hours || ""),
           w: (last && last.w) || row.agency_wage || "",     // 시급·업체·성별 기본값 = 직전 용역
           g: (last && last.g) || "", pid: (last && last.pid) || null,
-          start: "", end: "", brk: "60" });                  // 휴게 기본 60분 (점심)
+          start: dt.start, end: dt.end, brk: dt.brk });
       } else {
-        row.members = (row.members || []).concat({ id: +e.target.value, h: row.work_hours || "",
-          start: "", end: "", brk: "60" });   // 휴게 기본 60분 (점심)
+        const dt = _staffDefTimes();
+        row.members = (row.members || []).concat({ id: +e.target.value, h: dt.h != null ? dt.h : (row.work_hours || ""),
+          start: dt.start, end: dt.end, brk: dt.brk });
         row.headcount = row.members.length;
       }
       rerender();
