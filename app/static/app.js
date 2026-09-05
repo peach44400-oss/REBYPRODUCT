@@ -11011,6 +11011,7 @@ function _schedMergeSameForView(groups) {
         const nx = its[k + sp];
         if (!nx || nx.spacer || (nx.label || "").trim() !== (it.label || "").trim()) break;
         const sp2 = eff(its, k + sp);
+        it.packsView = _schedPackParts(it).concat(_schedPackParts(nx));   // 개입별 부분 수량 유지(개입이 다르면 줄을 나눠 표시)
         it.qty = String(num(it.qty) + num(nx.qty));
         if (!it.memo && nx.memo) it.memo = nx.memo;
         its[k + sp] = _schedBlankItem();
@@ -12034,6 +12035,23 @@ function _schedClick(e) {
   if (idl) { const [gi, ii] = idl.dataset.schedidel.split(":").map(Number); SCHED.data.groups[gi].items.splice(ii, 1); renderSchedDoc(); return; }
 }
 // 개입/박스를 한 덩어리로 — 예: "45개입/10박스". 박스가 숫자면 'N박스', 자유문구(96박스/2PLT)면 그대로.
+// 합쳐진 칸의 개입별 부분 수량 [{pack, qty}] — 출처(srcs 키의 4번째 = 개입) 또는 미리보기 합침(packsView)에서. 개입이 하나면 [{pack, qty}] 하나.
+function _schedPackParts(it) {
+  const num = v => { const n = Number(String(v == null ? "" : v).replace(/[^\d.-]/g, "")); return isFinite(n) ? n : 0; };
+  const norm = p => String(p == null ? "" : p).replace(/,/g, "").trim();
+  let raw = null;
+  if (Array.isArray(it.packsView) && it.packsView.length) raw = it.packsView.map(x => ({ pack: norm(x.pack), qty: num(x.qty) }));
+  else if (it.srcs && typeof it.srcs === "object") raw = Object.keys(it.srcs).map(k => { const seg = k.split("|"); const pk = seg.length >= 4 ? seg[3].replace(/#\d+$/, "") : ""; return { pack: norm(pk) || norm(it.pack), qty: num(it.srcs[k]) }; });
+  if (!raw) return [{ pack: norm(it.pack), qty: num(it.qty) }];
+  const m = new Map(); raw.forEach(x => { m.set(x.pack, (m.get(x.pack) || 0) + x.qty); });
+  return [...m.entries()].map(([pack, qty]) => ({ pack, qty }));
+}
+// 표시 줄 목록 — 개입이 2종 이상 섞여 있으면 개입별 박스 줄, 아니면 기존 한 줄
+function _schedPackBoxLines(it) {
+  const parts = _schedPackParts(it).filter(p => p.pack !== "");
+  if (parts.length < 2) return [_schedPackBox(it)].filter(Boolean);
+  return parts.map(p => { const pk = Number(p.pack); const bx = (pk > 0 && p.qty) ? Math.round(p.qty / pk).toLocaleString("ko-KR") + "박스" : ""; return `${pk.toLocaleString("ko-KR")}개입` + (bx ? "/" + bx : ""); });
+}
 function _schedPackBox(it) {
   const packN = String(it.pack == null ? "" : it.pack).replace(/,/g, "").trim();
   const pack = packN !== "" ? `${Number(packN).toLocaleString("ko-KR")}개입` : "";
@@ -12097,7 +12115,7 @@ function buildScheduleDoc(d, week) {
     const P = `padding-top:${pad}px; padding-bottom:${pad}px;`;
     const RS = span > 1 ? ` rowspan="${span}"` : "";
     if (!it || it.spacer) return `<td style="${TDI} ${P}">${it ? "&nbsp;" : ""}</td>`;
-    const pb = _schedPackBox(it);
+    const pbLines = _schedPackBoxLines(it), pb = pbLines.join(" · ");
     // 항목 거래처가 열 공통과 다를 때만 개별 표시(같으면 열 거래처 줄로 충분)
     const ovp = (it.partner && it.partner.trim() && it.partner.trim() !== (gpartner || "").trim()) ? it.partner : "";
     // 제품별 개별 글자색 — 비우면 전체(표시 설정) 색을 그대로 사용
@@ -12107,7 +12125,7 @@ function buildScheduleDoc(d, week) {
     return `<td style="${TDI} ${P}${_prod ? " vertical-align:middle; text-align:center;" : ""}"${RS}>
       <div style="font-weight:700; font-size:${labelSize}px; color:${icol || ec("label", "inherit")};">${esc(it.label || "") || "&nbsp;"}</div>
       <div style="font-size:${qtySize}px; font-weight:900; line-height:1.05; margin:1px 0; color:${icol || ec("qty", "inherit")};">${NFq(it.qty) ? NFq(it.qty) + '<span style="font-size:' + Math.round(qtySize * 0.6) + 'px; font-weight:700;">개</span>' : "&nbsp;"}</div>
-      ${(pb || ovp) ? `<div style="font-size:${subSize}px;"><span style="color:${ec("sub", "#c26a1f")}; font-weight:700;">${esc(pb)}</span>${ovp ? ` <span style="color:#2f3fa0;">· ${esc(ovp)}</span>` : ""}</div>` : ""}
+      ${(pb || ovp) ? `<div style="font-size:${subSize}px;"><span style="color:${ec("sub", "#c26a1f")}; font-weight:700;">${pbLines.map(esc).join("<br>")}</span>${ovp ? ` <span style="color:#2f3fa0;">· ${esc(ovp)}</span>` : ""}</div>` : ""}
       ${it.memo ? `<div style="color:#888; font-size:${subSize}px;">${esc(it.memo)}</div>` : ""}</td>`;
   };
   const orderRows = Array.from({ length: maxItems }, (_, k) =>
@@ -12221,6 +12239,7 @@ function buildScheduleDocEdit(d, week) {
       <div style="display:flex; align-items:center; gap:1px; font-size:${subSize}px; flex-wrap:wrap;">
         ${it_(gi, ii, "pack", it.pack, "", ` inputmode="numeric" placeholder="개입" style="width:40px; text-align:right; color:${ec("sub", "#c26a1f")}; font-weight:700;"`)}<span style="color:${ec("sub", "#c26a1f")};">개입/</span>
         ${it_(gi, ii, "boxes", it.boxes, "", ` inputmode="numeric" placeholder="자동" style="width:40px; text-align:right; color:${ec("sub", "#c26a1f")}; font-weight:700;"`)}<span style="color:${ec("sub", "#c26a1f")};">박스</span></div>
+      ${(() => { const L = _schedPackBoxLines(it); return L.length >= 2 ? `<div style="font-size:${subSize}px; color:${ec("sub", "#c26a1f")}; font-weight:700; line-height:1.25;" title="개입이 다른 출처를 합친 칸 — 개입별 박스">${L.map(esc).join("<br>")}</div>` : ""; })()}
       <div style="display:flex; gap:2px; font-size:${subSize}px;">
         ${it_(gi, ii, "partner", it.partner, "", ` list="schedPartnerDl" placeholder="거래처(개별·비우면 열 공통)" title="비우면 위 '거래처' 줄(열 공통)을 씁니다. 이 항목만 다르면 여기 입력하세요." style="flex:1 1 0; color:#2f3fa0;"`)}
         ${it_(gi, ii, "memo", it.memo, "", ` placeholder="비고" style="flex:1 1 0; color:#888;"`)}</div>
