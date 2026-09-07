@@ -11115,7 +11115,7 @@ function _schedShipKeys(groups) {
   const cnt = new Map(), keyOf = new Map();
   groups.forEach(g => (g.items || []).forEach(it => {
     if (!it || !(it.label || "").trim()) return;
-    const base = [(it.label || "").trim(), (it.partner || g.partner || "").trim(), g.shipDate || "", String(it.pack || "").trim()].join("|");
+    const base = [(it.label || "").trim(), (it.partner || g.partner || "").trim(), g.shipDate || "", String(it.pack || "").trim(), (it.expiry || "").trim(), (it.expiry2 || "").trim()].join("|");
     const n = cnt.get(base) || 0; cnt.set(base, n + 1);
     keyOf.set(it, n ? base + "#" + (n + 1) : base);
   }));
@@ -11128,12 +11128,21 @@ function _schedItemSrcs(x) {
   return x.src ? { [x.src]: _schedQtyNum(x.qty) } : null;
 }
 // 생산 표 전체에서 이 출처(카드)로 담긴 수량 합계 (예전 항목(출처 없음)은 제품명으로 매칭)
+// 키 비교 — 같으면 true. 예전(소비기한 없는 4토막) 키는 앞 4토막이 같으면 같은 출처로 본다(호환).
+function _schedKeyEq(a, b) {
+  if (a === b) return true;
+  const sa = String(a).replace(/#\d+$/, "").split("|"), sb = String(b).replace(/#\d+$/, "").split("|");
+  if (sa.length === sb.length) return false;
+  const n = Math.min(sa.length, sb.length); if (n < 4) return false;
+  for (let i = 0; i < n; i++) if (sa[i] !== sb[i]) return false;
+  return true;
+}
 function _schedPlacedQty(key) {
   const lbl = key.split("|")[0]; let sum = 0;
   ((SCHED.data && SCHED.data.groups) || []).forEach(g => (g.items || []).forEach(x => {
     if (x.spacer || !(x.label || "").trim()) return;
     const m = _schedItemSrcs(x);
-    if (m) sum += _schedQtyNum(m[key] || 0);
+    if (m) Object.keys(m).forEach(k => { if (_schedKeyEq(k, key)) sum += _schedQtyNum(m[k]); });
     else if ((x.label || "").trim() === lbl) sum += _schedQtyNum(x.qty);
   }));
   return sum;
@@ -12039,18 +12048,26 @@ function _schedClick(e) {
 function _schedPackParts(it) {
   const num = v => { const n = Number(String(v == null ? "" : v).replace(/[^\d.-]/g, "")); return isFinite(n) ? n : 0; };
   const norm = p => String(p == null ? "" : p).replace(/,/g, "").trim();
+  const ex = v => String(v == null ? "" : v).trim();
   let raw = null;
-  if (Array.isArray(it.packsView) && it.packsView.length) raw = it.packsView.map(x => ({ pack: norm(x.pack), qty: num(x.qty) }));
-  else if (it.srcs && typeof it.srcs === "object") raw = Object.keys(it.srcs).map(k => { const seg = k.split("|"); const pk = seg.length >= 4 ? seg[3].replace(/#\d+$/, "") : ""; return { pack: norm(pk) || norm(it.pack), qty: num(it.srcs[k]) }; });
-  if (!raw) return [{ pack: norm(it.pack), qty: num(it.qty) }];
-  const m = new Map(); raw.forEach(x => { m.set(x.pack, (m.get(x.pack) || 0) + x.qty); });
-  return [...m.entries()].map(([pack, qty]) => ({ pack, qty }));
+  if (Array.isArray(it.packsView) && it.packsView.length) raw = it.packsView.map(x => ({ pack: norm(x.pack), qty: num(x.qty), expiry: ex(x.expiry), expiry2: ex(x.expiry2) }));
+  else if (it.srcs && typeof it.srcs === "object") raw = Object.keys(it.srcs).map(k => {
+    const seg = k.replace(/#\d+$/, "").split("|");
+    return { pack: (seg.length >= 4 ? norm(seg[3]) : "") || norm(it.pack), qty: num(it.srcs[k]),
+             expiry: seg.length >= 5 ? ex(seg[4]) : ex(it.expiry), expiry2: seg.length >= 6 ? ex(seg[5]) : ex(it.expiry2) };
+  });
+  if (!raw) return [{ pack: norm(it.pack), qty: num(it.qty), expiry: ex(it.expiry), expiry2: ex(it.expiry2) }];
+  const m = new Map();   // 개입|소비기한|예정 단위로 합산 (같은 개입이라도 소비기한이 다르면 다른 줄)
+  raw.forEach(x => { const k = [x.pack, x.expiry, x.expiry2].join("|"); const c = m.get(k); if (c) c.qty += x.qty; else m.set(k, Object.assign({}, x)); });
+  return [...m.values()];
 }
+// 줄 끝 소비기한 표기 — " · 소비 2026-11-12 (예정 2026-11-19)"
+function _schedExpSuffix(p) { return (p.expiry ? " · 소비 " + p.expiry : "") + (p.expiry2 ? " (예정 " + p.expiry2 + ")" : ""); }
 // 표시 줄 목록 — 개입이 2종 이상 섞여 있으면 개입별 박스 줄, 아니면 기존 한 줄
-function _schedPackBoxLines(it) {
+function _schedPackBoxLines(it, withExp) {
   const parts = _schedPackParts(it).filter(p => p.pack !== "");
-  if (parts.length < 2) return [_schedPackBox(it)].filter(Boolean);
-  return parts.map(p => { const pk = Number(p.pack); const bx = (pk > 0 && p.qty) ? Math.round(p.qty / pk).toLocaleString("ko-KR") + "박스" : ""; return `${pk.toLocaleString("ko-KR")}개입` + (bx ? "/" + bx : ""); });
+  if (parts.length < 2) { const one = _schedPackBox(it); const sfx = withExp ? _schedExpSuffix(parts[0] || { expiry: it.expiry, expiry2: it.expiry2 }) : ""; return (one || sfx) ? [one + sfx] : []; }
+  return parts.map(p => { const pk = Number(p.pack); const bx = (pk > 0 && p.qty) ? Math.round(p.qty / pk).toLocaleString("ko-KR") + "박스" : ""; return `${pk.toLocaleString("ko-KR")}개입` + (bx ? "/" + bx : "") + (withExp ? _schedExpSuffix(p) : ""); });
 }
 function _schedPackBox(it) {
   const packN = String(it.pack == null ? "" : it.pack).replace(/,/g, "").trim();
@@ -12115,7 +12132,7 @@ function buildScheduleDoc(d, week) {
     const P = `padding-top:${pad}px; padding-bottom:${pad}px;`;
     const RS = span > 1 ? ` rowspan="${span}"` : "";
     if (!it || it.spacer) return `<td style="${TDI} ${P}">${it ? "&nbsp;" : ""}</td>`;
-    const pbLines = _schedPackBoxLines(it), pb = pbLines.join(" · ");
+    const pbLines = _schedPackBoxLines(it, _prod), pb = pbLines.join(" · ");   // 생산: 줄마다 소비기한(출고 스케줄에서 가져온 값) 표시
     // 항목 거래처가 열 공통과 다를 때만 개별 표시(같으면 열 거래처 줄로 충분)
     const ovp = (it.partner && it.partner.trim() && it.partner.trim() !== (gpartner || "").trim()) ? it.partner : "";
     // 제품별 개별 글자색 — 비우면 전체(표시 설정) 색을 그대로 사용
@@ -12239,7 +12256,7 @@ function buildScheduleDocEdit(d, week) {
       <div style="display:flex; align-items:center; gap:1px; font-size:${subSize}px; flex-wrap:wrap;">
         ${it_(gi, ii, "pack", it.pack, "", ` inputmode="numeric" placeholder="개입" style="width:40px; text-align:right; color:${ec("sub", "#c26a1f")}; font-weight:700;"`)}<span style="color:${ec("sub", "#c26a1f")};">개입/</span>
         ${it_(gi, ii, "boxes", it.boxes, "", ` inputmode="numeric" placeholder="자동" style="width:40px; text-align:right; color:${ec("sub", "#c26a1f")}; font-weight:700;"`)}<span style="color:${ec("sub", "#c26a1f")};">박스</span></div>
-      ${(() => { const L = _schedPackBoxLines(it); return L.length >= 2 ? `<div style="font-size:${subSize}px; color:${ec("sub", "#c26a1f")}; font-weight:700; line-height:1.25;" title="개입이 다른 출처를 합친 칸 — 개입별 박스">${L.map(esc).join("<br>")}</div>` : ""; })()}
+      ${(() => { if (!_prod) return ""; const L = _schedPackBoxLines(it, true); if (L.length >= 2) return `<div style="font-size:${subSize}px; color:${ec("sub", "#c26a1f")}; font-weight:700; line-height:1.25;" title="출처를 합친 칸 — 개입·소비기한별 박스">${L.map(esc).join("<br>")}</div>`; const sfx = _schedExpSuffix({ expiry: (it.expiry || "").trim(), expiry2: (it.expiry2 || "").trim() }).replace(/^ · /, ""); return sfx ? `<div style="font-size:${subSize}px; color:${ec("sub", "#c26a1f")}; line-height:1.25;">${esc(sfx)}</div>` : ""; })()}
       <div style="display:flex; gap:2px; font-size:${subSize}px;">
         ${it_(gi, ii, "partner", it.partner, "", ` list="schedPartnerDl" placeholder="거래처(개별·비우면 열 공통)" title="비우면 위 '거래처' 줄(열 공통)을 씁니다. 이 항목만 다르면 여기 입력하세요." style="flex:1 1 0; color:#2f3fa0;"`)}
         ${it_(gi, ii, "memo", it.memo, "", ` placeholder="비고" style="flex:1 1 0; color:#888;"`)}</div>
