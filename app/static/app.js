@@ -12062,12 +12062,20 @@ function _schedPackParts(it) {
   return [...m.values()];
 }
 // 줄 끝 소비기한 표기 — " · 소비 2026-11-12 (예정 2026-11-19)"
-function _schedExpSuffix(p) { return (p.expiry ? " · 소비 " + p.expiry : "") + (p.expiry2 ? " (예정 " + p.expiry2 + ")" : ""); }
-// 표시 줄 목록 — 개입이 2종 이상 섞여 있으면 개입별 박스 줄, 아니면 기존 한 줄
-function _schedPackBoxLines(it, withExp) {
+function _schedExpText(p) { return ((p.expiry ? "소비 " + p.expiry : "") + (p.expiry2 ? " (예정 " + p.expiry2 + ")" : "")).trim(); }
+function _schedExpSuffix(p) { const t = _schedExpText(p); return t ? " · " + t : ""; }
+// 표시 줄 목록 [{main:"30개입/168박스", exp:"소비 2026-11-12 (예정 …)"}] — 개입·소비기한이 2종 이상이면 줄을 나눔
+function _schedPackBoxParts(it, withExp) {
   const parts = _schedPackParts(it).filter(p => p.pack !== "");
-  if (parts.length < 2) { const one = _schedPackBox(it); const sfx = withExp ? _schedExpSuffix(parts[0] || { expiry: it.expiry, expiry2: it.expiry2 }) : ""; return (one || sfx) ? [one + sfx] : []; }
-  return parts.map(p => { const pk = Number(p.pack); const bx = (pk > 0 && p.qty) ? Math.round(p.qty / pk).toLocaleString("ko-KR") + "박스" : ""; return `${pk.toLocaleString("ko-KR")}개입` + (bx ? "/" + bx : "") + (withExp ? _schedExpSuffix(p) : ""); });
+  if (parts.length < 2) { const one = _schedPackBox(it); const exp = withExp ? _schedExpText(parts[0] || { expiry: (it.expiry || "").trim(), expiry2: (it.expiry2 || "").trim() }) : ""; return (one || exp) ? [{ main: one, exp }] : []; }
+  return parts.map(p => { const pk = Number(p.pack); const bx = (pk > 0 && p.qty) ? Math.round(p.qty / pk).toLocaleString("ko-KR") + "박스" : ""; return { main: `${pk.toLocaleString("ko-KR")}개입` + (bx ? "/" + bx : ""), exp: withExp ? _schedExpText(p) : "" }; });
+}
+function _schedPackBoxLines(it, withExp) { return _schedPackBoxParts(it, withExp).map(p => p.main + (p.exp ? (p.main ? " · " : "") + p.exp : "")); }
+// 줄 HTML — 개입/박스는 강조색, 소비기한은 회색·작은 글씨
+function _schedPackBoxHtml(it, withExp, subSize, subColor) {
+  const expFs = Math.max(8, Math.round(subSize * 0.82));
+  return _schedPackBoxParts(it, withExp).map(p => (p.main ? `<span style="color:${subColor}; font-weight:700;">${esc(p.main)}</span>` : "")
+    + (p.exp ? `<span style="color:#8a8a8a; font-weight:500; font-size:${expFs}px;">${p.main ? " · " : ""}${esc(p.exp)}</span>` : "")).join("<br>");
 }
 function _schedPackBox(it) {
   const packN = String(it.pack == null ? "" : it.pack).replace(/,/g, "").trim();
@@ -12142,7 +12150,7 @@ function buildScheduleDoc(d, week) {
     return `<td style="${TDI} ${P}${_prod ? " vertical-align:middle; text-align:center;" : ""}"${RS}>
       <div style="font-weight:700; font-size:${labelSize}px; color:${icol || ec("label", "inherit")};">${esc(it.label || "") || "&nbsp;"}</div>
       <div style="font-size:${qtySize}px; font-weight:900; line-height:1.05; margin:1px 0; color:${icol || ec("qty", "inherit")};">${NFq(it.qty) ? NFq(it.qty) + '<span style="font-size:' + Math.round(qtySize * 0.6) + 'px; font-weight:700;">개</span>' : "&nbsp;"}</div>
-      ${(pb || ovp) ? `<div style="font-size:${subSize}px;"><span style="color:${ec("sub", "#c26a1f")}; font-weight:700;">${pbLines.map(esc).join("<br>")}</span>${ovp ? ` <span style="color:#2f3fa0;">· ${esc(ovp)}</span>` : ""}</div>` : ""}
+      ${(pb || ovp) ? `<div style="font-size:${subSize}px;">${_schedPackBoxHtml(it, _prod, subSize, ec("sub", "#c26a1f"))}${ovp ? ` <span style="color:#2f3fa0;">· ${esc(ovp)}</span>` : ""}</div>` : ""}
       ${it.memo ? `<div style="color:#888; font-size:${subSize}px;">${esc(it.memo)}</div>` : ""}</td>`;
   };
   const orderRows = Array.from({ length: maxItems }, (_, k) =>
@@ -12256,7 +12264,7 @@ function buildScheduleDocEdit(d, week) {
       <div style="display:flex; align-items:center; gap:1px; font-size:${subSize}px; flex-wrap:wrap;">
         ${it_(gi, ii, "pack", it.pack, "", ` inputmode="numeric" placeholder="개입" style="width:40px; text-align:right; color:${ec("sub", "#c26a1f")}; font-weight:700;"`)}<span style="color:${ec("sub", "#c26a1f")};">개입/</span>
         ${it_(gi, ii, "boxes", it.boxes, "", ` inputmode="numeric" placeholder="자동" style="width:40px; text-align:right; color:${ec("sub", "#c26a1f")}; font-weight:700;"`)}<span style="color:${ec("sub", "#c26a1f")};">박스</span></div>
-      ${(() => { if (!_prod) return ""; const L = _schedPackBoxLines(it, true); if (L.length >= 2) return `<div style="font-size:${subSize}px; color:${ec("sub", "#c26a1f")}; font-weight:700; line-height:1.25;" title="출처를 합친 칸 — 개입·소비기한별 박스">${L.map(esc).join("<br>")}</div>`; const sfx = _schedExpSuffix({ expiry: (it.expiry || "").trim(), expiry2: (it.expiry2 || "").trim() }).replace(/^ · /, ""); return sfx ? `<div style="font-size:${subSize}px; color:${ec("sub", "#c26a1f")}; line-height:1.25;">${esc(sfx)}</div>` : ""; })()}
+      ${(() => { if (!_prod) return ""; const PP = _schedPackBoxParts(it, true); if (PP.length >= 2) return `<div style="font-size:${subSize}px; line-height:1.25;" title="출처를 합친 칸 — 개입·소비기한별 박스">${_schedPackBoxHtml(it, true, subSize, ec("sub", "#c26a1f"))}</div>`; const ex = _schedExpText({ expiry: (it.expiry || "").trim(), expiry2: (it.expiry2 || "").trim() }); return ex ? `<div style="font-size:${Math.max(8, Math.round(subSize * 0.82))}px; color:#8a8a8a; line-height:1.25;">${esc(ex)}</div>` : ""; })()}
       <div style="display:flex; gap:2px; font-size:${subSize}px;">
         ${it_(gi, ii, "partner", it.partner, "", ` list="schedPartnerDl" placeholder="거래처(개별·비우면 열 공통)" title="비우면 위 '거래처' 줄(열 공통)을 씁니다. 이 항목만 다르면 여기 입력하세요." style="flex:1 1 0; color:#2f3fa0;"`)}
         ${it_(gi, ii, "memo", it.memo, "", ` placeholder="비고" style="flex:1 1 0; color:#888;"`)}</div>
