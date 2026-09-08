@@ -864,6 +864,13 @@ def init_db() -> None:
         con.execute("ALTER TABLE staffing_agency ADD COLUMN gender TEXT DEFAULT ''")
     if "partner_id" not in sacols:
         con.execute("ALTER TABLE staffing_agency ADD COLUMN partner_id INTEGER")
+    # 용역 연장근로 — 기준 시간 초과분(ot_hours)·연장 시급(ot_wage)·확정 노무비(cost). cost NULL = 예전 행(시간×시급으로 폴백)
+    if "ot_hours" not in sacols:
+        con.execute("ALTER TABLE staffing_agency ADD COLUMN ot_hours REAL DEFAULT 0")
+    if "ot_wage" not in sacols:
+        con.execute("ALTER TABLE staffing_agency ADD COLUMN ot_wage REAL DEFAULT 0")
+    if "cost" not in sacols:
+        con.execute("ALTER TABLE staffing_agency ADD COLUMN cost REAL")
     # 원부자재 입고 제조일자 (유통기한과 동일 구조)
     micols = [r[1] for r in con.execute("PRAGMA table_info(material_in)")]
     if "made_date" not in micols:

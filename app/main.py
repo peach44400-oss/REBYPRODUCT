@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.99.35"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.100.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -4312,7 +4312,7 @@ def salesorder_del(oid: int, request: Request):
 # ── 손익 요약 (매출 − 매입 − 노무 = 간이 이익) ──────────────────────────
 _LABOR_EXPR = ("(SELECT COALESCE(SUM(s.wage * CASE WHEN sm.hours>0 THEN sm.hours ELSE st.work_hours END),0)"
                "   FROM staffing_member sm JOIN staff s ON s.id=sm.staff_id WHERE sm.staffing_id=st.id)"
-               " + COALESCE((SELECT SUM(sa.hours * sa.wage) FROM staffing_agency sa WHERE sa.staffing_id=st.id),"
+               " + COALESCE((SELECT SUM(COALESCE(sa.cost, sa.hours * sa.wage)) FROM staffing_agency sa WHERE sa.staffing_id=st.id),"
                "            st.agency_hours * st.agency_wage)")
 
 
@@ -4857,7 +4857,7 @@ def dashboard(request: Request):
             SELECT COALESCE(SUM(
               (SELECT COALESCE(SUM(s.wage * CASE WHEN sm.hours>0 THEN sm.hours ELSE st.work_hours END),0)
                  FROM staffing_member sm JOIN staff s ON s.id=sm.staff_id WHERE sm.staffing_id=st.id)
-              + COALESCE((SELECT SUM(sa.hours * sa.wage) FROM staffing_agency sa
+              + COALESCE((SELECT SUM(COALESCE(sa.cost, sa.hours * sa.wage)) FROM staffing_agency sa
                           WHERE sa.staffing_id=st.id),
                          st.agency_hours * st.agency_wage)),0) v
             FROM staffing st WHERE st.date BETWEEN ? AND ?""", (ma, mb)).fetchone()["v"]
@@ -4892,7 +4892,7 @@ def dashboard(request: Request):
             SELECT COALESCE(SUM(
               (SELECT COALESCE(SUM(s.wage * CASE WHEN sm.hours>0 THEN sm.hours ELSE st.work_hours END),0)
                  FROM staffing_member sm JOIN staff s ON s.id=sm.staff_id WHERE sm.staffing_id=st.id)
-              + COALESCE((SELECT SUM(sa.hours * sa.wage) FROM staffing_agency sa
+              + COALESCE((SELECT SUM(COALESCE(sa.cost, sa.hours * sa.wage)) FROM staffing_agency sa
                           WHERE sa.staffing_id=st.id),
                          st.agency_hours * st.agency_wage)),0) labor
             FROM staffing st WHERE st.date=?""", (last,)).fetchone()["labor"] if last else 0
@@ -5180,7 +5180,7 @@ def month_report(request: Request, ym: str = ""):
         lm = con.execute(f"""SELECT COALESCE(SUM({HRS}),0) hours, COALESCE(SUM({HRS}*s.wage),0) labor
             FROM staffing_member sm JOIN staffing st ON st.id=sm.staffing_id JOIN staff s ON s.id=sm.staff_id
             WHERE st.date BETWEEN ? AND ?""", (a, b)).fetchone()
-        ag = con.execute("""SELECT COALESCE(SUM(sa.hours),0) hours, COALESCE(SUM(sa.hours*sa.wage),0) labor
+        ag = con.execute("""SELECT COALESCE(SUM(sa.hours),0) hours, COALESCE(SUM(COALESCE(sa.cost, sa.hours*sa.wage)),0) labor
             FROM staffing_agency sa JOIN staffing st ON st.id=sa.staffing_id
             WHERE st.date BETWEEN ? AND ?""", (a, b)).fetchone()
         legacy = con.execute("""SELECT COALESCE(SUM(agency_hours),0) hours,
@@ -5299,7 +5299,7 @@ def prodreport(request: Request, mode: str = "d", date: str = ""):
                                                       ELSE st.work_hours END),0)
                       FROM staffing_member sm
                       JOIN staff s ON s.id=sm.staff_id WHERE sm.staffing_id=st.id)
-                     + COALESCE((SELECT SUM(sa.hours * sa.wage) FROM staffing_agency sa
+                     + COALESCE((SELECT SUM(COALESCE(sa.cost, sa.hours * sa.wage)) FROM staffing_agency sa
                                  WHERE sa.staffing_id=st.id),
                                 st.agency_hours * st.agency_wage) labor
             FROM staffing st LEFT JOIN line l ON l.id=st.line_id
@@ -5311,7 +5311,7 @@ def prodreport(request: Request, mode: str = "d", date: str = ""):
                    COUNT(*) cnt,
                    SUM(CASE WHEN sa.gender='남' THEN 1 ELSE 0 END) male,
                    SUM(CASE WHEN sa.gender='여' THEN 1 ELSE 0 END) female,
-                   SUM(sa.hours) hours, SUM(sa.hours * sa.wage) labor
+                   SUM(sa.hours) hours, SUM(COALESCE(sa.cost, sa.hours * sa.wage)) labor
             FROM staffing_agency sa
             JOIN staffing st ON st.id=sa.staffing_id
             LEFT JOIN partner pa ON pa.id=sa.partner_id
@@ -5457,7 +5457,7 @@ def staffhours(request: Request, mode: str = "m", date: str = ""):
         agency = rows(con.execute("""
             SELECT COALESCE(pa.name,'업체 미지정') partner,
                    COUNT(*) persondays, COUNT(DISTINCT st.date) days,
-                   SUM(sa.hours) hours, SUM(sa.hours * sa.wage) labor
+                   SUM(sa.hours) hours, SUM(COALESCE(sa.cost, sa.hours * sa.wage)) labor
             FROM staffing_agency sa
             JOIN staffing st ON st.id=sa.staffing_id
             LEFT JOIN partner pa ON pa.id=sa.partner_id
@@ -5658,8 +5658,10 @@ def day_get(date: str, request: Request):
                    (SELECT json_group_array(json_object('h', sa.hours, 'w', sa.wage,
                                                         'g', sa.gender, 'pid', sa.partner_id,
                                                         'start', sa.start_time, 'end', sa.end_time,
-                                                        'brk', sa.break_min))
-                     FROM (SELECT hours, wage, gender, partner_id, start_time, end_time, break_min
+                                                        'brk', sa.break_min,
+                                                        'ot', sa.ot_hours, 'otw', sa.ot_wage, 'cost', sa.cost))
+                     FROM (SELECT hours, wage, gender, partner_id, start_time, end_time, break_min,
+                                  ot_hours, ot_wage, cost
                            FROM staffing_agency
                            WHERE staffing_id=st.id ORDER BY seq) sa) agency
             FROM staffing st LEFT JOIN line l ON l.id=st.line_id
@@ -5672,6 +5674,8 @@ def day_get(date: str, request: Request):
                     ag = json.loads(r.get("agency") or "[]")
                     for a in ag:
                         a["w"] = None
+                        a["otw"] = None
+                        a["cost"] = None
                     r["agency"] = json.dumps(ag)
                 except (ValueError, TypeError):
                     r["agency"] = "[]"
@@ -5882,6 +5886,94 @@ def verify_pw(request: Request, body: dict):
         return {"ok": bool(row and verify_password(row["pw_hash"], body.get("password") or ""))}
     finally:
         con.close()
+
+
+# ── 용역 시급 규칙 (기준정보 › 용역 시급) ──
+# app_setting 'agency_wage_rules' = {"default": {...}, "partners": {"<partner_id>": {...}}}
+#   w_f/w_m: 여/남 기본 시급, ot_hours: 연장 기준(h, 기본 8), ot_mode: "rate"(배율) | "amount"(금액),
+#   ot_rate: 배율(기본 1.5), ot_f/ot_m: 금액 방식일 때 여/남 연장 시급. 업체 값이 비면 default를 따른다.
+AGENCY_RULE_DEFAULT = {"w_f": 0, "w_m": 0, "ot_hours": 8, "ot_mode": "rate", "ot_rate": 1.5, "ot_f": 0, "ot_m": 0}
+
+
+def _fnum(v, default=0.0):
+    if v is None or v == "":
+        return default
+    try:
+        return float(str(v).replace(",", ""))
+    except (TypeError, ValueError):
+        return default
+
+
+def agency_rules():
+    try:
+        r = json.loads(get_app_setting("agency_wage_rules", "") or "{}")
+    except (ValueError, TypeError):
+        r = {}
+    if not isinstance(r, dict):
+        r = {}
+    r.setdefault("default", {})
+    r.setdefault("partners", {})
+    return r
+
+
+def agency_rule_for(rules, pid):
+    base = dict(AGENCY_RULE_DEFAULT)
+    base.update({k: v for k, v in (rules.get("default") or {}).items() if v not in (None, "")})
+    p = (rules.get("partners") or {}).get(str(pid)) if pid else None
+    if isinstance(p, dict):
+        base.update({k: v for k, v in p.items() if v not in (None, "")})
+    return base
+
+
+def agency_default_wage(rule, gender):
+    return _fnum(rule.get("w_m") if gender == "남" else rule.get("w_f"))
+
+
+def agency_calc(h, w, gender, rule):
+    """근무 h·기본시급 w·성별 → (확정 노무비, 연장시간, 연장시급). 기준 시간 초과분은 배율 또는 지정 금액."""
+    oth = _fnum(rule.get("ot_hours"), 8) or 8
+    base_h = min(h, oth)
+    ot = max(0.0, h - oth)
+    rate = _fnum(rule.get("ot_rate"), 1.5) or 1.5
+    if str(rule.get("ot_mode") or "") == "amount":
+        otw = _fnum(rule.get("ot_m") if gender == "남" else rule.get("ot_f"))
+        if otw <= 0:
+            otw = w * rate
+    else:
+        otw = w * rate
+    return round(base_h * w + ot * otw, 2), ot, otw
+
+
+@app.get("/api/agencywage")
+def agencywage_get(request: Request):
+    """용역 시급 규칙 — 시급 열람 권한이 있을 때만 내용 반환 (없으면 rules=None → 화면은 자동 채움만 생략)."""
+    if not mcan(request, "wage"):
+        return {"rules": None}
+    return {"rules": agency_rules()}
+
+
+@app.post("/api/agencywage")
+def agencywage_save(request: Request, body: dict):
+    _require_writer(request)
+    if not mcan(request, "wage"):
+        raise HTTPException(403, "시급 권한이 필요합니다")
+    rules = body.get("rules")
+    if not isinstance(rules, dict):
+        raise HTTPException(400, "규칙이 올바르지 않습니다")
+    clean = {"default": {}, "partners": {}}
+    keys = list(AGENCY_RULE_DEFAULT.keys())
+    for k in keys:
+        v = (rules.get("default") or {}).get(k)
+        if v not in (None, ""):
+            clean["default"][k] = v
+    for pid, o in (rules.get("partners") or {}).items():
+        if not isinstance(o, dict):
+            continue
+        oo = {k: o[k] for k in keys if o.get(k) not in (None, "")}
+        if oo:
+            clean["partners"][str(pid)] = oo
+    set_app_setting("agency_wage_rules", json.dumps(clean, ensure_ascii=False))
+    return {"ok": True, "rules": clean}
 
 
 @app.post("/api/schedule/style")
@@ -6281,6 +6373,7 @@ def day_save(request: Request, date: str, body: dict):
                 agency = r.get("agency")
                 if isinstance(agency, list):
                     ags = []
+                    rules = agency_rules()
                     for a in agency:
                         astart = (a.get("start") or "").strip()
                         aend = (a.get("end") or "").strip()
@@ -6288,13 +6381,19 @@ def day_save(request: Request, date: str, body: dict):
                         # 출근·퇴근이 모두 있으면 근무시간을 서버가 확정 계산 (정직원과 동일 규칙)
                         calc = calc_work_hours(astart, aend, abrk)
                         h = calc if calc is not None else float(a.get("h") or 0)
-                        ags.append((h, float(a.get("w") or 0), (a.get("g") or "")[:2],
-                                    a.get("pid") or None, astart, aend, abrk))
+                        g = (a.get("g") or "")[:2]
+                        pid = a.get("pid") or None
+                        rule = agency_rule_for(rules, pid)
+                        w = float(a.get("w") or 0)
+                        if w <= 0:   # 시급 미입력(또는 시급 권한 없는 사용자) → 기준정보 기본 시급(업체·성별)
+                            w = agency_default_wage(rule, g)
+                        cost, ot, otw = agency_calc(h, w, g, rule)   # 연장(기준 초과)은 배율/금액 규칙으로 확정
+                        ags.append((h, w, g, pid, astart, aend, abrk, cost, ot, otw))
                     if any(h < 0 or w < 0 for h, w, *_ in ags):
                         raise HTTPException(400, "용역 시간·시급에 음수는 저장할 수 없습니다")
                     ag_cnt = len(ags)
                     ag_hours = sum(a[0] for a in ags)
-                    labor = sum(a[0] * a[1] for a in ags)
+                    labor = sum(a[7] for a in ags)   # 연장 가산 포함 확정 노무비 합
                     ag_wage = (labor / ag_hours) if ag_hours > 0 else (ags[0][1] if ags else 0)
                 else:   # 구버전 클라이언트: 집계값만
                     ags = None
@@ -6309,11 +6408,12 @@ def day_save(request: Request, date: str, body: dict):
                                    float(r.get("target_hours") or 0),
                                    float(r.get("work_hours") or 0), r.get("stop_reason", "")))
                 if ags:
-                    for i, (h, w, g, pid, astart, aend, abrk) in enumerate(ags):
+                    for i, (h, w, g, pid, astart, aend, abrk, cost, ot, otw) in enumerate(ags):
                         con.execute("INSERT INTO staffing_agency"
-                                    "(staffing_id, seq, hours, wage, gender, partner_id, start_time, end_time, break_min)"
-                                    " VALUES(?,?,?,?,?,?,?,?,?)",
-                                    (cur.lastrowid, i, h, w, g, pid, astart, aend, abrk))
+                                    "(staffing_id, seq, hours, wage, gender, partner_id, start_time, end_time, break_min,"
+                                    " ot_hours, ot_wage, cost)"
+                                    " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                                    (cur.lastrowid, i, h, w, g, pid, astart, aend, abrk, ot, otw, cost))
                 members = r.get("members")
                 if members is None:   # 구버전 클라이언트 호환
                     members = [{"id": sid, "h": 0} for sid in r.get("member_ids", [])]
@@ -6387,7 +6487,7 @@ def costs(request: Request):
         lab = con.execute("""SELECT COALESCE(SUM(
               (SELECT COALESCE(SUM(s.wage * CASE WHEN sm.hours>0 THEN sm.hours ELSE st.work_hours END),0)
                  FROM staffing_member sm JOIN staff s ON s.id=sm.staff_id WHERE sm.staffing_id=st.id)
-              + COALESCE((SELECT SUM(sa.hours * sa.wage) FROM staffing_agency sa
+              + COALESCE((SELECT SUM(COALESCE(sa.cost, sa.hours * sa.wage)) FROM staffing_agency sa
                           WHERE sa.staffing_id=st.id),
                          st.agency_hours * st.agency_wage)),0) v
             FROM staffing st WHERE st.date>=?""", (since,)).fetchone()["v"]

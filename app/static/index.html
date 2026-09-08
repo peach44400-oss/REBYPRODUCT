@@ -1450,6 +1450,7 @@
           <button data-mt="partner">거래처</button>
           <button data-mt="staff">인원</button>
           <button data-mt="line">생산라인</button>
+          <button data-mt="agencywage" id="tabAgw" style="display:none" title="용역 업체·성별 기본 시급과 연장(8시간 초과) 계산 규칙">용역 시급</button>
           <button data-mt="users" id="tabUsers" style="display:none">사용자</button>
           <button data-mt="audit" id="tabAudit" style="display:none">이력</button>
         </div>
@@ -1474,6 +1475,7 @@
           <button class="btn sm" onclick="window.print()" title="현재 화면(탭 목록)을 인쇄합니다">🖨 인쇄</button>
         </div>
         <div id="mHealthBar" style="display:none; margin-bottom:10px;"></div>
+        <div id="agwPanel" style="display:none;"></div>
         <div id="bomBar" style="display:none; align-items:center; gap:10px; margin-bottom:12px; flex-wrap:wrap;">
           <span style="font-size:12px; font-weight:700; color:var(--muted);">제품 선택</span>
           <input class="mini-input" id="bomProdSearch" list="bomProdList" placeholder="🔍 제품 검색" autocomplete="off"

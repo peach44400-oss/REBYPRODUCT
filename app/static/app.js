@@ -84,6 +84,7 @@ async function loadMasters() {
   // 라인 표시명: 번호 + 라인명 / 공정 (동명 라인 구분용)
   M.line.forEach((l, i) => (l.disp = `${i + 1}. ${l.name}${l.process ? " / " + l.process : ""}`));
   await loadPackSets();
+  await loadAgencyRules();   // 용역 시급 규칙(시급 권한 있을 때만 내용)
 }
 const productById = (id) => M.product.find(p => p.id === id);   // 완제품만 (반제품은 자재)
 const materialById = (id) => M.raw.concat(M.sub, M.semi || []).find(m => m.id === id);   // 반제품(is_semi 자재)도 자재로 취급
@@ -3149,6 +3150,40 @@ function timeDD(prefix, key, val) {
     mins.map(v => `<option value="${v}" ${v === mm ? "selected" : ""}>${v}</option>`).join("");
   return `<select class="mini-sel tsel" data-${prefix}h="${key}" title="${prefix[1] === "s" ? "출근" : "퇴근"} 시">${h}</select><span class="auto" style="font-size:10px">:</span><select class="mini-sel tsel" data-${prefix}m="${key}" title="${prefix[1] === "s" ? "출근" : "퇴근"} 분">${m}</select>`;
 }
+/* ── 용역 시급 규칙 (기준정보 › 용역 시급) — 서버 agency_calc와 같은 산식 ──
+   업체·성별로 기본 시급을 자동으로 넣고, 기준 시간(기본 8h) 초과분은 배율(×1.5) 또는 지정 금액으로 노무비 계산 */
+let AGW = null;
+async function loadAgencyRules() { try { const r = await api("/api/agencywage"); AGW = (r && r.rules) ? r.rules : null; } catch (e) { AGW = null; } }
+const AGW_DEF = { w_f: "", w_m: "", ot_hours: 8, ot_mode: "rate", ot_rate: 1.5, ot_f: "", ot_m: "" };
+const _agwN = (v, d) => { if (v === "" || v == null) return d == null ? 0 : d; const n = Number(String(v).replace(/,/g, "")); return isFinite(n) ? n : (d == null ? 0 : d); };
+function agwRuleFor(pid) {
+  const r = Object.assign({}, AGW_DEF); if (!AGW) return r;
+  const put = o => { if (o) Object.keys(o).forEach(k => { if (o[k] !== "" && o[k] != null) r[k] = o[k]; }); };
+  put(AGW.default); if (pid) put((AGW.partners || {})[String(pid)]);
+  return r;
+}
+function agwDefaultWage(rule, g) { return _agwN(g === "남" ? rule.w_m : (g === "여" ? rule.w_f : "")); }
+function agwCalc(h, w, g, rule) {
+  const oth = _agwN(rule.ot_hours, 8) || 8; h = _agwN(h); w = _agwN(w);
+  const base = Math.min(h, oth), ot = Math.max(0, h - oth), rate = _agwN(rule.ot_rate, 1.5) || 1.5;
+  let otw;
+  if (rule.ot_mode === "amount") { otw = _agwN(g === "남" ? rule.ot_m : rule.ot_f); if (otw <= 0) otw = w * rate; }
+  else otw = w * rate;
+  return { cost: Math.round(base * w + ot * otw), ot: Math.round(ot * 100) / 100, otw, base: Math.round(base * 100) / 100 };
+}
+function agwCostLabel(a) {
+  if (!canM("wage")) return "";
+  const ch = memberHours(a); const hh = ch != null ? ch : _agwN(a.h);
+  if (!(hh > 0) || !(_agwN(a.w) > 0)) return "";
+  const c = agwCalc(hh, a.w, a.g, agwRuleFor(a.pid));
+  return (c.ot > 0 ? `연장 ${c.ot}h×${NF(Math.round(c.otw))} · ` : "") + `노무비 ${NF(c.cost)}원`;
+}
+function _agwRefresh(tr, ai, a) { const el = tr && tr.querySelector(`[data-acost="${ai}"]`); if (el) el.textContent = agwCostLabel(a); }
+// 성별·업체가 정해지면 기준정보 기본 시급을 자동으로 넣는다 (직접 입력한 시급은 유지)
+function _agwAutoWage(tr, ai, a) {
+  const d = agwDefaultWage(agwRuleFor(a.pid), a.g);
+  if (d > 0 && (!_agwN(a.w) || a.wAuto)) { a.w = String(d); a.wAuto = true; const inp = tr && tr.querySelector(`[data-aw="${ai}"]`); if (inp) inp.value = a.w; }
+}
 function renderStaff() {
   const admin = canM("wage");   // 시급 입력칸 노출 여부
   // 정직원(용역 아님)은 어느 라인이든 한 번 배정되면 다른 라인 '＋ 인원 추가' 목록에서 제외 (용역은 예외 — 여러 라인 가능)
@@ -3193,8 +3228,9 @@ function renderStaff() {
             style="width:34px; padding:1px 3px; font-size:11px;"><span class="auto" style="font-size:10px;">분</span>
           <b data-ahlbl="${ai}" title="근무시간 = 퇴근 − 출근 − 휴게">${memberHLabel(a)}</b>
           ${admin ? `<span style="font-size:10.5px;">시급
-          <input class="mini-input num" data-aw="${ai}" value="${a.w ?? ""}" placeholder="원"
-            title="이 용역 인원의 시급 (노무비 = 시간 × 시급)" style="width:58px; padding:1px 3px; font-size:11px;"></span>` : ""}</span>
+          <input class="mini-input num" data-aw="${ai}" value="${a.w ?? ""}" placeholder="자동"
+            title="이 용역 인원의 기본 시급 — 업체·성별을 고르면 기준정보의 기본 시급이 자동으로 들어옵니다. 기준 시간 초과분은 연장 규칙으로 계산" style="width:58px; padding:1px 3px; font-size:11px;"></span>
+          <span class="auto" data-acost="${ai}" style="font-size:10px; white-space:nowrap;">${agwCostLabel(a)}</span>` : ""}</span>
       </span>`).join("");
     // ＋ 인원 추가: 맨 위에 '＋ 용역(이름없음)', 그 아래 등록된 직원
     const addSel = `<select class="mini-sel" data-addmember style="max-width:140px"><option value="">＋ 인원 추가</option>` +
@@ -3283,12 +3319,13 @@ $("eStaff").addEventListener("input", e => {
       if (aKey) applyTime(a, aKey.slice(0, 2), ai);
       else a.brk = e.target.value;
       recalc(a, `[data-ahlbl="${ai}"]`);
+      _agwRefresh(tr, ai, a);   // 시간이 바뀌면 연장·노무비도
     }
     return;
   }
-  if (ds.aw != null) { if (row.agency && row.agency[+ds.aw]) row.agency[+ds.aw].w = e.target.value; }
-  else if (ds.agd != null) { if (row.agency && row.agency[+ds.agd]) row.agency[+ds.agd].g = e.target.value; }
-  else if (ds.apt != null) { if (row.agency && row.agency[+ds.apt]) row.agency[+ds.apt].pid = e.target.value ? +e.target.value : null; }
+  if (ds.aw != null) { const a = row.agency && row.agency[+ds.aw]; if (a) { a.w = e.target.value; a.wAuto = false; _agwRefresh(tr, +ds.aw, a); } }
+  else if (ds.agd != null) { const a = row.agency && row.agency[+ds.agd]; if (a) { a.g = e.target.value; _agwAutoWage(tr, +ds.agd, a); _agwRefresh(tr, +ds.agd, a); } }
+  else if (ds.apt != null) { const a = row.agency && row.agency[+ds.apt]; if (a) { a.pid = e.target.value ? +e.target.value : null; _agwAutoWage(tr, +ds.apt, a); _agwRefresh(tr, +ds.apt, a); } }
 });
 function mustDate() { if (!E.date) { toast("달력에서 날짜를 먼저 선택하세요"); return false; } return true; }
 
@@ -3421,9 +3458,11 @@ function wireEntryTable(tbodyId, arr, rerender, liveUpdate) {
       if (e.target.value === "__agency__") {   // 이름 없는 용역 한 명 추가 (여러 번 = 여러 명)
         const last = (row.agency || [])[row.agency ? row.agency.length - 1 : -1];
         const dt = _staffDefTimes();   // 기본 08:00~19:00·휴게 60 (전체 시간 툴바 마지막 값 우선)
+        const ng = (last && last.g) || "", npid = (last && last.pid) || null;   // 업체·성별 기본값 = 직전 용역
+        const autoW = agwDefaultWage(agwRuleFor(npid), ng);                        // 기준정보 기본 시급(업체·성별)
         row.agency = (row.agency || []).concat({ h: dt.h != null ? dt.h : (row.work_hours || ""),
-          w: (last && last.w) || row.agency_wage || "",     // 시급·업체·성별 기본값 = 직전 용역
-          g: (last && last.g) || "", pid: (last && last.pid) || null,
+          w: autoW > 0 ? String(autoW) : ((last && !last.wAuto && last.w) || row.agency_wage || ""), wAuto: autoW > 0,
+          g: ng, pid: npid,
           start: dt.start, end: dt.end, brk: dt.brk });
       } else {
         const dt = _staffDefTimes();
@@ -4856,7 +4895,67 @@ function masterList() {   // 현재 탭의 표시 목록 (검색 + 미등록 필
   }
   return { full, list };
 }
+function renderAgwTab() {
+  const host = $("agwPanel"); if (!host) return;
+  if (!canM("wage")) { host.innerHTML = `<p class="hint">시급 열람 권한이 필요합니다.</p>`; return; }
+  const R = AGW || { default: {}, partners: {} };
+  const partners = (M.partner || []).filter(p => p.status !== "중지" && pHasType(p, "용역업체"));
+  const inp = (path, val, w, ph) => `<input class="mini-input num" data-agw="${path}" value="${esc(String(val == null ? "" : val))}" placeholder="${ph || ""}" style="width:${w || 80}px;">`;
+  const modeSel = (path, val, isDef) => `<select class="mini-sel" data-agw="${path}"><option value="">${isDef ? "배율(×)" : "기본 따름"}</option><option value="rate" ${val === "rate" ? "selected" : ""}>배율(×)</option><option value="amount" ${val === "amount" ? "selected" : ""}>금액(원)</option></select>`;
+  const row = (path, o, isDef) => `<tr>
+    <td>${isDef ? "<b>기본 (모든 업체)</b>" : esc(o.__name || "")}</td>
+    <td class="r">${inp(path + ".w_f", o.w_f, 84, isDef ? "예 12,375" : "기본")}</td>
+    <td class="r">${inp(path + ".w_m", o.w_m, 84, isDef ? "예 12,750" : "기본")}</td>
+    <td class="r">${inp(path + ".ot_hours", o.ot_hours, 52, isDef ? "8" : "기본")}</td>
+    <td>${modeSel(path + ".ot_mode", o.ot_mode || "", isDef)}</td>
+    <td class="r">${inp(path + ".ot_rate", o.ot_rate, 52, isDef ? "1.5" : "기본")}</td>
+    <td class="r">${inp(path + ".ot_f", o.ot_f, 84, "금액 방식일 때")}</td>
+    <td class="r">${inp(path + ".ot_m", o.ot_m, 84, "금액 방식일 때")}</td></tr>`;
+  host.innerHTML = `
+    <p class="hint" style="margin:0 0 10px;">일일 입력에서 용역은 <b>업체·성별·출퇴근</b>만 고르면 시급과 노무비가 자동으로 계산됩니다.
+      연장(기준 시간 초과분)은 <b>배율</b>(예 1.5 = 기본 시급의 1.5배) 또는 <b>금액</b>(연장 시급을 직접 지정) 중 하나로 계산합니다.
+      업체 줄의 빈 칸은 '기본' 줄을 따릅니다. 이미 저장된 날짜의 노무비는 바뀌지 않고, 저장하는 날부터 적용됩니다.</p>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>업체</th><th class="r">여 시급</th><th class="r">남 시급</th><th class="r">연장 기준(h)</th><th>연장 방식</th><th class="r">배율</th><th class="r">연장 시급 여</th><th class="r">연장 시급 남</th></tr></thead>
+      <tbody class="num">${row("default", R.default || {}, true)}${partners.map(p => row("p:" + p.id, Object.assign({ __name: p.name }, (R.partners || {})[String(p.id)] || {}), false)).join("")}</tbody>
+    </table></div>
+    ${partners.length ? "" : `<p class="hint">용역 업체는 거래처 탭에서 유형 '용역업체'로 등록하면 여기 줄이 생깁니다.</p>`}
+    <div class="draft-foot" style="margin-top:10px;">
+      <span class="sum" id="agwPreview"></span><span class="spacer"></span>
+      <button class="btn primary" id="agwSave">💾 저장</button>
+    </div>`;
+  const collect = () => {
+    const out = { default: {}, partners: {} };
+    host.querySelectorAll("[data-agw]").forEach(el => {
+      const [scope, key] = el.dataset.agw.split("."); const v = String(el.value).trim();
+      if (scope === "default") { if (v !== "") out.default[key] = v; }
+      else { const pid = scope.slice(2); out.partners[pid] = out.partners[pid] || {}; if (v !== "") out.partners[pid][key] = v; }
+    });
+    Object.keys(out.partners).forEach(k => { if (!Object.keys(out.partners[k]).length) delete out.partners[k]; });
+    return out;
+  };
+  const preview = () => {
+    const keep = AGW; AGW = collect();
+    const r = agwRuleFor(null);
+    const ex = [["여", 9], ["남", 10]].map(([g, hh]) => { const w = agwDefaultWage(r, g); if (!w) return ""; const c = agwCalc(hh, w, g, r); return `${g} ${hh}h → ${NF(c.base)}h×${NF(w)} + 연장 ${c.ot}h×${NF(Math.round(c.otw))} = <b>${NF(c.cost)}원</b>`; }).filter(Boolean).join(" · ");
+    $("agwPreview").innerHTML = ex ? "예시(기본 규칙): " + ex : "기본 시급을 넣으면 예시 계산이 표시됩니다";
+    AGW = keep;
+  };
+  host.querySelectorAll("[data-agw]").forEach(el => el.addEventListener("input", preview)); preview();
+  $("agwSave").onclick = async () => {
+    const rules = collect();
+    try { const r = await api("/api/agencywage", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rules }) }); AGW = (r && r.rules) || rules; toast("용역 시급 규칙을 저장했습니다 — 저장하는 날부터 적용"); }
+    catch (e) { toast("저장 실패: " + (e && e.message ? e.message : e)); }
+  };
+}
 function renderMasters() {
+  { const tb = $("tabAgw"); if (tb) tb.style.display = canM("wage") ? "" : "none"; }
+  { const p = $("agwPanel"); if (p) p.style.display = mTab === "agencywage" ? "" : "none"; }
+  if (mTab === "agencywage") {
+    $("mFilterBar").style.display = "none"; $("mHealthBar").style.display = "none"; $("bomBar").style.display = "none"; $("bomBlocks").style.display = "none";
+    $("mAdd").style.display = "none"; $("mHead").innerHTML = ""; $("mBody").innerHTML = ""; $("mHint").textContent = "";
+    renderAgwTab(); return;
+  }
   $("bomBar").style.display = mTab === "bom" ? "flex" : "none";
   $("bomAddSearch").style.display = mTab === "bom" ? "" : "none";
   if (mTab !== "bom") $("bomBlocks").style.display = "none";
@@ -5279,6 +5378,7 @@ function updateTabCounts() {
     if (k === "bom") { b.innerHTML = "배합비"; return; }
     if (k === "users") { b.innerHTML = "사용자"; return; }
     if (k === "audit") { b.innerHTML = "이력"; return; }
+    if (k === "agencywage") { b.innerHTML = "용역 시급"; return; }
     b.innerHTML = `${MCOLS[k].label} <span class="num" style="font-weight:500;color:var(--faint)">${(M[k] || []).length}</span>`;
   });
 }
