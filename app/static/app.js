@@ -12074,8 +12074,9 @@ function _schedPackBoxLines(it, withExp) { return _schedPackBoxParts(it, withExp
 // 줄 HTML — 개입/박스는 강조색, 소비기한은 회색·작은 글씨
 function _schedPackBoxHtml(it, withExp, subSize, subColor) {
   const expFs = Math.max(8, Math.round(subSize * 0.82));
-  return _schedPackBoxParts(it, withExp).map(p => (p.main ? `<span style="color:${subColor}; font-weight:700;">${esc(p.main)}</span>` : "")
-    + (p.exp ? `<span style="color:#8a8a8a; font-weight:500; font-size:${expFs}px;">${p.main ? " · " : ""}${esc(p.exp)}</span>` : "")).join("<br>");
+  // 소비기한은 개입/박스 '아래 줄'에 회색·작은 글씨. '소비 …'와 '(예정 …)'는 각각 한 덩어리로(중간에서 안 끊김).
+  const expHtml = p => { const m = /^(소비 \S+)\s*(\(예정 [^)]*\))?$/.exec(p.exp || ""); const chunks = m ? [m[1], m[2]].filter(Boolean) : [p.exp]; return `<div style="color:#8a8a8a; font-weight:500; font-size:${expFs}px; line-height:1.2;">${chunks.map(c => `<span style="white-space:nowrap;">${esc(c)}</span>`).join(" ")}</div>`; };
+  return _schedPackBoxParts(it, withExp).map(p => (p.main ? `<div style="color:${subColor}; font-weight:700;">${esc(p.main)}</div>` : "") + (p.exp ? expHtml(p) : "")).join("");
 }
 function _schedPackBox(it) {
   const packN = String(it.pack == null ? "" : it.pack).replace(/,/g, "").trim();
