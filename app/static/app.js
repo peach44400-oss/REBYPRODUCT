@@ -3232,8 +3232,8 @@ function renderStaff() {
           <b data-ahlbl="${ai}" title="근무시간 = 퇴근 − 출근 − 휴게">${memberHLabel(a)}</b>
           ${admin ? `<span style="font-size:10.5px;">시급
           <input class="mini-input num" data-aw="${ai}" value="${a.w ?? ""}" placeholder="자동"
-            title="이 용역 인원의 기본 시급 — 업체·성별을 고르면 기준정보의 기본 시급이 자동으로 들어옵니다. 기준 시간 초과분은 연장 규칙으로 계산" style="width:58px; padding:1px 3px; font-size:11px;"></span>
-          <span class="auto" data-acost="${ai}" style="font-size:10px; white-space:nowrap;">${agwCostLabel(a)}</span>` : ""}</span>
+            title="이 용역 인원의 기본 시급 — 업체·성별을 고르면 기준정보의 기본 시급이 자동으로 들어옵니다. 기준 시간 초과분은 연장 규칙으로 계산" style="width:58px; padding:1px 3px; font-size:11px;"></span>` : ""}</span>
+        ${admin ? `<span class="auto" data-acost="${ai}" style="display:block; font-size:10px; line-height:1.3; padding:1px 2px 0;">${agwCostLabel(a)}</span>` : ""}
       </span>`).join("");
     // ＋ 인원 추가: 맨 위에 '＋ 용역(이름없음)', 그 아래 등록된 직원
     const addSel = `<select class="mini-sel" data-addmember style="max-width:140px"><option value="">＋ 인원 추가</option>` +
