@@ -1368,6 +1368,7 @@ function mapStaffRow(r) {
       start: m.start || "", end: m.end || "", brk: brkOf(m.brk) })) };
 }
 async function loadDay(date) {
+  try { await loadAgencyRules(); } catch (e) {}   // 기준정보에서 방금 바꾼 용역 시급 규칙을 바로 반영
   const d = await api("/api/day/" + date);
   E.date = date;
   E.prod = d.production.map(r => ({ product_id: r.product_id, line_id: r.line_id, batches: r.batches || "", plan_qty: r.plan_qty || "", prod_qty: r.prod_qty || "", defect_qty: r.defect_qty || "",
@@ -3186,6 +3187,8 @@ function _agwAutoWage(tr, ai, a) {
 }
 function renderStaff() {
   const admin = canM("wage");   // 시급 입력칸 노출 여부
+  // 시급이 비어 있는 용역(예전에 저장된 행·규칙 저장 전 추가한 행)은 그릴 때 기준정보 기본 시급으로 채운다 — 저장 전에도 시급·노무비가 바로 보이게
+  if (admin && AGW) (E.staff || []).forEach(r => (r.agency || []).forEach(a => { if (!_agwN(a.w)) _agwAutoWage(null, 0, a); }));
   // 정직원(용역 아님)은 어느 라인이든 한 번 배정되면 다른 라인 '＋ 인원 추가' 목록에서 제외 (용역은 예외 — 여러 라인 가능)
   const _staffKind = {}; (M.staff || []).forEach(s => { _staffKind[s.id] = s.kind; });
   const _assignedFix = new Set();
