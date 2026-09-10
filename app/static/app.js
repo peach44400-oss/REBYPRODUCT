@@ -11195,15 +11195,44 @@ if ($("schedFromShip")) $("schedFromShip").onclick = schedImportFromShip;
 const SPICK = { ship: null };
 async function openSchedPick() {
   if (SCHED.kind !== "prod") return;
-  let data = {};
-  try { const r = await api("/api/schedule?week=" + SCHED.week); data = r.data || {}; } catch (e) { return; }
-  SPICK.ship = data;
+  SPICK.week = SCHED.week;   // 팝업이 보여주는 출고 주(◀ ▶로 다른 주 출고분도 당겨 담을 수 있음)
+  if (!(await _schedPickLoad(SPICK.week))) return;
   if (!SCHED.editMode) { SCHED.editMode = true; _schedSyncEditUI(); renderSchedule(); }   // 담기는 편집 중에만 — 팝업 열면 자동으로 편집 모드
-  if ($("schedPickWeek")) $("schedPickWeek").textContent = SCHED.week + " 주";
   _schedPickFillTargets();
   _schedPickRender();
   _schedPickShow();
 }
+// 팝업 출고 주 로드 — 그 주 출고 스케줄 + '다른 주 생산 스케줄'에 이미 담긴 수량(당겨 생산분)도 합산해 카드 잔량에 반영
+async function _schedPickLoad(week) {
+  let data = {};
+  try { const r = await api("/api/schedule?week=" + week); data = (r && r.data) || {}; } catch (e) { toast("출고 스케줄을 불러오지 못했습니다"); return false; }
+  SPICK.ship = data;
+  SPICK.otherPlaced = await _schedPickOtherPlaced(week);
+  if ($("schedPickWeek")) $("schedPickWeek").textContent = week + " 주" + (week === SCHED.week ? "" : (week > SCHED.week ? " — 다음 주 출고분(당겨 생산)" : " — 지난 주 출고분"));
+  return true;
+}
+async function _schedPickOtherPlaced(shipWeek) {
+  const weeks = new Set([_schedAddDays(shipWeek, -7), shipWeek, _schedAddDays(shipWeek, 7), _schedAddDays(SCHED.week, -7), _schedAddDays(SCHED.week, 7)]);
+  weeks.delete(SCHED.week);   // 현재 편집 중인 주는 화면 데이터(SCHED.data)로 계산
+  const m = {};
+  await Promise.all([...weeks].map(async w => {
+    try {
+      const r = await api("/api/prodschedule?week=" + w); const d = r && r.data;
+      if (!d || !Array.isArray(d.groups)) return;
+      d.groups.forEach(g => (g.items || []).forEach(x => {
+        if (!x || x.spacer || !(x.label || "").trim()) return;
+        const sm = _schedItemSrcs(x); if (sm) Object.keys(sm).forEach(k => { m[k] = (m[k] || 0) + _schedQtyNum(sm[k]); });
+      }));
+    } catch (e) {}
+  }));
+  return m;
+}
+async function _schedPickGo(delta) {
+  const w = delta === 0 ? SCHED.week : _schedAddDays(SPICK.week || SCHED.week, delta * 7);
+  SPICK.week = w;
+  if (await _schedPickLoad(w)) _schedPickRender();
+}
+if ($("schedPickPrev")) { $("schedPickPrev").onclick = () => _schedPickGo(-1); $("schedPickNext").onclick = () => _schedPickGo(1); $("schedPickThis").onclick = () => _schedPickGo(0); }
 function _schedPickFillTargets() {
   const sel = $("schedPickTarget"); if (!sel) return;
   const prev = sel.value;
@@ -11214,11 +11243,24 @@ function _schedPickFillTargets() {
 }
 // 출고 제품의 출처 키 — 출고 표의 줄 하나가 카드 하나(제품명|거래처|출고일|개입). 완전히 같은 줄이 또 있으면 #2, #3…으로 구분.
 // 생산 표에 담긴 항목은 src(하나) 또는 srcs({키: 수량}, 여러 출처를 한 칸에 합친 경우)로 출처를 기억해 카드별 남은 수량을 계산한다.
+// 출고 스케줄에서 박스를 손으로 고친 경우(예 10개입인데 12,800개 → 128박스 = 100개/박스) '한 박스당 개수'를 키에 담아 생산 스케줄이 그대로 따라간다
+function _schedPerBoxOf(it) {
+  const num = v => { const n = Number(String(v == null ? "" : v).replace(/[^\d.]/g, "")); return isFinite(n) ? n : 0; };
+  const q = num(it.qty), b = num(it.boxes);
+  return (q > 0 && b > 0) ? String(Math.round(q / b * 1000) / 1000) : "";
+}
+function _schedPerBoxKey(key) { const seg = String(key || "").replace(/#\d+$/, "").split("|"); const n = seg.length >= 7 ? Number(seg[6]) : 0; return isFinite(n) && n > 0 ? n : 0; }
+// 항목의 박스 수 — 출처에 '박스당 개수'가 있으면 그걸로, 없으면 개입으로
+function _schedBoxesFor(it, qty, pack) {
+  const q = _schedQtyNum(qty), pb = _schedPerBoxKey(it && it.src), pk = _schedQtyNum(pack);
+  if (q > 0 && pb > 0) return String(Math.round(q / pb));
+  return (q > 0 && pk > 0) ? String(Math.round(q / pk)) : "";
+}
 function _schedShipKeys(groups) {
   const cnt = new Map(), keyOf = new Map();
   groups.forEach(g => (g.items || []).forEach(it => {
     if (!it || !(it.label || "").trim()) return;
-    const base = [(it.label || "").trim(), (it.partner || g.partner || "").trim(), g.shipDate || "", String(it.pack || "").trim(), (it.expiry || "").trim(), (it.expiry2 || "").trim()].join("|");
+    const base = [(it.label || "").trim(), (it.partner || g.partner || "").trim(), g.shipDate || "", String(it.pack || "").trim(), (it.expiry || "").trim(), (it.expiry2 || "").trim(), _schedPerBoxOf(it)].join("|");
     const n = cnt.get(base) || 0; cnt.set(base, n + 1);
     keyOf.set(it, n ? base + "#" + (n + 1) : base);
   }));
@@ -11248,6 +11290,8 @@ function _schedPlacedQty(key) {
     if (m) Object.keys(m).forEach(k => { if (_schedKeyEq(k, key)) sum += _schedQtyNum(m[k]); });
     else if ((x.label || "").trim() === lbl) sum += _schedQtyNum(x.qty);
   }));
+  const other = (typeof SPICK !== "undefined" && SPICK.otherPlaced) || {};   // 다른 주 생산 스케줄에 당겨 담은 수량
+  Object.keys(other).forEach(k => { if (_schedKeyEq(k, key)) sum += _schedQtyNum(other[k]); });
   return sum;
 }
 // dest 칸에 수량·출처를 합친다(같은 제품을 같은 칸에 또 놓았을 때)
@@ -11256,7 +11300,7 @@ function _schedMergeInto(dest, addQty, addSrcs) {
   Object.keys(addSrcs || {}).forEach(k => { cur[k] = _schedQtyNum(cur[k] || 0) + _schedQtyNum(addSrcs[k]); });
   dest.qty = String(_schedQtyNum(dest.qty) + _schedQtyNum(addQty));
   if (Object.keys(cur).length) { dest.srcs = cur; dest.src = Object.keys(cur)[0]; }
-  if (dest.boxesAuto !== false) { const q = _schedQtyNum(dest.qty), pk = _schedQtyNum(dest.pack); dest.boxes = (q > 0 && pk > 0) ? String(Math.round(q / pk)) : ""; }
+  if (dest.boxesAuto !== false) dest.boxes = _schedBoxesFor(dest, dest.qty, dest.pack);
 }
 // 합쳐진 칸의 수량을 직접 고치면 차이를 마지막 출처부터 반영해 출처별 수량 합 = 칸 수량을 유지
 function _schedSrcsAfterQtyEdit(x) {
@@ -11321,7 +11365,7 @@ function _schedPickAdd(it, gcol, grow) {
   while (g.items.length <= k) g.items.push(_schedBlankItem());
   const ni = g.items[k];
   ni.label = it.label; ni.qty = qty; ni.pack = it.pack; ni.partner = it.partner; ni.expiry = it.expiry; ni.expiry2 = it.expiry2; ni.spacer = false; ni.src = it.src || ""; delete ni.srcs;
-  if (ni.boxesAuto !== false) { const q = _schedQtyNum(qty), pk = _schedQtyNum(it.pack); ni.boxes = (q > 0 && pk > 0) ? String(Math.round(q / pk)) : ""; }
+  if (ni.boxesAuto !== false) ni.boxes = _schedBoxesFor(ni, qty, it.pack);   // 출고 스케줄에서 손으로 고친 박스 비율을 따름
   SCHED.dirty = true;
   if (!SCHED.editMode) { SCHED.editMode = true; _schedSyncEditUI(); }
   renderSchedule();
@@ -11972,7 +12016,7 @@ function _schedSetField(gi, ii, f, val) {
   if (f === "boxes") it.boxesAuto = String(val).trim() === "";
   if ((f === "qty" || f === "pack") && it.boxesAuto !== false) {
     const q = Number(String(it.qty).replace(/,/g, "")), p = Number(String(it.pack).replace(/,/g, ""));
-    it.boxes = (q > 0 && p > 0) ? String(Math.round(q / p)) : "";
+    it.boxes = (q > 0 && p > 0) ? (_schedPerBoxKey(it.src) > 0 ? String(Math.round(q / _schedPerBoxKey(it.src))) : String(Math.round(q / p))) : "";
   }
 }
 // 엑셀(TSV) 붙여넣기 — 탭/줄바꿈이 있으면 여러 칸·여러 항목으로 분배. 항목이 모자라면 자동 생성.
@@ -12024,7 +12068,7 @@ function _schedFieldUpdate(e) {
     if (f === "boxes") it.boxesAuto = String(inp.value).trim() === "";   // 직접 입력하면 자동계산 해제
     if ((f === "qty" || f === "pack") && it.boxesAuto !== false) {
       const q = Number(String(it.qty).replace(/,/g, "")), p = Number(String(it.pack).replace(/,/g, ""));
-      it.boxes = (q > 0 && p > 0) ? String(Math.round(q / p)) : "";
+      it.boxes = (q > 0 && p > 0) ? (_schedPerBoxKey(it.src) > 0 ? String(Math.round(q / _schedPerBoxKey(it.src))) : String(Math.round(q / p))) : "";
       const bi = document.querySelector(`#schedDoc [data-g="${inp.dataset.g}"][data-i="${inp.dataset.i}"][data-f="boxes"]`);
       if (bi && bi.value !== it.boxes) bi.value = it.boxes;   // 재렌더 없이 값만 갱신(포커스 유지)
     }
@@ -12153,15 +12197,16 @@ function _schedPackParts(it) {
   const norm = p => String(p == null ? "" : p).replace(/,/g, "").trim();
   const ex = v => String(v == null ? "" : v).trim();
   let raw = null;
-  if (Array.isArray(it.packsView) && it.packsView.length) raw = it.packsView.map(x => ({ pack: norm(x.pack), qty: num(x.qty), expiry: ex(x.expiry), expiry2: ex(x.expiry2) }));
+  if (Array.isArray(it.packsView) && it.packsView.length) raw = it.packsView.map(x => ({ pack: norm(x.pack), qty: num(x.qty), expiry: ex(x.expiry), expiry2: ex(x.expiry2), perBox: num(x.perBox) }));
   else if (it.srcs && typeof it.srcs === "object") raw = Object.keys(it.srcs).map(k => {
     const seg = k.replace(/#\d+$/, "").split("|");
     return { pack: (seg.length >= 4 ? norm(seg[3]) : "") || norm(it.pack), qty: num(it.srcs[k]),
-             expiry: seg.length >= 5 ? ex(seg[4]) : ex(it.expiry), expiry2: seg.length >= 6 ? ex(seg[5]) : ex(it.expiry2) };
+             expiry: seg.length >= 5 ? ex(seg[4]) : ex(it.expiry), expiry2: seg.length >= 6 ? ex(seg[5]) : ex(it.expiry2),
+             perBox: _schedPerBoxKey(k) };
   });
-  if (!raw) return [{ pack: norm(it.pack), qty: num(it.qty), expiry: ex(it.expiry), expiry2: ex(it.expiry2) }];
-  const m = new Map();   // 개입|소비기한|예정 단위로 합산 (같은 개입이라도 소비기한이 다르면 다른 줄)
-  raw.forEach(x => { const k = [x.pack, x.expiry, x.expiry2].join("|"); const c = m.get(k); if (c) c.qty += x.qty; else m.set(k, Object.assign({}, x)); });
+  if (!raw) return [{ pack: norm(it.pack), qty: num(it.qty), expiry: ex(it.expiry), expiry2: ex(it.expiry2), perBox: _schedPerBoxKey(it.src) }];
+  const m = new Map();   // 개입|소비기한|예정|박스당개수 단위로 합산 (같은 개입이라도 소비기한이 다르면 다른 줄)
+  raw.forEach(x => { const k = [x.pack, x.expiry, x.expiry2, x.perBox || ""].join("|"); const c = m.get(k); if (c) c.qty += x.qty; else m.set(k, Object.assign({}, x)); });
   return [...m.values()];
 }
 // 줄 끝 소비기한 표기 — " · 소비 2026-11-12 (예정 2026-11-19)"
@@ -12171,7 +12216,7 @@ function _schedExpSuffix(p) { const t = _schedExpText(p); return t ? " · " + t 
 function _schedPackBoxParts(it, withExp) {
   const parts = _schedPackParts(it).filter(p => p.pack !== "");
   if (parts.length < 2) { const one = _schedPackBox(it); const exp = withExp ? _schedExpText(parts[0] || { expiry: (it.expiry || "").trim(), expiry2: (it.expiry2 || "").trim() }) : ""; return (one || exp) ? [{ main: one, exp }] : []; }
-  return parts.map(p => { const pk = Number(p.pack); const bx = (pk > 0 && p.qty) ? Math.round(p.qty / pk).toLocaleString("ko-KR") + "박스" : ""; return { main: `${pk.toLocaleString("ko-KR")}개입` + (bx ? "/" + bx : ""), exp: withExp ? _schedExpText(p) : "" }; });
+  return parts.map(p => { const pk = Number(p.pack); const per = p.perBox > 0 ? p.perBox : pk; const bx = (per > 0 && p.qty) ? Math.round(p.qty / per).toLocaleString("ko-KR") + "박스" : ""; return { main: `${pk.toLocaleString("ko-KR")}개입` + (bx ? "/" + bx : ""), exp: withExp ? _schedExpText(p) : "" }; });
 }
 function _schedPackBoxLines(it, withExp) { return _schedPackBoxParts(it, withExp).map(p => p.main + (p.exp ? (p.main ? " · " : "") + p.exp : "")); }
 // 줄 HTML — 개입/박스는 강조색, 소비기한은 회색·작은 글씨
