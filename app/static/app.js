@@ -11227,6 +11227,36 @@ async function _schedPickOtherPlaced(shipWeek) {
   }));
   return m;
 }
+// [↩ 빼기] — 이 출처(카드)로 담은 수량을 이번 주 생산 표에서 되돌린다. 합쳐진 칸이면 그 몫만 차감, 단독 칸이면 칸을 비움.
+function _schedPickUndo(key) {
+  if (!SCHED.data) return;
+  const lbl = String(key).split("|")[0]; let removed = 0, cells = 0;
+  (SCHED.data.groups || []).forEach(g => (g.items || []).forEach((x, i, arr) => {
+    if (!x || x.spacer || !(x.label || "").trim()) return;
+    const m = _schedItemSrcs(x);
+    if (m) {
+      const hit = Object.keys(m).filter(k => _schedKeyEq(k, key)); if (!hit.length) return;
+      const amt = hit.reduce((a, k) => a + _schedQtyNum(m[k]), 0);
+      const rest = {}; Object.keys(m).forEach(k => { if (!hit.includes(k)) rest[k] = m[k]; });
+      removed += amt; cells++;
+      const left = _schedQtyNum(x.qty) - amt;
+      if (!Object.keys(rest).length || left <= 0) { arr[i] = _schedBlankItem(); return; }   // 이 출처뿐이면 칸 비움
+      x.qty = String(left);
+      if (Object.keys(rest).length === 1) { x.src = Object.keys(rest)[0]; delete x.srcs; } else { x.srcs = rest; x.src = Object.keys(rest)[0]; }
+      if (x.boxesAuto !== false) x.boxes = _schedBoxesFor(x, x.qty, x.pack);
+    } else if ((x.label || "").trim() === lbl) { removed += _schedQtyNum(x.qty); cells++; arr[i] = _schedBlankItem(); }   // 예전 항목(출처 없음)
+  }));
+  if (!cells) {
+    const other = (SPICK.otherPlaced || {}); const inOther = Object.keys(other).some(k => _schedKeyEq(k, key) && _schedQtyNum(other[k]) > 0);
+    toast(inOther ? "이번 주가 아닌 다른 주 생산 스케줄에 담겨 있어요 — 그 주를 열어 빼 주세요" : "이번 주 생산 표에 담긴 항목이 없습니다"); return;
+  }
+  SCHED.dirty = true; renderSchedule(); _schedPickRefresh();
+  toast(NF(removed) + "개를 생산 표에서 뺐습니다");
+}
+if ($("schedPickBody")) $("schedPickBody").addEventListener("click", e => {
+  const u = e.target.closest("[data-undo]"); if (!u) return;
+  e.preventDefault(); e.stopPropagation(); _schedPickUndo(u.dataset.undo);
+});
 async function _schedPickGo(delta) {
   const w = delta === 0 ? SCHED.week : _schedAddDays(SPICK.week || SCHED.week, delta * 7);
   SPICK.week = w;
@@ -11325,9 +11355,10 @@ function _schedPickRender() {
       const badge = full ? `<span class="chip ok" style="font-size:9.5px;">담김 완료</span>`
         : partial ? `<span class="chip" style="font-size:9.5px; background:#fff3e0; color:#b45f06;">남음 ${NF(rem)}</span>`
         : (anyPlaced ? `<span class="chip ok" style="font-size:9.5px;">담김</span>` : "");
-      return `<button class="sched-pick-card" draggable="${full ? "false" : "true"}" data-pick="${payload}" ${full ? 'disabled title="출고 수량을 모두 담았습니다 — 생산 표에서 수량을 줄이면 다시 담을 수 있어요"' : (partial ? `title="남은 ${NF(rem)}개를 끌어다 놓으면 담깁니다"` : "")}
-        style="display:block; width:100%; text-align:left; border:1px solid var(--line); border-left:3px solid ${full ? "#37a24a" : (partial ? "#e08a1e" : "var(--accent,#2f6df0)")}; border-radius:8px; padding:5px 8px; margin-bottom:5px; background:#fff; cursor:${full ? "not-allowed" : "grab"}; font-size:12px;${full ? " opacity:.45;" : ""}">
-        <b>${esc(it.label)}</b> <span class="num">${esc(it.qty)}</span>${it.pack ? ` <span class="auto" style="font-size:10.5px">${esc(it.pack)}</span>` : ""} ${badge}</button>`;
+      const undo = anyPlaced ? ` <span class="sched-pick-undo" data-undo="${esc(key)}" title="이 카드로 담은 ${NF(used)}개를 생산 표에서 다시 빼냅니다 (합쳐진 칸이면 이 몫만 차감)" style="float:right; font-size:10px; color:#b33; cursor:pointer; border:1px solid #e5b4b4; border-radius:5px; padding:0 5px; background:#fff; line-height:16px;">↩ 빼기</span>` : "";
+      return `<button type="button" class="sched-pick-card" draggable="${full ? "false" : "true"}" data-pick="${payload}" ${full ? 'aria-disabled="true" title="출고 수량을 모두 담았습니다 — [↩ 빼기]로 되돌리거나 생산 표에서 수량을 줄이면 다시 담을 수 있어요"' : (partial ? `title="남은 ${NF(rem)}개를 끌어다 놓으면 담깁니다"` : "")}
+        style="display:block; width:100%; text-align:left; border:1px solid var(--line); border-left:3px solid ${full ? "#37a24a" : (partial ? "#e08a1e" : "var(--accent,#2f6df0)")}; border-radius:8px; padding:5px 8px; margin-bottom:5px; background:#fff; cursor:${full ? "default" : "grab"}; font-size:12px;">
+        ${undo}<span style="${full ? "opacity:.45;" : ""}"><b>${esc(it.label)}</b> <span class="num">${esc(it.qty)}</span>${it.pack ? ` <span class="auto" style="font-size:10.5px">${esc(it.pack)}</span>` : ""}</span> ${badge}</button>`;
     }).join("") || `<div class="auto" style="font-size:11.5px; padding:6px;">제품 없음</div>`;
     return `<div style="flex:0 0 165px; border:1px solid var(--line); border-radius:8px; padding:6px; background:#fff;">
       <div style="font-weight:800; font-size:12.5px; text-align:center; padding-bottom:4px; border-bottom:1px solid var(--line-soft); margin-bottom:6px;">${esc(g.name || "—")}${g.partner ? `<div class="auto" style="font-weight:500; font-size:10.5px;">${esc(g.partner)}</div>` : ""}${g.shipDate ? `<div class="auto" style="font-weight:500; font-size:10px;">${esc(_schedMD(g.shipDate))}</div>` : ""}</div>
