@@ -11415,8 +11415,21 @@ document.addEventListener("dragstart", e => {
   const td = e.target.closest("#schedDoc td[data-gcol][draggable='true']");   // 칸 전체 잡고 끌기
   if (td) { _schedItemDrag = { gi: +td.dataset.gcol, ii: +td.dataset.grow }; _schedPickDrag = null; try { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", ""); } catch (x) {} }
 });
+// 드래그 중 화면 위·아래 가장자리에 가면 표(스크롤 영역)와 페이지를 자동으로 스크롤 — 가려진 맨 위(08:00) 행에도 놓을 수 있게
+function _schedDragAutoScroll(e) {
+  const host = $("schedDoc"); if (!host) return;
+  const EDGE = 60, STEP = 18;
+  const r = host.getBoundingClientRect();
+  if (host.scrollHeight > host.clientHeight + 2) {
+    if (e.clientY < r.top + EDGE) host.scrollTop -= STEP;
+    else if (e.clientY > r.bottom - EDGE) host.scrollTop += STEP;
+  }
+  if (e.clientY < 140) window.scrollBy(0, -STEP);   // 상단 고정 도구줄에 가려진 부분
+  else if (e.clientY > window.innerHeight - EDGE) window.scrollBy(0, STEP);
+}
 document.addEventListener("dragover", e => {
   if (!_schedPickDrag && !_schedItemDrag) return;
+  _schedDragAutoScroll(e);
   if (!e.target.closest("#schedDoc")) { _schedHiClear(); return; }
   e.preventDefault();
   _schedHiCell(e.target.closest("#schedDoc [data-gcol]"));
@@ -12180,6 +12193,16 @@ function _schedClick(e) {
     g.items.push(ni);
     renderSchedDoc(); return;
   }
+  const top = e.target.closest("[data-scheditop]");
+  if (top) {   // 맨 위로: 위쪽에서 첫 빈 행(라벨 없는 항목·spacer 아님)을 찾아 그리로 이동, 없으면 0행과 맞바꿈
+    const [gi, ii] = top.dataset.scheditop.split(":").map(Number);
+    const arr = (SCHED.data.groups[gi] || {}).items || []; if (!arr[ii] || ii === 0) return;
+    const nRows = Math.max((SCHED.data.times || []).length, arr.length);
+    const cover = _schedSpanMap([{ items: arr }], nRows, true).cover[0];   // 위 제품이 여러 시간에 걸쳐 덮고 있는 행은 빈 행이 아님
+    let k = arr.findIndex((x, i) => i < ii && !cover.has(i) && (!x || (!(x.label || "").trim() && !x.spacer)));
+    if (k < 0) { toast("위쪽에 빈 시간이 없습니다"); return; }
+    _schedMoveItem(gi, ii, gi, k); return;
+  }
   const mv = e.target.closest("[data-schedimove]");
   if (mv) {
     const [gi, ii, dir] = mv.dataset.schedimove.split(":").map(Number);
@@ -12423,6 +12446,7 @@ function buildScheduleDocEdit(d, week) {
         <span class="sep"></span>
         <button data-schedicopy="${gi}:${ii}" title="이 항목을 복사해 바로 아래에 추가">복사</button>
         <button data-schediblank="${gi}:${ii}" title="이 항목 위에 빈 칸을 넣어 한 칸 아래로 내림">빈칸</button>
+        ${_prod ? `<button data-scheditop="${gi}:${ii}" title="이 열의 맨 위(08:00)로 이동 — 위쪽이 차 있으면 그 아래 첫 빈 행" ${ii === 0 ? "disabled" : ""}>⤒</button>` : ""}
         <button data-schedimove="${gi}:${ii}:-1" title="위로 이동" ${ii === 0 ? "disabled" : ""}>▲</button>
         <button data-schedimove="${gi}:${ii}:1" title="아래로 이동" ${ii === (g.items.length - 1) ? "disabled" : ""}>▼</button>
         <span class="sep"></span>
