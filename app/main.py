@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.101.3"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.101.4"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -311,6 +311,32 @@ def auto_dispose_expired(con, today=None):
     for m in con.execute("""SELECT id, COALESCE(shelf_days,0) sd FROM material
             WHERE kind IN ('raw','sub') AND COALESCE(status,'') NOT IN ('단종','중지')"""):
         mid, sd = m["id"], m["sd"]
+        # (1) 최근 14일 내 지난 기한: 만료일(E) 마감 시점의 그 배치 잔량을 E+1에 폐기.
+        #     오늘 기준으로 보면 E+1 이후 사용량이 FEFO로 만료 배치를 '소진한 것'처럼 잡혀 폐기가 안 되던 문제 방지.
+        cands = set()
+        for b in con.execute("SELECT date, made_date, expiry FROM material_in WHERE material_id=? AND date<=?", (mid, today)):
+            e = (b["expiry"] or "").strip()
+            if not e and sd and int(sd) > 0:
+                e = _iso_plus((b["made_date"] or b["date"] or "").strip(), int(sd))
+            if e and e < today and e >= _iso_plus(today, -14):
+                cands.add(e)
+        for e in sorted(cands):
+            if (mid, e) in acked or (mid, e) in done:
+                continue
+            disp_date = _iso_plus(e, 1)
+            if not disp_date or disp_date > today:
+                continue
+            _, _, b_e = material_stock_expiry(con, mid, e, sd)      # 만료일 마감 시점 배치별 잔량
+            qty = round(sum(b["qty"] for b in b_e if b["exp"] == e), 3)
+            if qty <= 1e-6:
+                continue
+            con.execute("""INSERT INTO material_disposal(date, material_id, qty, expiry, reason, note, created_at, created_by)
+                VALUES(?,?,?,?,?,?,datetime('now','localtime'),?)""",
+                        (disp_date, mid, qty, e, "유통기한 만료 자동폐기", "auto", "system"))
+            _recompute_material_day(con, mid, disp_date)
+            done.add((mid, e))
+            n += 1
+        # (2) 그 밖(오래된 기한 등)은 오늘 기준 만료 재고로 (구 방식)
         _, expired, batches = material_stock_expiry(con, mid, today, sd)
         if expired <= 1e-6:
             continue
@@ -343,10 +369,10 @@ def auto_dispose_daily(con):
     """하루 한 번만 자동폐기 실행 (대시보드/자재현황 로드 시 호출)."""
     today = dt.date.today().isoformat()
     row = con.execute("SELECT value FROM app_setting WHERE key='autodispose_day'").fetchone()
-    if row and row["value"] == today:
+    if row and row["value"] == today + " v2":   # v2 = 만료일 기준 폐기 로직 도입 후 한 번 더 실행되도록
         return 0
     n = auto_dispose_expired(con, today)
-    con.execute("INSERT OR REPLACE INTO app_setting(key, value) VALUES('autodispose_day',?)", (today,))
+    con.execute("INSERT OR REPLACE INTO app_setting(key, value) VALUES('autodispose_day',?)", (today + " v2",))
     con.commit()
     return n
 
@@ -6637,6 +6663,9 @@ def ledger(request: Request, date: str = ""):
         for r in con.execute("""SELECT material_id, expiry FROM material_disposal
                 WHERE date<=? AND COALESCE(expiry,'')!='' GROUP BY material_id, expiry""", (date,)):
             disp_exp.setdefault(r["material_id"], set()).add(r["expiry"])
+        # 그날 폐기 수량 — 전일재고엔 아직 포함돼 있으므로 당일 소진 계산의 가용량에서 뺀다
+        disp_today = {r["material_id"]: float(r["q"] or 0) for r in con.execute(
+            "SELECT material_id, SUM(qty) q FROM material_disposal WHERE date=? GROUP BY material_id", (date,))}
         # carry-forward 소비기한 — 그날까지(≤date) 가장 최근에 입력된 소비기한.
         # 입고분(material_in.expiry) + 입고 없는 재고 수동입력(material_expiry) 중 가장 최근 날짜.
         # FEFO 활성 배치를 못 잡을 때(초기·잉여 재고 등)의 폴백 — 입력한 기한이 표에서 사라지지 않게 한다.
@@ -6679,10 +6708,15 @@ def ledger(request: Request, date: str = ""):
             if cur is None or r["date"] >= cur[0]:
                 man_made_cf[r["material_id"]] = (r["date"], r["made"])
 
+        def _live_batches(mid):
+            """그날까지 폐기 확정된 소비기한(LOT) 배치는 제외 — 폐기분이 다른 배치의 소진으로 잡히지 않게"""
+            ds = disp_exp.get(mid) or set()
+            return [b for b in (batches.get(mid) or []) if (b["exp"] or "") not in ds]
+
         def fefo_active(mid):
             """지금 소진 중인 배치 = 보유량을 소비기한 늦은 배치부터 채우고, 남은 것 중
             소비기한이 가장 이른 배치. 보유량이 기록 배치 합보다 크면 초기재고(None→fallback)."""
-            bs = batches.get(mid)
+            bs = _live_batches(mid)
             rq = onhand.get(mid)
             if rq is None or rq <= 0 or not bs:
                 return None
@@ -6700,17 +6734,19 @@ def ledger(request: Request, date: str = ""):
                     remaining -= take
             return active
 
-        def fefo_consumed_today(mid, prev, used):
+        def fefo_consumed_today(mid, prev, used, inq=0.0):
             """당일 사용량(used)이 FEFO로 소진한 배치들의 소비기한 목록 (짧은 기한부터).
-            전일재고(prev)를 소비기한 늦은 배치부터 채워 배치별 보유량을 복원한 뒤,
-            당일 사용량을 소비기한 이른 배치부터 차감 — 걸친 배치가 여럿이면 기한도 여럿."""
-            bs = batches.get(mid)
+            당일 시작 가용량(전일재고 + 당일 입고 − 당일 폐기)을 소비기한 늦은 배치부터 채워 배치별 보유량을 복원한 뒤,
+            당일 사용량을 소비기한 이른 배치부터 차감 — 걸친 배치가 여럿이면 기한도 여럿.
+            (당일 입고를 넣지 않으면 전일 재고가 당일 입고 배치로 잘못 배정되고, 당일 폐기를 빼지 않으면 폐기분이 더 오래된 배치로 밀린다)"""
+            bs = _live_batches(mid)
             if not bs or prev is None or not used or used <= 1e-4:
                 return []
             bs_sorted = sorted(bs, key=lambda b: (b["exp"] or b["in"], b["in"]))
             total = sum(b["qty"] for b in bs_sorted)
             rem = [0.0] * len(bs_sorted)
-            fill = min(float(prev), total)            # 초과분은 초기재고(기한 미상) → 제외
+            avail = float(prev) + float(inq or 0) - float(disp_today.get(mid, 0.0))
+            fill = min(max(avail, 0.0), total)        # 초과분은 초기재고(기한 미상) → 제외
             for i in range(len(bs_sorted) - 1, -1, -1):
                 if fill <= 1e-4:
                     break
@@ -6794,7 +6830,7 @@ def ledger(request: Request, date: str = ""):
                     made = mm[1]
             # 당일 사용량이 여러 소비기한 배치에 걸치면 그 기한을 모두 표시 (예: "2026-07-01, 2026-07-02")
             exps_today = fefo_consumed_today(m["id"], d["prev_qty"] if d else None,
-                                             d["used_qty"] if d else None)
+                                             d["used_qty"] if d else None, d["in_qty"] if d else 0.0)
             # 이미 폐기된 소비기한(LOT)은 수불부에 표시하지 않는다 (재고에서 빠졌으므로)
             dset = disp_exp.get(m["id"])
             if dset:
@@ -6804,18 +6840,16 @@ def ledger(request: Request, date: str = ""):
                     exp = ", ".join(keep)
                     if not exp:
                         exp_est = False
-            # 소비기한 열 = 지금 재고로 남은 배치들의 기한 + 당일 소진 배치 기한을 모두 표시(폐기분 제외).
-            #  두 가지 이상 소비기한(옛 재고 + 새 입고 등)이 있으면 전부 콤마로 보여준다.
-            allexp = []
-            for e in (fefo_instock_exps(m["id"]) + exps_today):
+            # 소비기한 열 = '그날 사용한 배치'의 기한만 (FEFO, 여러 배치에 걸치면 모두·이른 순).
+            #  사용이 없는 날은 지금 소진 중인(다음에 쓸) 배치의 기한(exp) 그대로.
+            used_exps = []
+            for e in exps_today:
                 e = (e or "").strip()
-                if e and (not dset or e not in dset) and e not in allexp:
-                    allexp.append(e)
-            if allexp:
-                exp = ", ".join(sorted(allexp))       # 소비기한 이른 순
+                if e and (not dset or e not in dset) and e not in used_exps:
+                    used_exps.append(e)
+            if used_exps:
+                exp = ", ".join(sorted(used_exps))
                 exp_est = False
-            elif len(exps_today) == 1 and not exp:
-                exp = exps_today[0]
             row = {"id": m["id"], "name": m["name"], "unit": m["unit"] or "",
                    "prev": (d["prev_qty"] if d else None), "in": (d["in_qty"] if d else None),
                    "used": (d["used_qty"] if d else None), "real": (d["real_qty"] if d else None),
