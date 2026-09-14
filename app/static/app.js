@@ -11458,7 +11458,7 @@ function _schedDragAutoScroll(e) {
 function _schedDragScrollStop() { _dragScroll.y = null; if (_dragScroll.raf) { cancelAnimationFrame(_dragScroll.raf); _dragScroll.raf = 0; } }
 function _schedDragScrollTick() {
   _dragScroll.raf = 0;
-  if ((!_schedPickDrag && !_schedItemDrag) || _dragScroll.y == null) return;
+  if ((!_schedPickDrag && !_schedItemDrag && !_spanDrag) || _dragScroll.y == null) return;
   const y = _dragScroll.y, EDGE = 90, TOPBAR = 140;   // 상단 140px = 고정 도구줄에 가려지는 영역
   const speed = d => Math.min(24, 4 + Math.max(0, d) / 5);   // px/프레임 (약 240~1400px/초)
   const host = $("schedDoc");
@@ -11472,6 +11472,7 @@ function _schedDragScrollTick() {
   const maxWin = document.documentElement.scrollHeight - window.innerHeight;
   if (y < TOPBAR && window.scrollY > 0) window.scrollBy(0, -speed(TOPBAR - y));
   else if (y > window.innerHeight - EDGE && window.scrollY < maxWin - 1) window.scrollBy(0, speed(y - (window.innerHeight - EDGE)));
+  if (_spanDrag) _schedSpanUpdate(y);   // 스크롤로 커서 아래 행이 바뀌면 걸칠 행도 따라감
   _dragScroll.raf = requestAnimationFrame(_schedDragScrollTick);
 }
 document.addEventListener("dragover", e => {
@@ -11526,15 +11527,22 @@ function _schedSpanHi(ii, span) {
     const k = +td.dataset.stime; const tr = td.closest("tr"); if (tr) tr.classList.toggle("sched-span-hi", k >= ii && k < ii + span);
   });
 }
-document.addEventListener("mousemove", e => {
+// 커서 Y → 걸칠 행 수 갱신 (드래그 중엔 표를 다시 그리지 않으므로 현재 DOM 위치를 그대로 써도 됨 — 스크롤돼도 정확)
+function _schedSpanUpdate(y) {
   if (!_spanDrag) return;
   let row = _spanDrag.ii;
-  _spanDrag.rows.forEach(r => { if (r.top <= e.clientY) row = r.k; });   // 커서 Y에 해당하는 행(스냅샷 기준, 화면 밖도 OK)
+  document.querySelectorAll("#schedDoc [data-stime]").forEach(td => { if (td.getBoundingClientRect().top <= y) row = +td.dataset.stime; });
   const span = Math.max(1, Math.min(row - _spanDrag.ii + 1, _spanDrag.cap));
   if (span !== _spanDrag.span) { _spanDrag.span = span; _schedSpanHi(_spanDrag.ii, span); }
+}
+document.addEventListener("mousemove", e => {
+  if (!_spanDrag) return;
+  _schedSpanUpdate(e.clientY);
+  _schedDragAutoScroll(e);   // 표 아래(위) 가장자리에 대고 있으면 자동 스크롤 → 화면 밖 시간까지 늘릴 수 있음
 });
 document.addEventListener("mouseup", () => {
   if (!_spanDrag) return;
+  _schedDragScrollStop();
   const d = _spanDrag; _spanDrag = null;
   document.querySelectorAll("#schedDoc .sched-span-hi").forEach(tr => tr.classList.remove("sched-span-hi"));
   const grp = ((SCHED.data && SCHED.data.groups) || [])[d.gi]; const it = grp && (grp.items || [])[d.ii]; if (!it) return;
