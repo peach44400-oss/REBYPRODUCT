@@ -11447,16 +11447,32 @@ document.addEventListener("dragstart", e => {
   if (td) { _schedItemDrag = { gi: +td.dataset.gcol, ii: +td.dataset.grow }; _schedPickDrag = null; try { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", ""); } catch (x) {} }
 });
 // 드래그 중 화면 위·아래 가장자리에 가면 표(스크롤 영역)와 페이지를 자동으로 스크롤 — 가려진 맨 위(08:00) 행에도 놓을 수 있게
+//  dragover는 마우스가 멈추면 0.35초에 한 번만 오므로 이벤트마다 스크롤하면 거의 안 움직인다 →
+//  마지막 위치를 기억해 두고 드래그 중엔 매 프레임(rAF) 계속 스크롤. 가장자리에 깊이 들어갈수록 빨라짐.
+//  표(스크롤 영역)의 경계는 '화면에 보이는 부분' 기준 — 표 아래쪽이 화면 밖이어도 창 아래 가장자리에서 표가 스크롤된다.
+const _dragScroll = { y: null, raf: 0 };
 function _schedDragAutoScroll(e) {
-  const host = $("schedDoc"); if (!host) return;
-  const EDGE = 60, STEP = 18;
-  const r = host.getBoundingClientRect();
-  if (host.scrollHeight > host.clientHeight + 2) {
-    if (e.clientY < r.top + EDGE) host.scrollTop -= STEP;
-    else if (e.clientY > r.bottom - EDGE) host.scrollTop += STEP;
+  _dragScroll.y = e.clientY;
+  if (!_dragScroll.raf) _dragScroll.raf = requestAnimationFrame(_schedDragScrollTick);
+}
+function _schedDragScrollStop() { _dragScroll.y = null; if (_dragScroll.raf) { cancelAnimationFrame(_dragScroll.raf); _dragScroll.raf = 0; } }
+function _schedDragScrollTick() {
+  _dragScroll.raf = 0;
+  if ((!_schedPickDrag && !_schedItemDrag) || _dragScroll.y == null) return;
+  const y = _dragScroll.y, EDGE = 90, TOPBAR = 140;   // 상단 140px = 고정 도구줄에 가려지는 영역
+  const speed = d => Math.min(24, 4 + Math.max(0, d) / 5);   // px/프레임 (약 240~1400px/초)
+  const host = $("schedDoc");
+  if (host && host.scrollHeight > host.clientHeight + 2) {
+    const r = host.getBoundingClientRect();
+    const top = Math.max(r.top, TOPBAR), bottom = Math.min(r.bottom, window.innerHeight);
+    const maxTop = host.scrollHeight - host.clientHeight;
+    if (y < top + EDGE && host.scrollTop > 0) host.scrollTop = Math.max(0, host.scrollTop - speed(top + EDGE - y));
+    else if (y > bottom - EDGE && host.scrollTop < maxTop) host.scrollTop = Math.min(maxTop, host.scrollTop + speed(y - (bottom - EDGE)));
   }
-  if (e.clientY < 140) window.scrollBy(0, -STEP);   // 상단 고정 도구줄에 가려진 부분
-  else if (e.clientY > window.innerHeight - EDGE) window.scrollBy(0, STEP);
+  const maxWin = document.documentElement.scrollHeight - window.innerHeight;
+  if (y < TOPBAR && window.scrollY > 0) window.scrollBy(0, -speed(TOPBAR - y));
+  else if (y > window.innerHeight - EDGE && window.scrollY < maxWin - 1) window.scrollBy(0, speed(y - (window.innerHeight - EDGE)));
+  _dragScroll.raf = requestAnimationFrame(_schedDragScrollTick);
 }
 document.addEventListener("dragover", e => {
   if (!_schedPickDrag && !_schedItemDrag) return;
@@ -11472,13 +11488,13 @@ document.addEventListener("drop", e => {
   const gcol = cell ? +cell.dataset.gcol : null;
   const grow = (cell && cell.dataset.grow != null) ? +cell.dataset.grow : null;
   const pick = _schedPickDrag, item = _schedItemDrag;
-  _schedPickDrag = null; _schedItemDrag = null; _schedHiClear();
+  _schedPickDrag = null; _schedItemDrag = null; _schedHiClear(); _schedDragScrollStop();
   if (!inDoc || gcol == null) return;
   e.preventDefault();
   if (pick) _schedPickAdd(pick, gcol, grow);
   else if (item) _schedMoveItem(item.gi, item.ii, gcol, grow);
 });
-document.addEventListener("dragend", () => { _schedPickDrag = null; _schedItemDrag = null; _schedHiClear(); _schedCellDisarm(); });
+document.addEventListener("dragend", () => { _schedPickDrag = null; _schedItemDrag = null; _schedHiClear(); _schedCellDisarm(); _schedDragScrollStop(); });
 // 생산 스케줄의 작은 빈 칸을 더블클릭 → 그 칸만 입력칸(편집기)으로 연다
 document.addEventListener("dblclick", e => {
   const td = e.target.closest("#schedDoc td.sched-empty"); if (!td || !SCHED.data || SCHED.kind !== "prod") return;
