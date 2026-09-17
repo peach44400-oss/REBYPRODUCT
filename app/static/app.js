@@ -11304,13 +11304,51 @@ function _schedItemSrcs(x) {
 }
 // 생산 표 전체에서 이 출처(카드)로 담긴 수량 합계 (예전 항목(출처 없음)은 제품명으로 매칭)
 // 키 비교 — 같으면 true. 예전(소비기한 없는 4토막) 키는 앞 4토막이 같으면 같은 출처로 본다(호환).
+// 담긴 항목의 출처 키(a)가 카드 키(b)와 같은 출처인가.
+//  - 정확히 같으면 같음.
+//  - 출고 스케줄을 고쳐 키 뒷부분(소비기한·박스 비율)이 바뀐 경우: a와 정확히 같은 카드가 없을 때
+//    제품|거래처|출고일|개입(앞 4토막)이 같은 카드(여럿이면 첫 번째)와 같은 출처로 본다. 앞 4토막도 없으면 제품|거래처|출고일 3토막이 유일할 때.
+//  - 예전(짧은) 키는 앞 토막이 같으면 같음.
+function _schedKeySegs(k) { return String(k || "").replace(/#\d+$/, "").split("|"); }
+function _schedKeyResolve(a) {
+  const keys = (typeof SPICK !== "undefined" && Array.isArray(SPICK.keys)) ? SPICK.keys : null;
+  if (!keys) return null;
+  if (keys.includes(a)) return a;
+  const sa = _schedKeySegs(a); if (sa.length < 3) return null;
+  const same = (k, n) => { const sk = _schedKeySegs(k); if (sk.length < n) return false; for (let i = 0; i < n; i++) if (sk[i] !== sa[i]) return false; return true; };
+  const c4 = sa.length >= 4 ? keys.filter(k => same(k, 4)) : [];
+  if (c4.length) return c4[0];
+  const c3 = keys.filter(k => same(k, 3));
+  if (c3.length === 1) return c3[0];
+  if (c3.length) return null;
+  const c2 = keys.filter(k => same(k, 2));   // 출고일까지 바뀐 경우: 제품|거래처가 유일하면 그 카드로
+  return c2.length === 1 ? c2[0] : null;
+}
 function _schedKeyEq(a, b) {
   if (a === b) return true;
-  const sa = String(a).replace(/#\d+$/, "").split("|"), sb = String(b).replace(/#\d+$/, "").split("|");
-  if (sa.length === sb.length) return false;
+  const sa = _schedKeySegs(a), sb = _schedKeySegs(b);
   const n = Math.min(sa.length, sb.length); if (n < 4) return false;
-  for (let i = 0; i < n; i++) if (sa[i] !== sb[i]) return false;
-  return true;
+  for (let i = 0; i < 4; i++) if (sa[i] !== sb[i]) return false;
+  if (sa.length !== sb.length) return true;              // 예전(짧은) 키 호환
+  const r = _schedKeyResolve(a);                          // 뒷부분만 다름 → 카드 목록에서 어느 카드 것인지 결정
+  return r == null ? true : r === b;
+}
+// 팝업을 그릴 때: 담긴 항목의 키가 현재 카드와 정확히 안 맞으면(출고 스케줄 수정) 맞는 카드 키로 갱신해 계속 연결되게 한다
+function _schedRelinkPlaced() {
+  if (!SCHED.data || !Array.isArray(SPICK.keys)) return 0;
+  let n = 0;
+  (SCHED.data.groups || []).forEach(g => (g.items || []).forEach(x => {
+    if (!x || x.spacer || !(x.label || "").trim()) return;
+    if (x.srcs && typeof x.srcs === "object") {
+      const out = {}; let ch = false;
+      Object.keys(x.srcs).forEach(k => { const t = SPICK.keys.includes(k) ? k : (_schedKeyResolve(k) || k); if (t !== k) ch = true; out[t] = _schedQtyNum(out[t] || 0) + _schedQtyNum(x.srcs[k]); });
+      if (ch) { x.srcs = out; x.src = Object.keys(out)[0]; n++; }
+    } else if (x.src && !SPICK.keys.includes(x.src)) {
+      const t = _schedKeyResolve(x.src); if (t && t !== x.src) { x.src = t; n++; }
+    }
+  }));
+  if (n) SCHED.dirty = true;
+  return n;
 }
 function _schedPlacedQty(key) {
   const lbl = key.split("|")[0]; let sum = 0;
@@ -11345,6 +11383,8 @@ function _schedPickRender() {
   const host = $("schedPickBody"); if (!host) return;
   const groups = (SPICK.ship && SPICK.ship.groups) || [];
   const keyOf = _schedShipKeys(groups);   // 출고 표의 줄 하나 = 카드 하나(출고 표와 동일한 분류)
+  SPICK.keys = [...keyOf.values()];
+  if (_schedRelinkPlaced()) { /* 출고 스케줄이 바뀐 뒤에도 담긴 항목이 카드에 계속 연결되게 키 갱신 */ }
   // 수량 기준: 카드 수량 − 담긴 수량 = 남은 수량. 일부만 담았으면 남은 수량으로 다시 끌 수 있고(다른 요일·시간 OK), 0이면 잠김
   const cols = groups.map(g => {
     const cards = (g.items || []).filter(it => (it.label || "").trim()).map(it => {
