@@ -129,6 +129,7 @@
   .nav-mode:hover{background:rgba(255,255,255,.05); color:var(--side-ink);}
   .nav-mode svg{flex:none; opacity:.8; transition:transform .18s ease;}
   .nav.pinopen .nav-mode svg{transform:rotate(180deg);}
+  .nav button em{white-space:nowrap;}
   .nav .cnt{margin-left:auto; background:var(--crit); color:#fff; font-size:11px; font-weight:700;
     padding:1px 7px; border-radius:99px;}
   /* 발주 필요 — 상단바 배지 + 엑셀 메모 스타일 팝업 */
@@ -783,11 +784,11 @@
       <div class="nav-subgrp" data-subgrp="week">
       <button data-scr="sched" title="출고 스케줄 — 제품군별 발주량·소비기한·거래처를 한 주 단위로 편집하고 가로로 예쁘게 인쇄">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2.5" y="3" width="11" height="10.5" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M2.5 6h11M5.5 2v2.5M10.5 2v2.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
-        <em>출고 스케줄</em><span class="cnt" id="navShipMod" style="display:none; background:var(--accent);">수정</span>
+        <em>출고 스케줄</em><span class="cnt" id="navShipMod" style="display:none; background:var(--accent); white-space:nowrap; flex:0 0 auto;" title="오늘 수정됨">0</span>
       </button>
       <button data-scr="prodsched" title="생산 스케줄 — 출고 스케줄과 동일한 편집기, 출고 표를 불러와 생산에 맞게 정리">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2.5" y="3" width="11" height="10.5" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M2.5 6h11" stroke="currentColor" stroke-width="1.3"/><path d="M6 8.5l1.3 1.3L10 7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        <em>생산 스케줄</em><span class="cnt" id="navProdMod" style="display:none; background:var(--accent);">수정</span>
+        <em>생산 스케줄</em><span class="cnt" id="navProdMod" style="display:none; background:var(--accent); white-space:nowrap; flex:0 0 auto;" title="오늘 수정됨">0</span>
       </button>
       </div>
       <button data-scr="workorder" title="작업지시서 — 그날 생산 계획(제품·라인·배합수)과 소요 원부재료를 인쇄">

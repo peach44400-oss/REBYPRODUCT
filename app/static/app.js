@@ -3200,7 +3200,7 @@ async function loadSchedToday() {
   [["navShipMod", SCHED_TODAY.ship, "출고"], ["navProdMod", SCHED_TODAY.prod, "생산"]].forEach(([id, list, nm]) => {
     const el = $(id); if (!el) return;
     el.style.display = list.length ? "" : "none";
-    el.textContent = list.length > 1 ? `수정 ${list.length}` : "수정";
+    el.textContent = String(list.length);   // 숫자만(파란 배지) — 메뉴 이름이 줄바꿈되지 않게; 자세한 내용은 툴팁
     el.title = list.length ? `오늘 ${nm} 스케줄 수정됨\n` + fmt(list) : "";
   });
   _schedTodayChip();
