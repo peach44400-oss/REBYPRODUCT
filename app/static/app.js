@@ -12405,7 +12405,7 @@ function _schedExpSuffix(p) { const t = _schedExpText(p); return t ? " · " + t 
 function _schedPackBoxParts(it, withExp) {
   const parts = _schedPackParts(it).filter(p => p.pack !== "");
   if (parts.length < 2) { const one = _schedPackBox(it); const exp = withExp ? _schedExpText(parts[0] || { expiry: (it.expiry || "").trim(), expiry2: (it.expiry2 || "").trim() }) : ""; return (one || exp) ? [{ main: one, exp }] : []; }
-  const multiPartner = new Set(parts.map(p => p.partner || "")).size > 1;   // 거래처가 둘 이상 섞인 칸이면 줄마다 거래처 표시
+  const multiPartner = parts.length > 1;   // 줄이 둘 이상이면(출처가 여럿) 줄마다 거래처 표시 — 같은 거래처여도 붙여서 규칙을 일정하게
   return parts.map(p => { const pk = Number(p.pack); const per = p.perBox > 0 ? p.perBox : pk; const bx = _schedBoxText(p.qty, per); return { main: `${pk.toLocaleString("ko-KR")}개입` + (bx ? "/" + bx : ""), partner: (multiPartner && p.partner) ? p.partner : "", exp: withExp ? _schedExpText(p) : "" }; });
 }
 function _schedPackBoxLines(it, withExp) { return _schedPackBoxParts(it, withExp).map(p => p.main + (p.partner ? " · " + p.partner : "") + (p.exp ? (p.main ? " · " : "") + p.exp : "")); }
