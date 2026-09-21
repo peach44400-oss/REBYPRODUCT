@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.103.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.104.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -6091,6 +6091,20 @@ def schedule_del(request: Request, week: str = ""):
 
 
 # ── 생산 스케줄 (출고 스케줄과 동일 구조 — 편집기를 그대로 재사용) ──────────
+@app.get("/api/schedule/today")
+def schedule_today():
+    """오늘 저장(수정)된 출고·생산 스케줄 목록 — 사이드바 배지·스케줄 상단 표시용."""
+    today = dt.date.today().isoformat()
+    con = connect()
+    try:
+        def q(table):
+            return rows(con.execute(f"""SELECT week_start, updated_at, updated_by FROM {table}
+                WHERE substr(COALESCE(updated_at,''),1,10)=? ORDER BY updated_at DESC""", (today,)))
+        return {"today": today, "ship": q("schedule"), "prod": q("prod_schedule")}
+    finally:
+        con.close()
+
+
 @app.get("/api/prodschedule")
 def prodschedule_get(week: str = ""):
     mon = _week_monday(week or dt.date.today().isoformat())

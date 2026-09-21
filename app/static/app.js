@@ -85,6 +85,7 @@ async function loadMasters() {
   M.line.forEach((l, i) => (l.disp = `${i + 1}. ${l.name}${l.process ? " / " + l.process : ""}`));
   await loadPackSets();
   await loadAgencyRules();   // 용역 시급 규칙(시급 권한 있을 때만 내용)
+  loadSchedToday();          // 오늘 수정된 스케줄 배지
 }
 const productById = (id) => M.product.find(p => p.id === id);   // 완제품만 (반제품은 자재)
 const materialById = (id) => M.raw.concat(M.sub, M.semi || []).find(m => m.id === id);   // 반제품(is_semi 자재)도 자재로 취급
@@ -3191,6 +3192,30 @@ function _staffActiveOn(s, date) {
   if (ld) return !date || date <= ld;
   return s.status !== "퇴사";
 }
+/* ── 오늘 수정된 스케줄 표시 — 사이드바 배지 + 스케줄 상단 칩 (1분마다·저장 후 갱신) ── */
+let SCHED_TODAY = { ship: [], prod: [] };
+async function loadSchedToday() {
+  try { const r = await api("/api/schedule/today"); SCHED_TODAY = { ship: r.ship || [], prod: r.prod || [] }; } catch (e) { return; }
+  const fmt = list => list.map(x => `${_schedMD(x.week_start)}주 · ${esc(x.updated_by || "—")} ${String(x.updated_at || "").slice(11, 16)}`).join("\n");
+  [["navShipMod", SCHED_TODAY.ship, "출고"], ["navProdMod", SCHED_TODAY.prod, "생산"]].forEach(([id, list, nm]) => {
+    const el = $(id); if (!el) return;
+    el.style.display = list.length ? "" : "none";
+    el.textContent = list.length > 1 ? `수정 ${list.length}` : "수정";
+    el.title = list.length ? `오늘 ${nm} 스케줄 수정됨\n` + fmt(list) : "";
+  });
+  _schedTodayChip();
+}
+function _schedTodayChip() {
+  const el = $("schedTodayMod"); if (!el || typeof SCHED === "undefined") return;
+  const list = (SCHED.kind === "prod" ? SCHED_TODAY.prod : SCHED_TODAY.ship) || [];
+  if (!list.length) { el.style.display = "none"; return; }
+  const cur = list.find(x => x.week_start === SCHED.week), other = list.filter(x => x.week_start !== SCHED.week);
+  const parts = [];
+  if (cur) parts.push(`이 주 ${esc(cur.updated_by || "—")} ${String(cur.updated_at || "").slice(11, 16)}`);
+  if (other.length) parts.push(other.map(x => `${_schedMD(x.week_start)}주 ${esc(x.updated_by || "—")} ${String(x.updated_at || "").slice(11, 16)}`).join(", "));
+  el.style.display = ""; el.innerHTML = "🕒 오늘 수정됨 · " + parts.join(" · ");
+}
+setInterval(loadSchedToday, 60000);
 function renderStaff() {
   const admin = canM("wage");   // 시급 입력칸 노출 여부
   // 시급이 비어 있는 용역(예전에 저장된 행·규칙 저장 전 추가한 행)은 그릴 때 기준정보 기본 시급으로 채운다 — 저장 전에도 시급·노무비가 바로 보이게
@@ -12039,6 +12064,7 @@ function renderSchedule() {
   const end = _schedAddDays(SCHED.week, 5);
   if ($("schedWeekLabel")) $("schedWeekLabel").textContent = `${SCHED.week} ~ ${end}`;
   if ($("schedSaved")) $("schedSaved").textContent = SCHED.saved || "";
+  _schedTodayChip();
   // 편집=미리보기 한 화면으로 통합 — 별도 편집기(메타/제품군 카드·열)·보기전환 토글은 숨긴다(모든 편집은 아래 미리보기에서).
   ["schedMeta", "schedGroups", "schedViewToggle", "schedRefBox"].forEach(id => { const el = $(id); if (el) { el.style.display = "none"; if (id === "schedGroups") el.innerHTML = ""; } });
   _schedSyncEditUI();
@@ -12811,6 +12837,7 @@ async function saveSchedule() {
       body: JSON.stringify({ week_start: SCHED.week, data: SCHED.data }) });
     toast((SCHED.kind === "prod" ? "생산" : "출고") + " 스케줄이 저장되었습니다");
     await loadSchedule(SCHED.week);   // 재로딩 시 SCHED.dirty = false
+    loadSchedToday();                 // 사이드바 '수정' 배지 갱신
     return true;
   } catch (e) { return false; /* api 토스트 */ }
 }
