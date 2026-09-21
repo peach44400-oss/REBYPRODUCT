@@ -12401,15 +12401,15 @@ function _schedPackBoxParts(it, withExp) {
   const parts = _schedPackParts(it).filter(p => p.pack !== "");
   if (parts.length < 2) { const one = _schedPackBox(it); const exp = withExp ? _schedExpText(parts[0] || { expiry: (it.expiry || "").trim(), expiry2: (it.expiry2 || "").trim() }) : ""; return (one || exp) ? [{ main: one, exp }] : []; }
   const multiPartner = new Set(parts.map(p => p.partner || "")).size > 1;   // 거래처가 둘 이상 섞인 칸이면 줄마다 거래처 표시
-  return parts.map(p => { const pk = Number(p.pack); const per = p.perBox > 0 ? p.perBox : pk; const bx = _schedBoxText(p.qty, per); return { main: `${pk.toLocaleString("ko-KR")}개입` + (bx ? "/" + bx : "") + (multiPartner && p.partner ? " · " + p.partner : ""), exp: withExp ? _schedExpText(p) : "" }; });
+  return parts.map(p => { const pk = Number(p.pack); const per = p.perBox > 0 ? p.perBox : pk; const bx = _schedBoxText(p.qty, per); return { main: `${pk.toLocaleString("ko-KR")}개입` + (bx ? "/" + bx : ""), partner: (multiPartner && p.partner) ? p.partner : "", exp: withExp ? _schedExpText(p) : "" }; });
 }
-function _schedPackBoxLines(it, withExp) { return _schedPackBoxParts(it, withExp).map(p => p.main + (p.exp ? (p.main ? " · " : "") + p.exp : "")); }
+function _schedPackBoxLines(it, withExp) { return _schedPackBoxParts(it, withExp).map(p => p.main + (p.partner ? " · " + p.partner : "") + (p.exp ? (p.main ? " · " : "") + p.exp : "")); }
 // 줄 HTML — 개입/박스는 강조색, 소비기한은 회색·작은 글씨
 function _schedPackBoxHtml(it, withExp, subSize, subColor) {
   const expFs = Math.max(8, Math.round(subSize * 0.82));
   // 소비기한은 개입/박스 '아래 줄'에 회색·작은 글씨. '소비 …'와 '(예정 …)'는 각각 한 덩어리로(중간에서 안 끊김).
   const expHtml = p => { const m = /^(소비 \S+)\s*(\(예정 [^)]*\))?$/.exec(p.exp || ""); const chunks = m ? [m[1], m[2]].filter(Boolean) : [p.exp]; return `<div style="color:#8a8a8a; font-weight:500; font-size:${expFs}px; line-height:1.2;">${chunks.map(c => `<span style="white-space:nowrap;">${esc(c)}</span>`).join(" ")}</div>`; };
-  return _schedPackBoxParts(it, withExp).map(p => (p.main ? `<div style="color:${subColor}; font-weight:700;">${esc(p.main)}</div>` : "") + (p.exp ? expHtml(p) : "")).join("");
+  return _schedPackBoxParts(it, withExp).map(p => (p.main ? `<div style="color:${subColor}; font-weight:700;">${esc(p.main)}${p.partner ? `<span style="color:#2f3fa0; font-weight:700;"> · ${esc(p.partner)}</span>` : ""}</div>` : "") + (p.exp ? expHtml(p) : "")).join("");
 }
 // 수량 q를 한 박스 per개로 나눈 표기 — "5박스+45" (남는 낱개가 있으면 +로 표시). per가 수동 비율(소수)이면 반올림 오차는 무시.
 function _schedBoxText(q, per) {
