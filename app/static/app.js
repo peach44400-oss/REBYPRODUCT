@@ -11276,6 +11276,7 @@ function _schedPickFillTargets() {
 // 생산 표에 담긴 항목은 src(하나) 또는 srcs({키: 수량}, 여러 출처를 한 칸에 합친 경우)로 출처를 기억해 카드별 남은 수량을 계산한다.
 // 출고 스케줄에서 박스를 손으로 고친 경우(예 10개입인데 12,800개 → 128박스 = 100개/박스) '한 박스당 개수'를 키에 담아 생산 스케줄이 그대로 따라간다
 function _schedPerBoxOf(it) {
+  if (!it || it.boxesAuto !== false) return "";   // 자동 계산된 박스는 비율이 아님(개입으로 계산) — 직접 입력한 박스만 '박스당 개수'로 넘긴다
   const num = v => { const n = Number(String(v == null ? "" : v).replace(/[^\d.]/g, "")); return isFinite(n) ? n : 0; };
   const q = num(it.qty), b = num(it.boxes);
   return (q > 0 && b > 0) ? String(Math.round(q / b * 1000) / 1000) : "";
