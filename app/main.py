@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.101.7"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.102.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -5886,6 +5886,10 @@ def schedule_get(week: str = ""):
                 data = json.loads(row["data"] or "{}")
             except ValueError:
                 data = {}
+            # 예전에 저장된 주: uid가 없는 항목에 붙여서 바로 저장(생산 스케줄이 uid로 연결할 수 있게)
+            if _sched_assign_uids(data, _sched_other_uids(con, mon)):
+                con.execute("UPDATE schedule SET data=? WHERE week_start=?", (json.dumps(data, ensure_ascii=False), mon))
+                con.commit()
         # 저장된 주 목록(주 이동 드롭다운/표시용)
         weeks = [r["week_start"] for r in con.execute(
             "SELECT week_start FROM schedule ORDER BY week_start DESC")]
@@ -6013,6 +6017,44 @@ def schedule_style_save(request: Request, body: dict):
     return {"ok": True}
 
 
+# ── 출고 스케줄 항목 고유번호(uid) ──
+# 생산 스케줄은 출고 항목을 uid로 기억한다(제품명·거래처·날짜·소비기한을 고쳐도 연결 유지).
+# 저장·조회 때 uid가 없는 항목엔 새로 붙이고, 이 주 안이나 다른 주와 겹치는 uid(복사·지난주 불러오기)는 다시 만든다.
+def _sched_other_uids(con, mon):
+    used = set()
+    for r in con.execute("SELECT week_start, data FROM schedule WHERE week_start!=?", (mon,)):
+        try:
+            d = json.loads(r["data"] or "{}")
+        except ValueError:
+            continue
+        for g in (d.get("groups") or []) if isinstance(d, dict) else []:
+            for it in (g.get("items") or []):
+                if isinstance(it, dict) and it.get("uid"):
+                    used.add(str(it["uid"]))
+    return used
+
+
+def _sched_assign_uids(data, used_other):
+    """data(dict)의 항목에 uid 보장. 반환: [[gi, ii, uid], ...] (새로 붙였거나 바뀐 것만)."""
+    changed = []
+    if not isinstance(data, dict):
+        return changed
+    seen = set()
+    for gi, g in enumerate(data.get("groups") or []):
+        for ii, it in enumerate((g.get("items") or []) if isinstance(g, dict) else []):
+            if not isinstance(it, dict) or not str(it.get("label") or "").strip():
+                continue
+            uid = str(it.get("uid") or "")
+            if not uid or uid in seen or uid in used_other:
+                uid = secrets.token_hex(4)
+                while uid in seen or uid in used_other:
+                    uid = secrets.token_hex(4)
+                it["uid"] = uid
+                changed.append([gi, ii, uid])
+            seen.add(uid)
+    return changed
+
+
 @app.post("/api/schedule")
 def schedule_save(request: Request, body: dict):
     _require_writer(request)
@@ -6022,6 +6064,7 @@ def schedule_save(request: Request, body: dict):
         raise HTTPException(400, "스케줄 데이터가 올바르지 않습니다")
     con = connect()
     try:
+        uids = _sched_assign_uids(data, _sched_other_uids(con, mon))
         con.execute("""INSERT INTO schedule(week_start, data, updated_at, updated_by)
             VALUES(?,?,datetime('now','localtime'),?)
             ON CONFLICT(week_start) DO UPDATE SET
@@ -6029,7 +6072,7 @@ def schedule_save(request: Request, body: dict):
             (mon, json.dumps(data, ensure_ascii=False), request.state.user.get("username", "")))
         audit(con, "save_schedule", f"주간 스케줄 저장 — {mon}")
         con.commit()
-        return {"ok": True, "week_start": mon}
+        return {"ok": True, "week_start": mon, "uids": uids}
     finally:
         con.close()
 

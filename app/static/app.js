@@ -11123,7 +11123,7 @@ function _schedMergeSameForView(groups) {
       if (merged) {
         it.span = sp;
         const q = num(it.qty), pk = num(it.pack);
-        it.boxes = (q > 0 && pk > 0) ? String(Math.round(q / pk)) : "";   // 합산 수량으로 박스 재계산
+        it.boxes = (q > 0 && pk > 0) ? String(Math.floor(q / pk + 1e-3)) : "";   // 합산 수량으로 박스 재계산
       }
     }
     return Object.assign({}, g, { items: its });
@@ -11243,6 +11243,7 @@ function _schedPickUndo(key) {
       if (!Object.keys(rest).length || left <= 0) { arr[i] = _schedBlankItem(); return; }   // 이 출처뿐이면 칸 비움
       x.qty = String(left);
       if (Object.keys(rest).length === 1) { x.src = Object.keys(rest)[0]; delete x.srcs; } else { x.srcs = rest; x.src = Object.keys(rest)[0]; }
+      if (x.srcMeta) hit.forEach(k => { delete x.srcMeta[k]; });
       if (x.boxesAuto !== false) x.boxes = _schedBoxesFor(x, x.qty, x.pack);
     } else if ((x.label || "").trim() === lbl) { removed += _schedQtyNum(x.qty); cells++; arr[i] = _schedBlankItem(); }   // 예전 항목(출처 없음)
   }));
@@ -11280,19 +11281,34 @@ function _schedPerBoxOf(it) {
   return (q > 0 && b > 0) ? String(Math.round(q / b * 1000) / 1000) : "";
 }
 function _schedPerBoxKey(key) { const seg = String(key || "").replace(/#\d+$/, "").split("|"); const n = seg.length >= 7 ? Number(seg[6]) : 0; return isFinite(n) && n > 0 ? n : 0; }
+// 담긴 항목의 출처(카드) 메타 — 담을 때 저장하고(srcMeta), 생산 스케줄을 열 때마다 출고 스케줄의 최신 값으로 갱신된다.
+// 예전 항목(속성 키만 있음)은 키 토막에서 읽는다.
+function _schedSrcMeta(it, key) {
+  const m = it && it.srcMeta && it.srcMeta[key];
+  if (m && typeof m === "object") return m;
+  if (!key || String(key).startsWith("u:")) return null;
+  const seg = _schedKeySegs(key);
+  return { attr: key, label: seg[0] || "", partner: seg[1] || "", shipDate: seg[2] || "", pack: seg[3] || "", expiry: seg[4] || "", expiry2: seg[5] || "", perBox: seg.length >= 7 ? seg[6] : "" };
+}
+function _schedPerBoxOfSrc(it, key) { const m = _schedSrcMeta(it, key); const n = m ? Number(m.perBox) : 0; return isFinite(n) && n > 0 ? n : 0; }
 // 항목의 박스 수 — 출처에 '박스당 개수'가 있으면 그걸로, 없으면 개입으로
 function _schedBoxesFor(it, qty, pack) {
-  const q = _schedQtyNum(qty), pb = _schedPerBoxKey(it && it.src), pk = _schedQtyNum(pack);
-  if (q > 0 && pb > 0) return String(Math.round(q / pb));
-  return (q > 0 && pk > 0) ? String(Math.round(q / pk)) : "";
+  const q = _schedQtyNum(qty), pb = _schedPerBoxOfSrc(it, it && it.src), pk = _schedQtyNum(pack);
+  if (q > 0 && pb > 0) return String(Math.floor(q / pb + 1e-3));
+  return (q > 0 && pk > 0) ? String(Math.floor(q / pk + 1e-3)) : "";
 }
-function _schedShipKeys(groups) {
+// 출고 표의 줄 하나 = 카드 하나. 키 = "u:<uid>"(출고 항목 고유번호, 서버가 부여) — uid가 아직 없는 항목은 속성 키(제품|거래처|출고일|개입|소비|예정|박스당개수).
+// 반환 keyOf(Map item→key). 카드 메타는 cardMeta(key→{attr, label, partner, shipDate, pack, expiry, expiry2, perBox, qty, week})에 채움.
+function _schedShipKeys(groups, week, cardMeta) {
   const cnt = new Map(), keyOf = new Map();
   groups.forEach(g => (g.items || []).forEach(it => {
     if (!it || !(it.label || "").trim()) return;
-    const base = [(it.label || "").trim(), (it.partner || g.partner || "").trim(), g.shipDate || "", String(it.pack || "").trim(), (it.expiry || "").trim(), (it.expiry2 || "").trim(), _schedPerBoxOf(it)].join("|");
-    const n = cnt.get(base) || 0; cnt.set(base, n + 1);
-    keyOf.set(it, n ? base + "#" + (n + 1) : base);
+    const attr0 = [(it.label || "").trim(), (it.partner || g.partner || "").trim(), g.shipDate || "", String(it.pack || "").trim(), (it.expiry || "").trim(), (it.expiry2 || "").trim(), _schedPerBoxOf(it)].join("|");
+    const n = cnt.get(attr0) || 0; cnt.set(attr0, n + 1);
+    const attr = n ? attr0 + "#" + (n + 1) : attr0;
+    const key = it.uid ? "u:" + it.uid : attr;
+    keyOf.set(it, key);
+    if (cardMeta) cardMeta[key] = { attr, label: (it.label || "").trim(), partner: (it.partner || g.partner || "").trim(), shipDate: g.shipDate || "", pack: String(it.pack || "").trim(), expiry: (it.expiry || "").trim(), expiry2: (it.expiry2 || "").trim(), perBox: _schedPerBoxOf(it), qty: _schedQtyNum(it.qty), week: week || "" };
   }));
   return keyOf;
 }
@@ -11310,12 +11326,14 @@ function _schedItemSrcs(x) {
 //    제품|거래처|출고일|개입(앞 4토막)이 같은 카드(여럿이면 첫 번째)와 같은 출처로 본다. 앞 4토막도 없으면 제품|거래처|출고일 3토막이 유일할 때.
 //  - 예전(짧은) 키는 앞 토막이 같으면 같음.
 function _schedKeySegs(k) { return String(k || "").replace(/#\d+$/, "").split("|"); }
+function _schedCardAttr(k) { const cm = (typeof SPICK !== "undefined" && SPICK.cardMeta) || {}; return (cm[k] && cm[k].attr) || k; }
 function _schedKeyResolve(a) {
   const keys = (typeof SPICK !== "undefined" && Array.isArray(SPICK.keys)) ? SPICK.keys : null;
   if (!keys) return null;
   if (keys.includes(a)) return a;
+  if (String(a).startsWith("u:")) return null;   // uid 키인데 카드가 없음 = 출고 항목이 지워짐 → 연결 안 됨
   const sa = _schedKeySegs(a); if (sa.length < 3) return null;
-  const same = (k, n) => { const sk = _schedKeySegs(k); if (sk.length < n) return false; for (let i = 0; i < n; i++) if (sk[i] !== sa[i]) return false; return true; };
+  const same = (k, n) => { const sk = _schedKeySegs(_schedCardAttr(k)); if (sk.length < n) return false; for (let i = 0; i < n; i++) if (sk[i] !== sa[i]) return false; return true; };
   const c4 = sa.length >= 4 ? keys.filter(k => same(k, 4)) : [];
   if (c4.length) return c4[0];
   const c3 = keys.filter(k => same(k, 3));
@@ -11326,6 +11344,8 @@ function _schedKeyResolve(a) {
 }
 function _schedKeyEq(a, b) {
   if (a === b) return true;
+  if (String(a).startsWith("u:")) return false;                              // uid 키는 정확히 같을 때만
+  if (String(b).startsWith("u:")) return _schedKeyResolve(a) === b;          // 예전 속성 키 → 카드(uid)로 해석
   const sa = _schedKeySegs(a), sb = _schedKeySegs(b);
   const n = Math.min(sa.length, sb.length); if (n < 4) return false;
   for (let i = 0; i < 4; i++) if (sa[i] !== sb[i]) return false;
@@ -11333,22 +11353,60 @@ function _schedKeyEq(a, b) {
   const r = _schedKeyResolve(a);                          // 뒷부분만 다름 → 카드 목록에서 어느 카드 것인지 결정
   return r == null ? true : r === b;
 }
-// 팝업을 그릴 때: 담긴 항목의 키가 현재 카드와 정확히 안 맞으면(출고 스케줄 수정) 맞는 카드 키로 갱신해 계속 연결되게 한다
-function _schedRelinkPlaced() {
+// 담긴 항목을 현재 카드 목록(SPICK.keys/cardMeta, 출고 주 scopeWeek)에 맞춰 갱신:
+//  1) 예전 속성 키는 맞는 카드의 uid 키로 바꾼다(출고 스케줄을 고쳐도 연결 유지). 다른 주 출고분 키는 건드리지 않는다.
+//  2) 연결된 출처의 메타(소비기한·개입·박스당개수)를 출고 스케줄 최신 값으로 갱신하고, 출처가 하나뿐인 칸은 칸의 소비기한·개입·박스도 따라 바꾼다.
+function _schedRelinkPlaced(scopeWeek) {
   if (!SCHED.data || !Array.isArray(SPICK.keys)) return 0;
-  let n = 0;
+  const cm = SPICK.cardMeta || {}; let n = 0;
+  const inScope = () => true;   // 속성 키는 카드 목록에서 해석되면 연결(출고 스케줄엔 다른 주 날짜도 들어가므로 주로 거르지 않음)
   (SCHED.data.groups || []).forEach(g => (g.items || []).forEach(x => {
     if (!x || x.spacer || !(x.label || "").trim()) return;
-    if (x.srcs && typeof x.srcs === "object") {
-      const out = {}; let ch = false;
-      Object.keys(x.srcs).forEach(k => { const t = SPICK.keys.includes(k) ? k : (_schedKeyResolve(k) || k); if (t !== k) ch = true; out[t] = _schedQtyNum(out[t] || 0) + _schedQtyNum(x.srcs[k]); });
-      if (ch) { x.srcs = out; x.src = Object.keys(out)[0]; n++; }
-    } else if (x.src && !SPICK.keys.includes(x.src)) {
-      const t = _schedKeyResolve(x.src); if (t && t !== x.src) { x.src = t; n++; }
+    const cur = _schedItemSrcs(x); if (!cur) return;
+    const out = {}; let ch = false;
+    Object.keys(cur).forEach(k => {
+      let t = k;
+      if (!SPICK.keys.includes(k) && inScope(k)) { const r = _schedKeyResolve(k); if (r) t = r; }
+      if (t !== k) ch = true;
+      out[t] = _schedQtyNum(out[t] || 0) + _schedQtyNum(cur[k]);
+    });
+    const meta = Object.assign({}, x.srcMeta || {});
+    Object.keys(out).forEach(k => { if (cm[k]) { const nm = Object.assign({}, cm[k]); if (JSON.stringify(meta[k] || null) !== JSON.stringify(nm)) { meta[k] = nm; ch = true; } } });
+    Object.keys(meta).forEach(k => { if (!(k in out)) delete meta[k]; });
+    if (!ch) return;
+    n++;
+    const keys = Object.keys(out);
+    if (keys.length === 1) { x.src = keys[0]; delete x.srcs; } else { x.srcs = out; x.src = keys[0]; }
+    x.srcMeta = meta;
+    if (keys.length === 1 && meta[keys[0]]) {   // 출처가 하나 → 칸의 소비기한·개입도 출고 최신 값으로
+      const mm = meta[keys[0]];
+      x.expiry = mm.expiry || ""; x.expiry2 = mm.expiry2 || ""; if (mm.pack) x.pack = mm.pack;
     }
+    if (x.boxesAuto !== false) x.boxes = _schedBoxesFor(x, x.qty, x.pack);
   }));
   if (n) SCHED.dirty = true;
   return n;
+}
+// 생산 스케줄을 열 때: 담긴 항목들이 참조하는 출고 주(이번 주 + 메타의 주)를 읽어 소비기한·개입·박스를 최신으로 맞춘다
+async function _schedRefreshFromShip() {
+  if (SCHED.kind !== "prod" || !SCHED.data) return;
+  const weeks = new Set([SCHED.week]);
+  (SCHED.data.groups || []).forEach(g => (g.items || []).forEach(x => {
+    const cur = x && _schedItemSrcs(x); if (!cur) return;
+    Object.keys(cur).forEach(k => { const m = _schedSrcMeta(x, k); if (m && m.week) weeks.add(m.week); else if (m && m.shipDate) weeks.add(_schedMonday(m.shipDate)); });
+  }));
+  const list = [...weeks].filter(Boolean).slice(0, 6);
+  const keep = { keys: SPICK.keys, cardMeta: SPICK.cardMeta };
+  let changed = 0;
+  for (const w of list) {
+    let d = null; try { const r = await api("/api/schedule?week=" + w); d = r && r.data; } catch (e) { d = null; }
+    if (!d || !Array.isArray(d.groups)) continue;
+    const cm = {}; const keyOf = _schedShipKeys(d.groups, w, cm);
+    SPICK.keys = [...keyOf.values()]; SPICK.cardMeta = cm;
+    changed += _schedRelinkPlaced(w);
+  }
+  SPICK.keys = keep.keys; SPICK.cardMeta = keep.cardMeta;
+  return changed;
 }
 function _schedPlacedQty(key) {
   const lbl = key.split("|")[0]; let sum = 0;
@@ -11363,11 +11421,12 @@ function _schedPlacedQty(key) {
   return sum;
 }
 // dest 칸에 수량·출처를 합친다(같은 제품을 같은 칸에 또 놓았을 때)
-function _schedMergeInto(dest, addQty, addSrcs) {
+function _schedMergeInto(dest, addQty, addSrcs, addMeta) {
   const cur = Object.assign({}, _schedItemSrcs(dest) || {});
   Object.keys(addSrcs || {}).forEach(k => { cur[k] = _schedQtyNum(cur[k] || 0) + _schedQtyNum(addSrcs[k]); });
   dest.qty = String(_schedQtyNum(dest.qty) + _schedQtyNum(addQty));
   if (Object.keys(cur).length) { dest.srcs = cur; dest.src = Object.keys(cur)[0]; }
+  if (addMeta) dest.srcMeta = Object.assign({}, dest.srcMeta || {}, addMeta);
   if (dest.boxesAuto !== false) dest.boxes = _schedBoxesFor(dest, dest.qty, dest.pack);
 }
 // 합쳐진 칸의 수량을 직접 고치면 차이를 마지막 출처부터 반영해 출처별 수량 합 = 칸 수량을 유지
@@ -11382,16 +11441,16 @@ function _schedSrcsAfterQtyEdit(x) {
 function _schedPickRender() {
   const host = $("schedPickBody"); if (!host) return;
   const groups = (SPICK.ship && SPICK.ship.groups) || [];
-  const keyOf = _schedShipKeys(groups);   // 출고 표의 줄 하나 = 카드 하나(출고 표와 동일한 분류)
-  SPICK.keys = [...keyOf.values()];
-  if (_schedRelinkPlaced()) { /* 출고 스케줄이 바뀐 뒤에도 담긴 항목이 카드에 계속 연결되게 키 갱신 */ }
+  const cm = {}; const keyOf = _schedShipKeys(groups, SPICK.week || SCHED.week, cm);   // 출고 표의 줄 하나 = 카드 하나(uid 키)
+  SPICK.keys = [...keyOf.values()]; SPICK.cardMeta = cm;
+  if (_schedRelinkPlaced(SPICK.week || SCHED.week)) renderSchedDoc();   // 출고 스케줄이 바뀐 뒤에도 담긴 항목이 카드에 계속 연결·최신 표시
   // 수량 기준: 카드 수량 − 담긴 수량 = 남은 수량. 일부만 담았으면 남은 수량으로 다시 끌 수 있고(다른 요일·시간 OK), 0이면 잠김
   const cols = groups.map(g => {
     const cards = (g.items || []).filter(it => (it.label || "").trim()).map(it => {
       const key = keyOf.get(it), shipQ = _schedQtyNum(it.qty), used = _schedPlacedQty(key);
       const rem = shipQ - used, budget = shipQ > 0;
       const full = budget ? rem <= 0 : false, partial = budget && used > 0 && rem > 0, anyPlaced = used > 0;
-      const payload = esc(JSON.stringify({ label: it.label, qty: partial ? String(rem) : it.qty, shipQty: shipQ, src: key, pack: it.pack, partner: it.partner || g.partner || "", expiry: it.expiry, expiry2: it.expiry2 }));
+      const payload = esc(JSON.stringify({ label: it.label, qty: partial ? String(rem) : it.qty, shipQty: shipQ, src: key, meta: cm[key] || null, pack: it.pack, partner: it.partner || g.partner || "", expiry: it.expiry, expiry2: it.expiry2 }));
       const badge = full ? `<span class="chip ok" style="font-size:9.5px;">담김 완료</span>`
         : partial ? `<span class="chip" style="font-size:9.5px; background:#fff3e0; color:#b45f06;">남음 ${NF(rem)}</span>`
         : (anyPlaced ? `<span class="chip ok" style="font-size:9.5px;">담김</span>` : "");
@@ -11427,7 +11486,7 @@ function _schedPickAdd(it, gcol, grow) {
   else if (!isEmpty(k)) {
     const occ = g.items[k];
     if ((occ.label || "").trim() === (it.label || "").trim()) {   // 같은 제품 위에 놓음 → 수량 합치기
-      _schedMergeInto(occ, qty, it.src ? { [it.src]: _schedQtyNum(qty) } : null);
+      _schedMergeInto(occ, qty, it.src ? { [it.src]: _schedQtyNum(qty) } : null, (it.src && it.meta) ? { [it.src]: it.meta } : null);
       SCHED.dirty = true; renderSchedule();
       toast("'" + it.label + "' " + NF(_schedQtyNum(qty)) + "개를 합쳐 " + NF(_schedQtyNum(occ.qty)) + "개가 되었습니다"); return;
     }
@@ -11436,6 +11495,7 @@ function _schedPickAdd(it, gcol, grow) {
   while (g.items.length <= k) g.items.push(_schedBlankItem());
   const ni = g.items[k];
   ni.label = it.label; ni.qty = qty; ni.pack = it.pack; ni.partner = it.partner; ni.expiry = it.expiry; ni.expiry2 = it.expiry2; ni.spacer = false; ni.src = it.src || ""; delete ni.srcs;
+  ni.srcMeta = (it.src && it.meta) ? { [it.src]: it.meta } : undefined;
   if (ni.boxesAuto !== false) ni.boxes = _schedBoxesFor(ni, qty, it.pack);   // 출고 스케줄에서 손으로 고친 박스 비율을 따름
   SCHED.dirty = true;
   if (!SCHED.editMode) { SCHED.editMode = true; _schedSyncEditUI(); }
@@ -11454,7 +11514,7 @@ function _schedMoveItem(fromGc, fromGr, toGc, toGr) {
   while (g2.items.length <= toGr) g2.items.push(_schedBlankItem());
   const dest = g2.items[toGr], destFilled = dest && (dest.label || "").trim() && !dest.spacer;
   if (destFilled && (dest.label || "").trim() === (from.label || "").trim()) {   // 같은 제품 → 수량 합치기
-    _schedMergeInto(dest, from.qty, _schedItemSrcs(from));
+    _schedMergeInto(dest, from.qty, _schedItemSrcs(from), from.srcMeta || null);
     g1.items[fromGr] = _schedBlankItem(); SCHED.dirty = true; renderSchedule();
     toast("'" + from.label + "' 합쳐서 " + NF(_schedQtyNum(dest.qty)) + "개"); return;
   }
@@ -11702,7 +11762,8 @@ function _schedMD(iso) {
   const d = new Date(iso + "T00:00:00"); if (isNaN(d)) return esc(iso);
   return `${d.getMonth() + 1}/${d.getDate()}(${_SCHED_DOW[d.getDay()]})`;
 }
-function _schedBlankItem() { return { product_id: null, label: "", qty: "", pack: "", boxes: "", boxesAuto: true, expiry: "", expiry2: "", partner: "", memo: "", color: "" }; }
+function _schedUid() { const a = new Uint8Array(4); (window.crypto || {}).getRandomValues ? crypto.getRandomValues(a) : a.forEach((_, i) => { a[i] = Math.floor(Math.random() * 256); }); return [...a].map(b => b.toString(16).padStart(2, "0")).join(""); }
+function _schedBlankItem() { const o = { product_id: null, label: "", qty: "", pack: "", boxes: "", boxesAuto: true, expiry: "", expiry2: "", partner: "", memo: "", color: "" }; if (typeof SCHED !== "undefined" && SCHED.kind === "ship") o.uid = _schedUid(); return o; }
 function _schedBlank(week) {
   const dates = []; for (let i = 0; i < 6; i++) dates.push(_schedAddDays(week, i));
   return { title: "주간 생산·출고 스케줄", note: "※ 스케줄은 현장 상황에 맞게 변경될 수 있음",
@@ -11752,6 +11813,10 @@ async function loadSchedule(dateOpt) {
     SCHED.saved = r.updated_at ? `저장됨 · ${String(r.updated_at).slice(0, 16)}${r.updated_by ? " · " + r.updated_by : ""}` : "아직 저장 안 됨 (새 스케줄)";
   } catch (e) { SCHED.week = week; SCHED.data = _schedNorm(_schedBlank(week), week); SCHED.saved = ""; }
   SCHED.dirty = false;   // 막 불러온 상태 = 저장된 상태 (이후 편집하면 true)
+  if (SCHED.kind === "prod") {   // 출고 스케줄에서 고친 소비기한·개입·박스를 담긴 항목에 반영 (바뀐 게 있으면 저장 필요 표시)
+    let ch = 0; try { ch = await _schedRefreshFromShip(); } catch (e) { ch = 0; }
+    if (ch) { SCHED.dirty = true; SCHED.saved += " · 출고 스케줄 변경 반영됨(저장 필요)"; }
+  }
   if ($("schedDate")) $("schedDate").value = SCHED.week;
   renderSchedule();
 }
@@ -12124,7 +12189,7 @@ function _schedSetField(gi, ii, f, val) {
   if (f === "boxes") it.boxesAuto = String(val).trim() === "";
   if ((f === "qty" || f === "pack") && it.boxesAuto !== false) {
     const q = Number(String(it.qty).replace(/,/g, "")), p = Number(String(it.pack).replace(/,/g, ""));
-    it.boxes = (q > 0 && p > 0) ? (_schedPerBoxKey(it.src) > 0 ? String(Math.round(q / _schedPerBoxKey(it.src))) : String(Math.round(q / p))) : "";
+    it.boxes = (q > 0 && p > 0) ? (_schedPerBoxOfSrc(it, it.src) > 0 ? String(Math.floor(q / _schedPerBoxOfSrc(it, it.src) + 1e-3)) : String(Math.floor(q / p + 1e-3))) : "";
   }
 }
 // 엑셀(TSV) 붙여넣기 — 탭/줄바꿈이 있으면 여러 칸·여러 항목으로 분배. 항목이 모자라면 자동 생성.
@@ -12176,7 +12241,7 @@ function _schedFieldUpdate(e) {
     if (f === "boxes") it.boxesAuto = String(inp.value).trim() === "";   // 직접 입력하면 자동계산 해제
     if ((f === "qty" || f === "pack") && it.boxesAuto !== false) {
       const q = Number(String(it.qty).replace(/,/g, "")), p = Number(String(it.pack).replace(/,/g, ""));
-      it.boxes = (q > 0 && p > 0) ? (_schedPerBoxKey(it.src) > 0 ? String(Math.round(q / _schedPerBoxKey(it.src))) : String(Math.round(q / p))) : "";
+      it.boxes = (q > 0 && p > 0) ? (_schedPerBoxOfSrc(it, it.src) > 0 ? String(Math.floor(q / _schedPerBoxOfSrc(it, it.src) + 1e-3)) : String(Math.floor(q / p + 1e-3))) : "";
       const bi = document.querySelector(`#schedDoc [data-g="${inp.dataset.g}"][data-i="${inp.dataset.i}"][data-f="boxes"]`);
       if (bi && bi.value !== it.boxes) bi.value = it.boxes;   // 재렌더 없이 값만 갱신(포커스 유지)
     }
@@ -12317,12 +12382,12 @@ function _schedPackParts(it) {
   let raw = null;
   if (Array.isArray(it.packsView) && it.packsView.length) raw = it.packsView.map(x => ({ pack: norm(x.pack), qty: num(x.qty), expiry: ex(x.expiry), expiry2: ex(x.expiry2), perBox: num(x.perBox) }));
   else if (it.srcs && typeof it.srcs === "object") raw = Object.keys(it.srcs).map(k => {
-    const seg = k.replace(/#\d+$/, "").split("|");
-    return { pack: (seg.length >= 4 ? norm(seg[3]) : "") || norm(it.pack), qty: num(it.srcs[k]),
-             expiry: seg.length >= 5 ? ex(seg[4]) : ex(it.expiry), expiry2: seg.length >= 6 ? ex(seg[5]) : ex(it.expiry2),
-             perBox: _schedPerBoxKey(k) };
+    const mm = _schedSrcMeta(it, k) || {};
+    return { pack: norm(mm.pack) || norm(it.pack), qty: num(it.srcs[k]),
+             expiry: mm.expiry != null ? ex(mm.expiry) : ex(it.expiry), expiry2: mm.expiry2 != null ? ex(mm.expiry2) : ex(it.expiry2),
+             perBox: num(mm.perBox) };
   });
-  if (!raw) return [{ pack: norm(it.pack), qty: num(it.qty), expiry: ex(it.expiry), expiry2: ex(it.expiry2), perBox: _schedPerBoxKey(it.src) }];
+  if (!raw) return [{ pack: norm(it.pack), qty: num(it.qty), expiry: ex(it.expiry), expiry2: ex(it.expiry2), perBox: _schedPerBoxOfSrc(it, it.src) }];
   const m = new Map();   // 개입|소비기한|예정|박스당개수 단위로 합산 (같은 개입이라도 소비기한이 다르면 다른 줄)
   raw.forEach(x => { const k = [x.pack, x.expiry, x.expiry2, x.perBox || ""].join("|"); const c = m.get(k); if (c) c.qty += x.qty; else m.set(k, Object.assign({}, x)); });
   return [...m.values()];
@@ -12334,7 +12399,7 @@ function _schedExpSuffix(p) { const t = _schedExpText(p); return t ? " · " + t 
 function _schedPackBoxParts(it, withExp) {
   const parts = _schedPackParts(it).filter(p => p.pack !== "");
   if (parts.length < 2) { const one = _schedPackBox(it); const exp = withExp ? _schedExpText(parts[0] || { expiry: (it.expiry || "").trim(), expiry2: (it.expiry2 || "").trim() }) : ""; return (one || exp) ? [{ main: one, exp }] : []; }
-  return parts.map(p => { const pk = Number(p.pack); const per = p.perBox > 0 ? p.perBox : pk; const bx = (per > 0 && p.qty) ? Math.round(p.qty / per).toLocaleString("ko-KR") + "박스" : ""; return { main: `${pk.toLocaleString("ko-KR")}개입` + (bx ? "/" + bx : ""), exp: withExp ? _schedExpText(p) : "" }; });
+  return parts.map(p => { const pk = Number(p.pack); const per = p.perBox > 0 ? p.perBox : pk; const bx = _schedBoxText(p.qty, per); return { main: `${pk.toLocaleString("ko-KR")}개입` + (bx ? "/" + bx : ""), exp: withExp ? _schedExpText(p) : "" }; });
 }
 function _schedPackBoxLines(it, withExp) { return _schedPackBoxParts(it, withExp).map(p => p.main + (p.exp ? (p.main ? " · " : "") + p.exp : "")); }
 // 줄 HTML — 개입/박스는 강조색, 소비기한은 회색·작은 글씨
@@ -12344,13 +12409,20 @@ function _schedPackBoxHtml(it, withExp, subSize, subColor) {
   const expHtml = p => { const m = /^(소비 \S+)\s*(\(예정 [^)]*\))?$/.exec(p.exp || ""); const chunks = m ? [m[1], m[2]].filter(Boolean) : [p.exp]; return `<div style="color:#8a8a8a; font-weight:500; font-size:${expFs}px; line-height:1.2;">${chunks.map(c => `<span style="white-space:nowrap;">${esc(c)}</span>`).join(" ")}</div>`; };
   return _schedPackBoxParts(it, withExp).map(p => (p.main ? `<div style="color:${subColor}; font-weight:700;">${esc(p.main)}</div>` : "") + (p.exp ? expHtml(p) : "")).join("");
 }
+// 수량 q를 한 박스 per개로 나눈 표기 — "5박스+45" (남는 낱개가 있으면 +로 표시). per가 수동 비율(소수)이면 반올림 오차는 무시.
+function _schedBoxText(q, per) {
+  q = Number(q) || 0; per = Number(per) || 0; if (!(q > 0 && per > 0)) return "";
+  const n = Math.floor(q / per + 1e-3), rem = Math.max(0, Math.round(q - n * per));
+  return n.toLocaleString("ko-KR") + "박스" + (rem > 0 ? "+" + rem.toLocaleString("ko-KR") : "");
+}
 function _schedPackBox(it) {
   const packN = String(it.pack == null ? "" : it.pack).replace(/,/g, "").trim();
   const pack = packN !== "" ? `${Number(packN).toLocaleString("ko-KR")}개입` : "";
   let boxes = String(it.boxes || "").trim();
-  if (!boxes) {   // 박스 미입력 시 개입수로 자동 환산
-    const q = Number(String(it.qty).replace(/,/g, "")), p = Number(packN);
-    if (!isNaN(q) && !isNaN(p) && p > 0 && q) boxes = Math.round(q / p).toLocaleString("ko-KR") + "박스";
+  const q0 = Number(String(it.qty).replace(/,/g, "")), p0 = Number(packN);
+  if (!boxes || it.boxesAuto !== false) {   // 박스 미입력(또는 자동 계산) 시 개입수로 환산 — 남는 낱개는 "+N" (직접 입력한 박스만 그대로)
+    const per = (_schedPerBoxOfSrc && _schedPerBoxOfSrc(it, it.src)) || p0;
+    if (!isNaN(q0) && per > 0 && q0) boxes = _schedBoxText(q0, per);
   } else if (/^[0-9,]+$/.test(boxes)) {
     boxes = Number(boxes.replace(/,/g, "")).toLocaleString("ko-KR") + "박스";
   }
@@ -12530,7 +12602,7 @@ function buildScheduleDocEdit(d, week) {
         <span style="font-size:${Math.round(qtySize * 0.6)}px; font-weight:700;">개</span></div>
       <div style="display:flex; align-items:center; gap:1px; font-size:${subSize}px; flex-wrap:wrap;">
         ${it_(gi, ii, "pack", it.pack, "", ` inputmode="numeric" placeholder="개입" style="width:40px; text-align:right; color:${ec("sub", "#c26a1f")}; font-weight:700;"`)}<span style="color:${ec("sub", "#c26a1f")};">개입/</span>
-        ${it_(gi, ii, "boxes", it.boxes, "", ` inputmode="numeric" placeholder="자동" style="width:40px; text-align:right; color:${ec("sub", "#c26a1f")}; font-weight:700;"`)}<span style="color:${ec("sub", "#c26a1f")};">박스</span></div>
+        ${it_(gi, ii, "boxes", it.boxes, "", ` inputmode="numeric" placeholder="자동" style="width:40px; text-align:right; color:${ec("sub", "#c26a1f")}; font-weight:700;"`)}<span style="color:${ec("sub", "#c26a1f")};">박스</span>${(() => { if (it.boxesAuto === false) return ""; const q = _schedQtyNum(it.qty), per = _schedPerBoxOfSrc(it, it.src) || _schedQtyNum(it.pack); if (!(q > 0 && per > 0)) return ""; const rem = Math.round(q - Math.floor(q / per + 1e-3) * per); return rem > 0 ? `<span style="color:${ec("sub", "#c26a1f")}; font-weight:700;" title="박스로 나누고 남는 낱개">+${rem}</span>` : ""; })()}</div>
       ${(() => { if (!_prod) return ""; const PP = _schedPackBoxParts(it, true); if (PP.length >= 2) return `<div style="font-size:${subSize}px; line-height:1.25;" title="출처를 합친 칸 — 개입·소비기한별 박스">${_schedPackBoxHtml(it, true, subSize, ec("sub", "#c26a1f"))}</div>`; const ex = _schedExpText({ expiry: (it.expiry || "").trim(), expiry2: (it.expiry2 || "").trim() }); return ex ? `<div style="font-size:${Math.max(8, Math.round(subSize * 0.82))}px; color:#8a8a8a; line-height:1.25;">${esc(ex)}</div>` : ""; })()}
       <div style="display:flex; gap:2px; font-size:${subSize}px;">
         ${it_(gi, ii, "partner", it.partner, "", ` list="schedPartnerDl" placeholder="거래처(개별·비우면 열 공통)" title="비우면 위 '거래처' 줄(열 공통)을 씁니다. 이 항목만 다르면 여기 입력하세요." style="flex:1 1 0; color:#2f3fa0;"`)}
