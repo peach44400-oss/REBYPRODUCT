@@ -827,6 +827,8 @@ def init_db() -> None:
         con.execute("ALTER TABLE lot_plan ADD COLUMN partner_id INTEGER")
     if "position" not in [r[1] for r in con.execute("PRAGMA table_info(staff)")]:
         con.execute("ALTER TABLE staff ADD COLUMN position TEXT DEFAULT ''")
+    if "leave_date" not in [r[1] for r in con.execute("PRAGMA table_info(staff)")]:   # 퇴사일 — 그 다음날부터 일일 입력 인원 목록에서 제외
+        con.execute("ALTER TABLE staff ADD COLUMN leave_date TEXT DEFAULT ''")
     if "pack_set" not in [r[1] for r in con.execute("PRAGMA table_info(material)")]:
         con.execute("ALTER TABLE material ADD COLUMN pack_set TEXT DEFAULT ''")
     if "pack_set" not in lpcols:

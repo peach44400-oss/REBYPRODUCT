@@ -3185,6 +3185,12 @@ function _agwAutoWage(tr, ai, a) {
   const d = agwDefaultWage(agwRuleFor(a.pid), a.g);
   if (d > 0 && (!_agwN(a.w) || a.wAuto)) { a.w = String(d); a.wAuto = true; const inp = tr && tr.querySelector(`[data-aw="${ai}"]`); if (inp) inp.value = a.w; }
 }
+// 그 날짜에 재직 중인 직원인가 — 퇴사일이 있으면 그 날까지는 목록에 나오고 다음날부터 빠진다. 퇴사일 없이 상태만 '퇴사'면 항상 제외.
+function _staffActiveOn(s, date) {
+  const ld = (s.leave_date || "").trim();
+  if (ld) return !date || date <= ld;
+  return s.status !== "퇴사";
+}
 function renderStaff() {
   const admin = canM("wage");   // 시급 입력칸 노출 여부
   // 시급이 비어 있는 용역(예전에 저장된 행·규칙 저장 전 추가한 행)은 그릴 때 기준정보 기본 시급으로 채운다 — 저장 전에도 시급·노무비가 바로 보이게
@@ -3239,7 +3245,7 @@ function renderStaff() {
     const addSel = `<select class="mini-sel" data-addmember style="max-width:140px"><option value="">＋ 인원 추가</option>` +
       `<option value="__agency__">＋ 용역 (이름 없음)</option>` +
       `<optgroup label="정직원 · 등록 직원">` +
-      M.staff.filter(s => s.status !== "퇴사" && !ids.includes(s.id) && !(s.kind !== "용역" && _assignedFix.has(s.id)))
+      M.staff.filter(s => _staffActiveOn(s, E.date) && !ids.includes(s.id) && !(s.kind !== "용역" && _assignedFix.has(s.id)))
         .map(s => `<option value="${s.id}">${esc(s.name)}${s.kind === "용역" ? " (용역)" : ""}</option>`).join("") + "</optgroup></select>";
     const named = (r.members || []).length, agency = (r.agency || []).length;
     const total = named + agency || (Number(r.headcount) || 0);
@@ -3980,8 +3986,8 @@ const MCOLS = {
     row: r => [`<button class="uselink" data-partnerhist="${r.id}">${esc(r.name)}</button>`, `<span class="chip cat">${esc(r.type)}</span>`, esc(r.biz_no || "—"), esc(r.ceo || "—"),
       esc(r.phone || "—"), esc(r.mobile || "—"), esc(r.email || "—"), esc(r.contact || "—"), chip(r.status)],
     hint: "거래처명 클릭 = 그 거래처로 나간 출고 이력(제품별 합계·날짜별 내역) · 중지 상태는 일일 입력 드롭다운에서 숨겨짐 · [ERP 가져오기]로 거래처등록(ESA001M) 엑셀 업로드" },
-  staff: { label: "인원", cols: ["이름", "구분", "직책", "담당 공정", "시급(원)", "입사일", "상태"],
-    row: r => [B(r.name), esc(r.kind), esc(r.position || "—"), esc(r.process || "—"), r.wage == null ? "—" : NF(r.wage), esc(r.join_date || "—"), chip(r.status)],
+  staff: { label: "인원", cols: ["이름", "구분", "직책", "담당 공정", "시급(원)", "입사일", "퇴사일", "상태"],
+    row: r => [B(r.name), esc(r.kind), esc(r.position || "—"), esc(r.process || "—"), r.wage == null ? "—" : NF(r.wage), esc(r.join_date || "—"), esc(r.leave_date || "—"), chip(r.status)],
     hint: "일일 입력의 투입 인원 선택 목록 · 노무비 계산 기준" },
   line: { label: "생산라인", cols: ["라인명", "공정", "정상가동(h/일)", "비고", "상태"],
     row: r => {
@@ -6149,7 +6155,7 @@ const MFORMS = {
   staff: [["name", "이름 *"], ["kind", "구분", "sel", ["정직원", "계약직", "용역", "일용직", "아르바이트", "파견"]],
     ["position", "직책", "combo", []], ["process", "담당 공정"],
     ["wage", "시급 (원)", "num"], ["join_date", "입사(계약)일", "date"], ["phone", "연락처"],
-    ["status", "상태", "sel", ["재직", "계약중", "퇴사"]], ["note", "비고", "full"]],
+    ["status", "상태", "sel", ["재직", "계약중", "퇴사"]], ["leave_date", "퇴사일 (지정하면 그 다음날부터 일일 입력 인원 목록에서 제외 · 그 전 날짜엔 계속 표시)", "date"], ["note", "비고", "full"]],
   line: [["name", "라인명 *"], ["process", "공정"], ["std_hours", "정상가동시간 (h/일)", "num"],
     ["parent_id", "소속 라인 — 이 행이 어떤 물리 라인의 공정이면 그 대표 라인을 선택 (가동률·보고서가 한 라인으로 집계됨)", "sel", []],
     ["status", "상태", "sel", ["가동", "중지"]], ["note", "비고", "full"]],
@@ -12391,7 +12397,7 @@ function _schedPackParts(it) {
     const mm = _schedSrcMeta(it, k) || {};
     return { pack: norm(mm.pack) || norm(it.pack), qty: num(it.srcs[k]),
              expiry: mm.expiry != null ? ex(mm.expiry) : ex(it.expiry), expiry2: mm.expiry2 != null ? ex(mm.expiry2) : ex(it.expiry2),
-             perBox: num(mm.perBox), partner: ex(mm.partner) };
+             perBox: num(mm.perBox), partner: ex(mm.partner) || ex(it.partner) };
   });
   if (!raw) { const mm = _schedSrcMeta(it, it.src) || {}; return [{ pack: norm(it.pack), qty: num(it.qty), expiry: ex(it.expiry), expiry2: ex(it.expiry2), perBox: _schedPerBoxOfSrc(it, it.src), partner: ex(mm.partner || it.partner) }]; }
   const m = new Map();   // 거래처|개입|소비기한|예정|박스당개수 단위로 합산 — 거래처가 다르면 다른 줄(합쳐진 칸에서 거래처별 박스 확인용)
@@ -12404,8 +12410,8 @@ function _schedExpSuffix(p) { const t = _schedExpText(p); return t ? " · " + t 
 // 표시 줄 목록 [{main:"30개입/168박스", exp:"소비 2026-11-12 (예정 …)"}] — 개입·소비기한이 2종 이상이면 줄을 나눔
 function _schedPackBoxParts(it, withExp) {
   const parts = _schedPackParts(it).filter(p => p.pack !== "");
-  if (parts.length < 2) { const one = _schedPackBox(it); const exp = withExp ? _schedExpText(parts[0] || { expiry: (it.expiry || "").trim(), expiry2: (it.expiry2 || "").trim() }) : ""; return (one || exp) ? [{ main: one, exp }] : []; }
-  const multiPartner = parts.length > 1;   // 줄이 둘 이상이면(출처가 여럿) 줄마다 거래처 표시 — 같은 거래처여도 붙여서 규칙을 일정하게
+  if (parts.length < 2) { const one = _schedPackBox(it); const exp = withExp ? _schedExpText(parts[0] || { expiry: (it.expiry || "").trim(), expiry2: (it.expiry2 || "").trim() }) : ""; const partner = withExp ? ((parts[0] && parts[0].partner) || (it.partner || "").trim()) : ""; return (one || exp) ? [{ main: one, partner, exp }] : []; }
+  const multiPartner = !!withExp;   // 생산 스케줄: 줄 수와 상관없이 모든 박스 줄에 거래처 표시(출고 스케줄은 열 머리에 거래처가 있으므로 생략)
   return parts.map(p => { const pk = Number(p.pack); const per = p.perBox > 0 ? p.perBox : pk; const bx = _schedBoxText(p.qty, per); return { main: `${pk.toLocaleString("ko-KR")}개입` + (bx ? "/" + bx : ""), partner: (multiPartner && p.partner) ? p.partner : "", exp: withExp ? _schedExpText(p) : "" }; });
 }
 function _schedPackBoxLines(it, withExp) { return _schedPackBoxParts(it, withExp).map(p => p.main + (p.partner ? " · " + p.partner : "") + (p.exp ? (p.main ? " · " : "") + p.exp : "")); }
@@ -12488,7 +12494,7 @@ function buildScheduleDoc(d, week) {
     if (!it || it.spacer) return `<td style="${TDI} ${P}">${it ? "&nbsp;" : ""}</td>`;
     const pbLines = _schedPackBoxLines(it, _prod), pb = pbLines.join(" · ");   // 생산: 줄마다 소비기한(출고 스케줄에서 가져온 값) 표시
     // 항목 거래처가 열 공통과 다를 때만 개별 표시(같으면 열 거래처 줄로 충분)
-    const ovp = (it.partner && it.partner.trim() && it.partner.trim() !== (gpartner || "").trim()) ? it.partner : "";
+    const ovp = (!_prod && it.partner && it.partner.trim() && it.partner.trim() !== (gpartner || "").trim()) ? it.partner : "";   // 생산은 박스 줄마다 거래처가 붙으므로 별도 줄 생략
     // 제품별 개별 글자색 — 비우면 전체(표시 설정) 색을 그대로 사용
     const icol = (it.color || "").trim();
     const isBlank = !(it.label || NFq(it.qty) || pb || ovp || it.memo);
