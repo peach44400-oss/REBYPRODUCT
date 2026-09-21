@@ -12381,16 +12381,16 @@ function _schedPackParts(it) {
   const norm = p => String(p == null ? "" : p).replace(/,/g, "").trim();
   const ex = v => String(v == null ? "" : v).trim();
   let raw = null;
-  if (Array.isArray(it.packsView) && it.packsView.length) raw = it.packsView.map(x => ({ pack: norm(x.pack), qty: num(x.qty), expiry: ex(x.expiry), expiry2: ex(x.expiry2), perBox: num(x.perBox) }));
+  if (Array.isArray(it.packsView) && it.packsView.length) raw = it.packsView.map(x => ({ pack: norm(x.pack), qty: num(x.qty), expiry: ex(x.expiry), expiry2: ex(x.expiry2), perBox: num(x.perBox), partner: ex(x.partner) }));
   else if (it.srcs && typeof it.srcs === "object") raw = Object.keys(it.srcs).map(k => {
     const mm = _schedSrcMeta(it, k) || {};
     return { pack: norm(mm.pack) || norm(it.pack), qty: num(it.srcs[k]),
              expiry: mm.expiry != null ? ex(mm.expiry) : ex(it.expiry), expiry2: mm.expiry2 != null ? ex(mm.expiry2) : ex(it.expiry2),
-             perBox: num(mm.perBox) };
+             perBox: num(mm.perBox), partner: ex(mm.partner) };
   });
-  if (!raw) return [{ pack: norm(it.pack), qty: num(it.qty), expiry: ex(it.expiry), expiry2: ex(it.expiry2), perBox: _schedPerBoxOfSrc(it, it.src) }];
-  const m = new Map();   // 개입|소비기한|예정|박스당개수 단위로 합산 (같은 개입이라도 소비기한이 다르면 다른 줄)
-  raw.forEach(x => { const k = [x.pack, x.expiry, x.expiry2, x.perBox || ""].join("|"); const c = m.get(k); if (c) c.qty += x.qty; else m.set(k, Object.assign({}, x)); });
+  if (!raw) { const mm = _schedSrcMeta(it, it.src) || {}; return [{ pack: norm(it.pack), qty: num(it.qty), expiry: ex(it.expiry), expiry2: ex(it.expiry2), perBox: _schedPerBoxOfSrc(it, it.src), partner: ex(mm.partner || it.partner) }]; }
+  const m = new Map();   // 거래처|개입|소비기한|예정|박스당개수 단위로 합산 — 거래처가 다르면 다른 줄(합쳐진 칸에서 거래처별 박스 확인용)
+  raw.forEach(x => { const k = [x.partner, x.pack, x.expiry, x.expiry2, x.perBox || ""].join("|"); const c = m.get(k); if (c) c.qty += x.qty; else m.set(k, Object.assign({}, x)); });
   return [...m.values()];
 }
 // 줄 끝 소비기한 표기 — " · 소비 2026-11-12 (예정 2026-11-19)"
@@ -12400,7 +12400,8 @@ function _schedExpSuffix(p) { const t = _schedExpText(p); return t ? " · " + t 
 function _schedPackBoxParts(it, withExp) {
   const parts = _schedPackParts(it).filter(p => p.pack !== "");
   if (parts.length < 2) { const one = _schedPackBox(it); const exp = withExp ? _schedExpText(parts[0] || { expiry: (it.expiry || "").trim(), expiry2: (it.expiry2 || "").trim() }) : ""; return (one || exp) ? [{ main: one, exp }] : []; }
-  return parts.map(p => { const pk = Number(p.pack); const per = p.perBox > 0 ? p.perBox : pk; const bx = _schedBoxText(p.qty, per); return { main: `${pk.toLocaleString("ko-KR")}개입` + (bx ? "/" + bx : ""), exp: withExp ? _schedExpText(p) : "" }; });
+  const multiPartner = new Set(parts.map(p => p.partner || "")).size > 1;   // 거래처가 둘 이상 섞인 칸이면 줄마다 거래처 표시
+  return parts.map(p => { const pk = Number(p.pack); const per = p.perBox > 0 ? p.perBox : pk; const bx = _schedBoxText(p.qty, per); return { main: `${pk.toLocaleString("ko-KR")}개입` + (bx ? "/" + bx : "") + (multiPartner && p.partner ? " · " + p.partner : ""), exp: withExp ? _schedExpText(p) : "" }; });
 }
 function _schedPackBoxLines(it, withExp) { return _schedPackBoxParts(it, withExp).map(p => p.main + (p.exp ? (p.main ? " · " : "") + p.exp : "")); }
 // 줄 HTML — 개입/박스는 강조색, 소비기한은 회색·작은 글씨
