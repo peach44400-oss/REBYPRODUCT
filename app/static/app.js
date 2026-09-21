@@ -12372,7 +12372,12 @@ function _schedClick(e) {
     return;
   }
   const idl = e.target.closest("[data-schedidel]");
-  if (idl) { const [gi, ii] = idl.dataset.schedidel.split(":").map(Number); SCHED.data.groups[gi].items.splice(ii, 1); renderSchedDoc(); return; }
+  if (idl) {
+    const [gi, ii] = idl.dataset.schedidel.split(":").map(Number); const arr = SCHED.data.groups[gi].items;
+    if (SCHED.kind === "prod") arr[ii] = _schedBlankItem();   // 생산(시간표): 아래 제품이 올라오지 않게 그 자리를 빈 칸으로
+    else arr.splice(ii, 1);                                   // 출고(목록): 줄 제거
+    renderSchedDoc(); return;
+  }
 }
 // 개입/박스를 한 덩어리로 — 예: "45개입/10박스". 박스가 숫자면 'N박스', 자유문구(96박스/2PLT)면 그대로.
 // 합쳐진 칸의 개입별 부분 수량 [{pack, qty}] — 출처(srcs 키의 4번째 = 개입) 또는 미리보기 합침(packsView)에서. 개입이 하나면 [{pack, qty}] 하나.
