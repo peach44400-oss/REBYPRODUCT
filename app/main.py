@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.104.1"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.105.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -6357,11 +6357,14 @@ def day_save(request: Request, date: str, body: dict):
         elif touch_mat:   # 실사는 안 왔지만 입고/사용이 바뀜 → 자동 행만 재계산 (실사 행 보존)
             con.execute("DELETE FROM material_daily WHERE date=? AND src='auto'", (date,))
         if "usage" in body:
-            con.execute("DELETE FROM material_usage WHERE date=?", (date,))
+            # 반제품 원재료 사용(block 'semi:<id>')은 아래 반제품 생산 블록이 레시피대로 다시 만든다 → 여기선 지우지도 넣지도 않는다
+            con.execute("DELETE FROM material_usage WHERE date=? AND NOT (product_id IS NULL AND COALESCE(block,'') LIKE 'semi:%')", (date,))
             for r in body.get("usage", []):
                 # 자재를 고른 행은 사용량 미입력도 0으로 저장(행 유지). 자재 미선택 행만 건너뛴다.
                 # (실측 추정은 estimate에서 qty>0만 집계하므로 0 저장이 추정을 왜곡하지 않는다)
                 if not r.get("material_id"):
+                    continue
+                if str(r.get("block") or "").startswith("semi:"):   # 화면이 되돌려 보낸 반제품 소비 행 — 서버 계산분과 중복되므로 무시
                     continue
                 q = float(r.get("qty") or 0)
                 if q < 0:
@@ -6411,10 +6414,16 @@ def day_save(request: Request, date: str, body: dict):
             if "usage" in body:
                 sums = {}
                 for r in body.get("usage", []):
+                    if str(r.get("block") or "").startswith("semi:"):   # 되돌려 받은 반제품 소비 행은 제외 → 이중 차감 방지
+                        continue
                     if r.get("material_id") and r.get("qty"):   # 기타 사용(제품 없음)도 재고 차감에 포함
                         sums[r["material_id"]] = sums.get(r["material_id"], 0.0) + float(r["qty"])
-                for _mid, _q in semi_used.items():   # 반제품 원재료 사용은 body.usage 밖 → 여기서만 합산
-                    sums[_mid] = sums.get(_mid, 0.0) + _q
+                if "semi_mat_prod" in body:
+                    for _mid, _q in semi_used.items():   # 이번 저장에서 계산한 반제품 원재료 사용
+                        sums[_mid] = sums.get(_mid, 0.0) + _q
+                else:   # 반제품 생산 정보가 없는 저장 — 테이블에 남아 있는 반제품 소비분 유지
+                    for r in con.execute("SELECT material_id, SUM(qty) q FROM material_usage WHERE date=? AND product_id IS NULL AND COALESCE(block,'') LIKE 'semi:%' GROUP BY material_id", (date,)):
+                        sums[r["material_id"]] = sums.get(r["material_id"], 0.0) + float(r["q"] or 0)
             else:   # 이 저장에 사용 기록이 없으면 기존 저장분 사용 (반제품 원재료 사용도 이미 테이블에 있음 → 중복 합산 안 함)
                 sums = {r["material_id"]: float(r["q"] or 0) for r in con.execute(
                     "SELECT material_id, SUM(qty) q FROM material_usage WHERE date=? GROUP BY material_id",
@@ -6697,10 +6706,21 @@ def ledger(request: Request, date: str = ""):
         md = {r["material_id"]: r for r in con.execute(
             "SELECT material_id, prev_qty, in_qty, used_qty, real_qty FROM material_daily WHERE date=?",
             (date,))}
-        usage = {}   # material_id -> {product_id: qty}
-        for r in con.execute("""SELECT material_id, product_id, SUM(qty) q FROM material_usage
-                WHERE date=? AND product_id IS NOT NULL GROUP BY material_id, product_id""", (date,)):
-            usage.setdefault(r["material_id"], {})[r["product_id"]] = r["q"]
+        usage = {}   # material_id -> {product_id 또는 "s<반제품id>": qty}
+        semi_ids = set()
+        for r in con.execute("""SELECT material_id, product_id, COALESCE(block,'') block, SUM(qty) q FROM material_usage
+                WHERE date=? GROUP BY material_id, product_id, COALESCE(block,'')""", (date,)):
+            if r["product_id"] is not None:
+                u = usage.setdefault(r["material_id"], {})
+                u[r["product_id"]] = (u.get(r["product_id"]) or 0) + (r["q"] or 0)
+            elif r["block"].startswith("semi:"):          # 반제품 생산에 쓴 원재료 → '반제품' 열
+                key = "s" + r["block"][5:]; semi_ids.add(r["block"][5:])
+                u = usage.setdefault(r["material_id"], {})
+                u[key] = (u.get(key) or 0) + (r["q"] or 0)
+        semis = []
+        for sid in sorted(semi_ids, key=lambda x: int(x) if x.isdigit() else 0):
+            nm = con.execute("SELECT name FROM material WHERE id=?", (sid,)).fetchone()
+            semis.append({"key": "s" + sid, "name": (nm["name"] if nm else "반제품 " + sid)})
         # ── FEFO(짧은 소비기한 먼저) 활성 배치 계산 ──
         # 보유량(그날까지 최신 실재고) — 그날 기록이 없으면 이전 최신값 이어서
         onhand = {}
@@ -6854,6 +6874,8 @@ def ledger(request: Request, date: str = ""):
 
         out_rows = []
         col_total = {p["id"]: 0.0 for p in products}
+        for s_ in semis:
+            col_total[s_["key"]] = 0.0
         in_total = 0.0
         for m in mats:
             d = md.get(m["id"])
@@ -6921,7 +6943,7 @@ def ledger(request: Request, date: str = ""):
         prev = con.execute("SELECT MAX(date) v FROM material_daily WHERE date<?", (date,)).fetchone()["v"]
         nxt = con.execute("SELECT MIN(date) v FROM material_daily WHERE date>?", (date,)).fetchone()["v"]
         return {"date": date, "today": dt.date.today().isoformat(),
-                "products": products, "rows": out_rows,
+                "products": products, "semis": semis, "rows": out_rows,
                 "col_total": col_total, "in_total": in_total, "prev": prev, "next": nxt}
     finally:
         con.close()
@@ -7459,12 +7481,14 @@ def usage(material_id: int, date: str):
         if not mat:
             raise HTTPException(404, "material not found")
         data = rows(con.execute("""
-            SELECT COALESCE(p.name, '기타 사용 (생산 외)') name, SUM(mu.qty) qty,
+            SELECT COALESCE(p.name, CASE WHEN COALESCE(mu.block,'') LIKE 'semi:%'
+                     THEN '반제품 생산 · ' || COALESCE((SELECT name FROM material sm WHERE sm.id=CAST(substr(mu.block,6) AS INTEGER)), '')
+                     ELSE '기타 사용 (생산 외)' END) name, SUM(mu.qty) qty,
                    (SELECT prod_qty FROM production pr
                      WHERE pr.date=mu.date AND pr.product_id=mu.product_id) prod_qty
             FROM material_usage mu LEFT JOIN product p ON p.id=mu.product_id
             WHERE mu.material_id=? AND mu.date=?
-            GROUP BY mu.product_id ORDER BY qty DESC""", (material_id, date)))
+            GROUP BY 1 ORDER BY qty DESC""", (material_id, date)))
         md = con.execute("SELECT used_qty FROM material_daily WHERE material_id=? AND date=?",
                          (material_id, date)).fetchone()
         # 매트릭스에 해당일 데이터 없으면 최근 사용일 표시
@@ -7475,7 +7499,9 @@ def usage(material_id: int, date: str):
                                (material_id, date)).fetchone()
             if near:
                 data = rows(con.execute("""
-                    SELECT COALESCE(p.name, '기타 사용 (생산 외)') name, SUM(mu.qty) qty, NULL prod_qty
+                    SELECT COALESCE(p.name, CASE WHEN COALESCE(mu.block,'') LIKE 'semi:%'
+                             THEN '반제품 생산 · ' || COALESCE((SELECT name FROM material sm WHERE sm.id=CAST(substr(mu.block,6) AS INTEGER)), '')
+                             ELSE '기타 사용 (생산 외)' END) name, SUM(mu.qty) qty, NULL prod_qty
                     FROM material_usage mu LEFT JOIN product p ON p.id=mu.product_id
                     WHERE mu.material_id=? AND mu.date=?
                     GROUP BY mu.product_id ORDER BY qty DESC""",

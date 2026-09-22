@@ -1395,7 +1395,8 @@ async function loadDay(date) {
   E.lots = d.lots || [];
   E.semiProd = (d.semi_mat_prod || []).map(r => ({ material_id: r.material_id, batches: r.batches || "" }));
   for (const r of E.semiProd) await ensureSemiBom(r.material_id);   // 미리보기용 레시피 캐시
-  E.usage = (d.usage || []).map(u => ({ product_id: u.product_id, material_id: u.material_id, qty: u.qty, block: u.block || "" }));
+  E.usage = (d.usage || []).filter(u => !String(u.block || "").startsWith("semi:"))   // 반제품 원재료 소비(서버 계산)는 화면 사용 목록에 안 넣음 → 저장 때 되돌아가 이중 차감되지 않게
+    .map(u => ({ product_id: u.product_id, material_id: u.material_id, qty: u.qty, block: u.block || "" }));
   E.uratio = {};   // 이 날짜에서 '배합 선택'으로 적용한 배율 (표시 유지용)
   E.uSrc = {};     // "pid|block" → {srcPid, srcBlock} — 다른 제품 배합을 가져와 쓰는 블록
   E.staff = d.staffing.map(mapStaffRow);
@@ -7682,13 +7683,14 @@ function buildLedgerDoc(d, forPrint) {
   const showAll = LEDGER.showAll;
   // 기본: 실제로 움직인 것만 — 생산된 제품(열) + 사용/입고 있는 자재(행). '전체 품목' 체크 시 모두.
   const prods = showAll ? (d.products || []) : (d.products || []).filter(p => (d.col_total[p.id] || 0) > 0);
+  const semis = (d.semis || []).filter(x => showAll || (d.col_total[x.key] || 0) > 0);   // 반제품(발효종 등) 생산에 쓴 원재료 열
   const rows2 = showAll ? (d.rows || [])
     : (d.rows || []).filter(r => (r.in || 0) > 0 || (r.used || 0) > 0 || Object.keys(r.usage || {}).length > 0);
   const TD = "border:1px solid #333; padding:3px 5px; font-size:10px;";
   // 헤더 — 엑셀처럼 가로 줄바꿈(keep-all = 단어 단위), 세로 회전 안 함
   const TH = "border:1px solid #333; background:#eef0f2; font-weight:700; font-size:9.5px; text-align:center; vertical-align:middle; white-space:normal; word-break:keep-all; line-height:1.2; padding:3px 4px;";
   // 화면·인쇄 동일: 열마다 비율(%) 폭 + table-layout:fixed → 항상 페이지(영역)를 고르게 채운다 (보는 대로 인쇄)
-  const N = prods.length || 1;
+  const N = (prods.length + semis.length) || 1;
   const wSum = 3 + 0.9 + 1.2 * 4 + 1.5 * 3 + 1.8 + 1.4 * N;   // 이름3 · 단위0.9 · 수치4개×1.2 · 날짜3개×1.5 · 비고1.8 · 제품×1.4
   const W = (weight) => `width:${(weight / wSum * 100).toFixed(3)}%;`;
   const head = `<tr>
@@ -7697,6 +7699,7 @@ function buildLedgerDoc(d, forPrint) {
     <th style="${TH} ${W(1.2)}">전일<br>재고</th>
     <th style="${TH} ${W(1.2)}">금일<br>입고</th>
     ${prods.map(p => `<th style="${TH} ${W(1.4)}">${esc(p.name)}</th>`).join("")}
+    ${semis.map(x => `<th style="${TH} ${W(1.4)} background:#eef6ee;" title="반제품 생산에 사용한 원재료">반제품<br>${esc(x.name)}</th>`).join("")}
     <th style="${TH} ${W(1.2)}">당일<br>사용</th>
     <th style="${TH} ${W(1.2)}">사용후<br>재고</th>
     <th style="${TH} ${W(1.5)}">입고<br>일자</th>
@@ -7710,6 +7713,7 @@ function buildLedgerDoc(d, forPrint) {
     <td style="${TD}"></td>
     <td style="${TD} text-align:right;" ${ED}>${NFv(d.in_total)}</td>
     ${prods.map(p => `<td style="${TD} text-align:right;" ${ED}>${d.col_total[p.id] ? NFv(d.col_total[p.id]) : ""}</td>`).join("")}
+    ${semis.map(x => `<td style="${TD} text-align:right; background:#f3f8f3;" ${ED}>${d.col_total[x.key] ? NFv(d.col_total[x.key]) : ""}</td>`).join("")}
     <td style="${TD}"></td><td style="${TD}"></td><td style="${TD}"></td><td style="${TD}"></td><td style="${TD}"></td><td style="${TD}"></td></tr>`;
   const body = rows2.map(r => `<tr>
     <td style="${TD} text-align:left; white-space:normal;"><label class="lp-row-cb" title="인쇄 포함 (해제하면 이 행은 인쇄 안 됨)"><input type="checkbox" class="lp-row" checked></label>${esc(r.name)}</td>
@@ -7717,6 +7721,7 @@ function buildLedgerDoc(d, forPrint) {
     <td style="${TD} text-align:right; color:#555;" ${ED}>${NFv(r.prev)}</td>
     <td style="${TD} text-align:right; ${r.in ? 'color:#0a7a2f; font-weight:700;' : ''}" ${ED}>${NFv(r.in)}</td>
     ${prods.map(p => { const q = r.usage[p.id]; return `<td style="${TD} text-align:right;" ${ED}>${q ? NFv(q) : ""}</td>`; }).join("")}
+    ${semis.map(x => { const q = r.usage[x.key]; return `<td style="${TD} text-align:right; background:#f3f8f3;" ${ED}>${q ? NFv(q) : ""}</td>`; }).join("")}
     <td style="${TD} text-align:right;" ${ED}>${NFv(r.used)}</td>
     <td style="${TD} text-align:right; font-weight:700;" ${ED}>${NFv(r.real)}</td>
     <td style="${TD} text-align:center; font-size:8.5px; white-space:nowrap; color:#444;" ${ED}>${esc(r.in_date || "")}</td>
