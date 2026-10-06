@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.105.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.106.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -6152,6 +6152,29 @@ def prodschedule_save(request: Request, body: dict):
         con.close()
 
 
+def _material_warnings(con, date):
+    """저장 직후 자재 입력 모순 점검 — 사용자에게 팝업으로 알릴 문장 목록.
+    ① 실사(수동) 행인데 '전일+입고−실사'가 그날 기록한 사용량과 안 맞음 (예: 사용 2.5 적었는데 실사 0 → 사용 0으로 계산됨)
+    ② 자동 행인데 사용후 재고가 음수 (재고보다 많이 사용 — 입고 누락)"""
+    out = []
+    used = {r["material_id"]: float(r["q"] or 0) for r in con.execute(
+        "SELECT material_id, SUM(qty) q FROM material_usage WHERE date=? GROUP BY material_id", (date,))}
+    for r in con.execute("""SELECT md.material_id, md.prev_qty, md.in_qty, md.used_qty, md.real_qty, md.src, m.name, m.unit
+            FROM material_daily md JOIN material m ON m.id=md.material_id WHERE md.date=?""", (date,)):
+        u = used.get(r["material_id"], 0.0)
+        unit = r["unit"] or ""
+        f = lambda v: f"{float(v or 0):g}"
+        if r["src"] != "auto":
+            calc = float(r["prev_qty"] or 0) + float(r["in_qty"] or 0) - float(r["real_qty"] or 0)
+            if abs(calc - u) > 0.005:
+                out.append(f"'{r['name']}' — 제품별 사용량 합 {f(u)}{unit}인데 실사 재고 {f(r['real_qty'])}{unit} 기준으로는 사용 {f(calc)}{unit}"
+                           f"(전일 {f(r['prev_qty'])} + 입고 {f(r['in_qty'])} − 실사 {f(r['real_qty'])}). "
+                           "입고를 빠뜨렸거나 실사 값이 잘못됐을 수 있어요 — 실사 행을 지우면 사용량대로 자동 계산됩니다")
+        elif float(r["real_qty"] or 0) < -0.005:
+            out.append(f"'{r['name']}' — 사용후 재고가 {f(r['real_qty'])}{unit}(음수). 재고보다 많이 썼습니다 — 입고 누락이거나 사용량 확인")
+    return out
+
+
 @app.post("/api/day/{date}")
 def day_save(request: Request, date: str, body: dict):
     """부분 저장: body에 포함된 섹션만 갱신 — 생산 탭(production/shipment/usage/staffing/memo)과
@@ -6536,12 +6559,13 @@ def day_save(request: Request, date: str, body: dict):
                 raise HTTPException(400, f"'{nm['name'] if nm else pid_}' 재고가 {float(stock):,.0f}개(음수)가 됩니다 — "
                                     "이미 출고·폐기된 수량보다 적게 생산을 저장할 수 없습니다. "
                                     "출고 기록을 먼저 줄이거나 생산수량을 확인하세요")
+        warnings = _material_warnings(con, date) if touch_mat else []
         con.execute("UPDATE day_record SET updated_at=datetime('now','localtime') WHERE date=?", (date,))
         audit(con, "save_day", f"{date} [{','.join(k for k in ('production','shipment','materials','mat_in','usage','staffing','memo') if k in body)}]")
         bump_masters()
         con.commit()
         DAY_SAVED_BY[date] = user["username"]   # 같은 날짜를 보고 있는 사람에게 '누가 저장했는지' 알림
-        return {"ok": True}
+        return {"ok": True, "warnings": warnings}
     finally:
         con.close()
 
@@ -6929,6 +6953,12 @@ def ledger(request: Request, date: str = ""):
             if used_exps:
                 exp = ", ".join(sorted(used_exps))
                 exp_est = False
+            # 지난 소비기한은 수불부에 표시하지 않는다(만료 재고는 자동폐기·자재현황 알림이 담당). 재고 0인 자재의 옛 기한이 이월 표시되던 문제 방지.
+            if exp:
+                keep = [e.strip() for e in str(exp).split(",") if e.strip() and not (re.match(r"^\d{4}-\d{2}-\d{2}$", e.strip()) and e.strip() < date)]
+                exp = ", ".join(keep)
+                if not exp:
+                    exp_est = False
             row = {"id": m["id"], "name": m["name"], "unit": m["unit"] or "",
                    "prev": (d["prev_qty"] if d else None), "in": (d["in_qty"] if d else None),
                    "used": (d["used_qty"] if d else None), "real": (d["real_qty"] if d else None),

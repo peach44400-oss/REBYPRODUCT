@@ -3633,6 +3633,7 @@ async function saveDayBody(body, label, force) {
       throw new Error("save failed");
     }
     toast(`${E.date} ${label} 저장 완료 — 재고·현황에 반영됨`);
+    try { const j = await r.json(); if (j && Array.isArray(j.warnings) && j.warnings.length) _showMatWarnings(j.warnings); } catch (e) {}
     entryCal.render();
     await loadDay(E.date);   // E.version 갱신 — 내 저장으로 내 알림이 뜨지 않게 SAVING 안에서
     // 저장 즉시 다른 화면(기준정보·분석)의 재고가 갱신되도록 캐시 무효화
@@ -3642,6 +3643,22 @@ async function saveDayBody(body, label, force) {
   } finally {
     SAVING = false;
   }
+}
+// 저장은 됐지만 자재 입력이 서로 안 맞을 때 — 팝업으로 알림(실사 0인데 사용량 있음, 음수 재고 등)
+function _showMatWarnings(list) {
+  let ov = $("matWarnOv");
+  if (!ov) {
+    ov = document.createElement("div"); ov.id = "matWarnOv"; ov.className = "overlay on";
+    ov.innerHTML = `<div class="modal" style="max-width:640px;">
+      <h3 style="margin:0 0 8px;">⚠ 자재 입력 확인 필요</h3>
+      <p class="hint" style="margin:0 0 10px;">저장은 되었지만 아래 자재는 입력이 서로 맞지 않습니다. 원료 수불부 숫자가 이상하게 나올 수 있으니 확인해 주세요.</p>
+      <ul id="matWarnList" style="margin:0 0 12px 18px; line-height:1.5; font-size:13px;"></ul>
+      <div class="modal-foot"><button class="btn primary" id="matWarnOk">확인</button></div></div>`;
+    document.body.appendChild(ov);
+    $("matWarnOk").onclick = () => { ov.classList.remove("on"); };
+  }
+  $("matWarnList").innerHTML = list.map(t => `<li>${esc(t)}</li>`).join("");
+  ov.classList.add("on");
 }
 // 생산 입력 탭 — 검증 통과 시 저장 body 반환, 실패 시 null(+토스트)
 function buildProdBody() {
