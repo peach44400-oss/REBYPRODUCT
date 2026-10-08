@@ -2869,10 +2869,12 @@ const MDISP = {};
 function openDisposeModal(o) {
   Object.assign(MDISP, o);
   const firstExpired = o.expiry ? isoPlus(o.expiry, 1) : "";   // 만료 시작일 = 유통기한 + 1일(당일까지 사용)
-  $("matDispInfo").innerHTML = `<b>${esc(o.name)}</b> · 만료 재고 <b style="color:#c0392b;">${NF(o.expired)}${esc(o.unit || "")}</b>`
+  $("matDispInfo").innerHTML = o.generic
+    ? `<b>${esc(o.name)}</b> · 현재고 <b style="color:#c0392b;">${NF(o.expired)}${esc(o.unit || "")}</b> <span class="auto">(전체 또는 일부 수량 폐기)</span>`
+    : `<b>${esc(o.name)}</b> · 만료 재고 <b style="color:#c0392b;">${NF(o.expired)}${esc(o.unit || "")}</b>`
     + (o.expiry ? ` <span class="auto">(유통기한 ${esc(o.expiry)} · ${esc(firstExpired)}부터 만료)</span>` : "");
   $("matDispQty").value = o.expired;
-  $("matDispReason").value = "유통기한 만료";
+  $("matDispReason").value = o.generic ? "폐기" : "유통기한 만료";
   $("matDispDate").value = firstExpired || todayISO();
   const expBtn = $("matDispExpiry");
   if (firstExpired) { expBtn.style.display = ""; expBtn.textContent = `만료일 (${firstExpired})`; expBtn.dataset.d = firstExpired; }
@@ -5069,7 +5071,7 @@ function renderMasters() {
         <button class="ord-btn" data-moveup="${r.id}" ${i === 0 ? "disabled" : ""} title="위로">▲</button>
         <button class="ord-btn" data-movedn="${r.id}" ${i === list.length - 1 ? "disabled" : ""} title="아래로">▼</button></td>` : "";
     return `<tr ${reorder ? `draggable="true" data-rid="${r.id}"` : ""}>${handleCell}${cells.map((c, idx) => hideIdx.has(idx) ? "" : `<td>${c}</td>`).join("")}
-     <td style="white-space:nowrap">${["raw", "sub", "semi"].includes(mTab) ? `<button class="btn ghost sm" data-whereused="${r.id}" title="이 자재가 들어가는 제품·반제품(BOM 역전개)">🔎 사용처</button>` : ""}${(mTab === "product" && Number(r.stock) > 0 && ROLE !== "guest") ? `<button class="btn ghost sm" data-pdisp="${r.id}" data-qty="${Number(r.stock)}" style="color:var(--crit)" title="현재고 ${NF(r.stock)}개를 폐기 — 수량·사유를 고르면 재고에서 차감되고 폐기 이력에 기록">🗑 폐기</button>` : ""}<button class="btn ghost sm" data-edit="${r.id}">수정</button><button class="btn ghost sm" style="color:var(--crit)" data-delm="${r.id}">삭제</button></td></tr>`;
+     <td style="white-space:nowrap">${["raw", "sub", "semi"].includes(mTab) ? `<button class="btn ghost sm" data-whereused="${r.id}" title="이 자재가 들어가는 제품·반제품(BOM 역전개)">🔎 사용처</button>` : ""}${(mTab === "product" && Number(r.stock) > 0 && ROLE !== "guest") ? `<button class="btn ghost sm" data-pdisp="${r.id}" data-qty="${Number(r.stock)}" style="color:var(--crit)" title="현재고 ${NF(r.stock)}개를 폐기 — 수량·사유를 고르면 재고에서 차감되고 폐기 이력에 기록">🗑 폐기</button>` : ""}${(mTab === "semi" && Number(r.stock) > 0 && (ROLE === "admin" || (typeof MYDUTY !== "undefined" && MYDUTY.has && MYDUTY.has("stock")))) ? `<button class="btn ghost sm" data-sdisp="${r.id}" data-qty="${Number(r.stock)}" style="color:var(--crit)" title="현재고 ${NF(r.stock)}${esc(r.unit || "")}를 폐기 — 수량·사유를 고르면 재고에서 차감되고 자재 폐기 이력에 기록">🗑 폐기</button>` : ""}<button class="btn ghost sm" data-edit="${r.id}">수정</button><button class="btn ghost sm" style="color:var(--crit)" data-delm="${r.id}">삭제</button></td></tr>`;
   }).join("")
     || `<tr><td colspan="${cfg.cols.length - hideIdx.size + (reorder ? 2 : 1)}" class="auto">${mMissing ? "미등록 항목이 없습니다 👍" : "등록된 항목이 없습니다"}</td></tr>`;
   $("mHint").textContent = mQuick
@@ -5131,6 +5133,13 @@ $("mBody").addEventListener("drop", e => {
 $("mBody").addEventListener("click", e => {
   const pd = e.target.closest("[data-pdisp]");
   if (pd) { openDisp(+pd.dataset.pdisp, "", +pd.dataset.qty); return; }   // 기준정보 완제품 → 현재고 전체 폐기(기본값)
+  const sd = e.target.closest("[data-sdisp]");
+  if (sd) {   // 기준정보 반제품 → 자재 폐기 모달(현재고 전체 기본값)
+    const m = (M.semi || []).find(x => x.id === +sd.dataset.sdisp) || {};
+    openDisposeModal({ mid: +sd.dataset.sdisp, name: m.name || "반제품", unit: m.unit || "", expired: +sd.dataset.qty, expiry: "", generic: true,
+      onReload: async () => { await reloadMaster("semi"); renderMasters(); } });
+    return;
+  }
   const up = e.target.closest("[data-moveup]");
   if (up) { moveRow(+up.dataset.moveup, -1); return; }
   const dn = e.target.closest("[data-movedn]");
