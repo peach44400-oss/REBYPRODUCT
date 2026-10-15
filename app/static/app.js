@@ -3972,6 +3972,15 @@ function showSaveSum(body, label) {
   ];
   let html = rowsHtml.map(([k, v]) => `<div class="ssum-row"><span>${k}</span><span class="sv">${v}</span></div>`).join("");
   if (defNoReason) html += `<div class="ssum-row warn"><span>⚠️ 불량 사유 미입력</span><span class="sv">${defNoReason}건</span></div>`;
+  // 자재는 골랐는데 사용량이 비어 있거나 0인 행 — 깜빡하고 안 적은 경우가 많아 제품별로 목록을 보여준다 (저장은 가능)
+  const zeroUse = usage.filter(u => u.material_id && !(Number(u.qty) > 0));
+  if (zeroUse.length) {
+    const byProd = {};
+    zeroUse.forEach(u => { const k = u.product_id == null ? "기타 사용" : ((productById(u.product_id) || {}).name || "제품"); (byProd[k] = byProd[k] || []).push((materialById(u.material_id) || {}).name || "자재"); });
+    html += `<div class="ssum-row warn" style="display:block;"><div><span>⚠️ 사용량 미입력(0) 자재</span> <span class="sv">${zeroUse.length}건</span></div>
+      <div style="font-size:12px; font-weight:500; margin-top:4px; line-height:1.5; white-space:normal;">${Object.keys(byProd).map(k => `<div>· <b>${esc(k)}</b>: ${byProd[k].map(esc).join(", ")}</div>`).join("")}
+      <div class="auto" style="margin-top:3px;">정말 안 썼으면 그대로 저장해도 됩니다. 깜빡했으면 [취소] 후 사용량을 적어 주세요.</div></div></div>`;
+  }
   $("saveSumHint").textContent = `${E.date} (${dowOf(E.date)}) ${label}을 저장합니다.`;
   $("saveSumBody").innerHTML = html;
   $("saveSumConfirm").onclick = async () => { closeSaveSum(); await saveDayBody(body, label); };
