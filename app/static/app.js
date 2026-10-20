@@ -4146,6 +4146,7 @@ async function invQuery() {
   INV.data = d;
   $("invDoc").innerHTML = invoiceSheetHtml(d, $("invHideAmt").checked);
   $("invPrintBtn").style.display = (d.items || []).length ? "" : "none";
+  if ($("invPrint2Btn")) $("invPrint2Btn").style.display = (d.items || []).length ? "" : "none";
 }
 // 금액 숨김 토글 — 이미 조회된 명세서면 즉시 다시 그림
 if ($("invHideAmt")) $("invHideAmt").addEventListener("change", () => {
@@ -4261,14 +4262,32 @@ function invoiceSheetHtml(d, hideAmt) {
     <div style="text-align:right; font-size:11px; color:#888; margin-top:6px;">발행일 ${todayISO()} · ${esc(s.co_name || "")}</div>
   </div>`;
 }
-function invPrint() {
+function invPrint(copies) {
   if (!INV.data) return;
   const w = window.open("", "_blank");
   if (!w) { toast("팝업이 차단되었습니다 — 팝업 허용 후 다시 시도하세요"); return; }
+  const hide = $("invHideAmt").checked;
+  const one = invoiceSheetHtml(INV.data, hide);
+  // 2부: 같은 명세서를 '공급자 보관용 / 공급받는자 보관용'으로 위아래에 두고 가운데 절취선(가위) — 한 장에 인쇄
+  const two = copies === 2;
+  const sheet = two ? one.replace('id="invSheet"', 'class="invSheet"') : one;   // 2부일 땐 id 중복 방지
+  const tag = t => `<div style="text-align:right; font-size:11px; color:#666; margin:0 0 -16px;">(${t})</div>`;
+  const content = two
+    ? `<div class="copy">${tag("공급자 보관용")}${sheet}</div>
+       <div class="cut"><span>✂</span></div>
+       <div class="copy">${tag("공급받는자 보관용")}${sheet}</div>`
+    : one;
   w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>거래명세서 ${esc((INV.data.buyer || {}).name || "")}</title>
-    <style>body{font-family:'맑은 고딕',sans-serif; margin:12mm;} @media print{ .noprint{display:none;} }</style></head>
+    <style>
+      body{font-family:'맑은 고딕',sans-serif; margin:10mm;}
+      .copy .invSheet{padding:0;}
+      .copy{page-break-inside:avoid; ${two ? "zoom:.86;" : ""}}
+      .cut{border-top:1.5px dashed #888; margin:14px 0 12px; position:relative; height:0;}
+      .cut span{position:absolute; left:14px; top:-11px; background:#fff; padding:0 6px; font-size:14px; color:#888;}
+      @media print{ .noprint{display:none;} @page{size:A4 portrait; margin:8mm;} }
+    </style></head>
     <body><div class="noprint" style="text-align:center; margin-bottom:10px;"><button onclick="window.print()" style="padding:6px 16px; font-size:14px;">🖨 인쇄</button></div>
-    ${invoiceSheetHtml(INV.data, $("invHideAmt").checked)}</body></html>`);
+    ${content}</body></html>`);
   w.document.close();
 }
 // 공급자(회사) 정보 편집
@@ -4317,7 +4336,7 @@ async function _invCoSave() {
   if (INV.data) invQuery();
 }
 { const on2 = (id, fn) => { const el = $(id); if (el) el.onclick = fn; };
-  on2("invLoad", invQuery); on2("invPrintBtn", invPrint); on2("invCompanyBtn", openInvCompany); }
+  on2("invLoad", invQuery); on2("invPrintBtn", () => invPrint(1)); on2("invPrint2Btn", () => invPrint(2)); on2("invCompanyBtn", openInvCompany); }
 // ── 미수금·수금 ────────────────────────────────────────────────────────
 const RECV = { data: null };
 async function loadReceivables() {
@@ -4466,7 +4485,32 @@ function renderPurchRep() {
   $("prPartnerDl").innerHTML = parts.map(p => `<option value="${esc(p)}">`).join("");
   $("prMatDl").innerHTML = mats.map(p => `<option value="${esc(p)}">`).join("");
   const tab = PREP.tab, tot = d.total.amount || 1;
-  $("prFilters").style.display = tab === "detail" ? "" : "none";
+  $("prFilters").style.display = (tab === "detail" || tab === "material") ? "" : "none";
+  if (tab === "material") {   // 자재별 — 자재마다 소계 줄 + 그 아래 일자별 내역 (거래처·품목 필터 적용)
+    const list = _prFiltered(d);
+    const byMat = new Map();
+    list.forEach(r => { const k = r.material_id; if (!byMat.has(k)) byMat.set(k, { code: r.code, name: r.name, spec: r.spec, unit: r.unit, rows: [], qty: 0, amount: 0, vat: 0 }); const g = byMat.get(k); g.rows.push(r); g.qty += r.qty; g.amount += r.amount; g.vat += r.vat; });
+    const groups = [...byMat.values()].sort((a, b) => b.amount - a.amount);
+    const sumA = groups.reduce((a, g) => a + g.amount, 0), sumV = groups.reduce((a, g) => a + g.vat, 0);
+    const filt = [$("prPartner").value.trim() && "거래처 '" + $("prPartner").value.trim() + "'", $("prMat").value.trim() && "품목 '" + $("prMat").value.trim() + "'"].filter(Boolean).join(" · ");
+    $("prSummary").innerHTML = `기간 ${esc(d.from)} ~ ${esc(d.to)}${filt ? " · " + esc(filt) : ""} · 자재 ${groups.length}종 · ${list.length}건 · 공급가액 <span style="color:var(--crit)">₩${NF(sumA)}</span> · 부가세 ₩${NF(sumV)} · 합계 <b>₩${NF(sumA + sumV)}</b>`;
+    $("prHead").innerHTML = `<tr><th>자재 / 일자</th><th>소비기한</th><th class="r">수량</th><th class="r">단가</th><th class="r">공급가액</th><th class="r">부가세</th><th class="r">합계</th><th>거래처명</th><th class="r">비중</th></tr>`;
+    $("prBody").innerHTML = groups.map(g => `<tr style="background:var(--bg); font-weight:800; border-top:2px solid var(--line);">
+        <td>${g.code ? `<span class="num auto" style="font-size:10.5px; font-weight:500;">${esc(g.code)}</span> ` : ""}${esc(g.name)}${g.spec ? ` <span class="auto" style="font-weight:500;">[${esc(g.spec)}]</span>` : ""} <span class="auto" style="font-weight:500;">${g.rows.length}건</span></td>
+        <td></td><td class="r">${NF(Math.round(g.qty * 1000) / 1000)}${g.unit ? " " + esc(g.unit) : ""}</td><td></td>
+        <td class="r">${NF(g.amount)}</td><td class="r">${g.vat ? NF(g.vat) : "—"}</td><td class="r">${NF(g.amount + g.vat)}</td><td></td>
+        <td class="r auto" style="font-weight:500;">${sumA ? (g.amount / sumA * 100).toFixed(1) : "0.0"}%</td></tr>`
+      + g.rows.map(r => `<tr>
+        <td class="num" style="padding-left:22px; color:var(--muted);">${esc(r.date)} (${dowOf(r.date)})</td>
+        <td class="num" style="white-space:nowrap;">${esc(r.expiry || "")}</td>
+        <td class="r">${NF(r.qty)}${r.unit ? " " + esc(r.unit) : ""}</td>
+        <td class="r"${r.has_price ? "" : ' title="입고 단가 미입력 — 기준 단가로 계산" style="color:var(--muted);"'}>${NF(r.price)}</td>
+        <td class="r">${NF(r.amount)}</td><td class="r auto">${r.vat ? NF(r.vat) : "—"}</td><td class="r">${NF(r.sum)}</td>
+        <td>${esc(r.partner)}</td><td></td></tr>`).join("")).join("")
+      + (groups.length ? `<tr style="background:var(--bg); font-weight:800;"><td colspan="4">합계 ${groups.length}종 · ${list.length}건</td><td class="r">${NF(sumA)}</td><td class="r">${NF(sumV)}</td><td class="r">${NF(sumA + sumV)}</td><td></td><td></td></tr>`
+                       : `<tr><td colspan="9" class="auto" style="padding:16px; text-align:center;">조건에 맞는 매입(입고)이 없습니다</td></tr>`);
+    return;
+  }
   if (tab === "detail") {
     const list = _prFiltered(d);
     const sumQ = list.reduce((a, r) => a + r.qty, 0), sumA = list.reduce((a, r) => a + r.amount, 0), sumV = list.reduce((a, r) => a + r.vat, 0);
@@ -4491,8 +4535,8 @@ function renderPurchRep() {
     return;
   }
   $("prSummary").innerHTML = `기간 ${esc(d.from)} ~ ${esc(d.to)} · 총 매입 <span style="color:var(--crit)">₩${NF(d.total.amount)}</span>`;
-  if (tab === "partner" || tab === "material") {
-    const arr = tab === "partner" ? d.by_partner : d.by_material;
+  if (tab === "partner") {
+    const arr = d.by_partner;
     $("prHead").innerHTML = `<tr><th>${tab === "partner" ? "거래처" : "자재"}</th><th class="r">수량</th><th class="r">매입액(원)</th><th class="r">비중</th></tr>`;
     $("prBody").innerHTML = arr.map(r => `<tr>
       <td>${tab === "material" && r.code ? `<span class="num auto" style="font-size:10.5px;">${esc(r.code)}</span> ` : ""}<b>${esc(r.name)}</b></td>
