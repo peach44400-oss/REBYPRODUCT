@@ -1243,10 +1243,18 @@
             <input type="date" id="prFrom" class="inp sm" style="margin-left:5px;"><span>~</span><input type="date" id="prTo" class="inp sm"></label>
           <button class="btn primary sm" id="prLoad">조회</button>
           <div class="tabs" id="prTabs" style="border-bottom:0; margin:0 0 0 6px;">
-            <button class="on" data-prtab="partner">거래처별</button>
+            <button class="on" data-prtab="detail">일자별</button>
+            <button data-prtab="partner">거래처별</button>
             <button data-prtab="material">자재별</button>
             <button data-prtab="month">월별</button>
           </div>
+          <span id="prFilters" style="display:inline-flex; gap:6px; align-items:center; margin-left:6px;">
+            <input id="prPartner" class="inp sm" list="prPartnerDl" placeholder="🔍 거래처 (전체)" autocomplete="off" style="min-width:150px;" title="특정 거래처에서 산 내역만">
+            <datalist id="prPartnerDl"></datalist>
+            <input id="prMat" class="inp sm" list="prMatDl" placeholder="🔍 품목 (전체)" autocomplete="off" style="min-width:170px;" title="특정 품목 내역만">
+            <datalist id="prMatDl"></datalist>
+            <button class="btn ghost sm" id="prClear" title="필터 지우기">✕</button>
+          </span>
           <button class="btn ghost sm" id="prCsv" style="margin-left:auto;">📄 엑셀(CSV)</button>
         </div>
         <div id="prSummary" style="margin:12px 0; font-weight:700;"></div>

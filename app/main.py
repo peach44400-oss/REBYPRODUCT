@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.108.1"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.109.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -4294,7 +4294,27 @@ def purchasereport(request: Request, frm: str = "", to: str = ""):
                     r["qty"] = round(r["qty"] or 0, 2)
                 r["amount"] = round(r["amount"] or 0)
         total = {"amount": sum(r["amount"] for r in by_partner)}
-        return {"from": frm, "to": to, "by_partner": by_partner, "by_material": by_material, "by_month": by_month, "total": total}
+        # 일자별 상세 — 엑셀 매입현황처럼 한 줄 = 입고 한 건 (일자·품목·소비기한·수량·단가·공급가액·부가세·합계·거래처).
+        #  부가세 = 공급가액 10% (자재 기준정보 taxfree=1이면 0). 거래처·자재 필터는 화면에서 걸러 쓴다.
+        mcols = [r[1] for r in con.execute("PRAGMA table_info(material)")]
+        tf = "COALESCE(m.taxfree,0)" if "taxfree" in mcols else "0"
+        detail = rows(con.execute(f"""
+            SELECT mi.id, mi.date, m.id material_id, COALESCE(m.code,'') code, m.name, COALESCE(m.spec,'') spec, m.unit,
+                   COALESCE(mi.expiry,'') expiry, mi.qty,
+                   COALESCE(NULLIF(mi.price,0), m.unit_price) price, {expr} amount,
+                   COALESCE(NULLIF(mi.partner,''),'거래처 미지정') partner, COALESCE(mi.note,'') note,
+                   CASE WHEN mi.price>0 THEN 1 ELSE 0 END has_price, {tf} taxfree
+            FROM material_in mi JOIN material m ON m.id=mi.material_id
+            WHERE mi.date BETWEEN ? AND ? AND mi.qty>0 AND COALESCE(mi.note,'')!='[반제품생산]'
+            ORDER BY mi.date, mi.id""", prm))
+        for r in detail:
+            r["qty"] = round(r["qty"] or 0, 3)
+            r["price"] = round(r["price"] or 0, 2)
+            r["amount"] = round(r["amount"] or 0)
+            r["vat"] = 0 if r.get("taxfree") else round(r["amount"] * 0.1)
+            r["sum"] = r["amount"] + r["vat"]
+        return {"from": frm, "to": to, "by_partner": by_partner, "by_material": by_material, "by_month": by_month,
+                "detail": detail, "total": total}
     finally:
         con.close()
 
