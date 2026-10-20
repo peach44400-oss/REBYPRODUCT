@@ -4292,7 +4292,7 @@ async function openInvCompany() {
     <input id="ic_${k}" class="inp" value="${esc(d[k] || "")}" style="width:100%; margin-top:2px;"></label>`).join("")
     + `<div style="font-size:13px; border-top:1px solid var(--line-soft); padding-top:8px; margin-top:2px;">대표 도장
         <div style="display:flex; align-items:center; gap:10px; margin-top:4px;">
-          <div id="icStampBox" style="width:56px; height:56px; border:1px dashed #c4c4c4; border-radius:50%; display:flex; align-items:center; justify-content:center; color:#cfcfcf; font-size:10px; overflow:hidden; background:#fff;">${d.co_stamp ? `<img src="/image/${encodeURIComponent(d.co_stamp)}?v=${Date.now()}" style="width:100%; height:100%; object-fit:contain;">` : "(인)"}</div>
+          <div id="icStampBox" style="width:56px; height:56px; border:1px dashed #c4c4c4; border-radius:50%; display:flex; align-items:center; justify-content:center; color:#cfcfcf; font-size:10px; overflow:hidden; background:#fff;">${d.co_stamp ? `<img src="/image/${encodeURIComponent(d.co_stamp)}?v=${encodeURIComponent(d.co_stamp_ver || Date.now())}" style="width:100%; height:100%; object-fit:contain;">` : "(인)"}</div>
           <div style="display:flex; flex-direction:column; gap:4px;">
             <label class="btn ghost sm" style="cursor:pointer;">🖼 도장 이미지 등록<input type="file" id="icStampFile" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none;"></label>
             ${d.co_stamp ? `<button class="btn ghost sm" id="icStampDel" style="color:var(--crit);">도장 삭제</button>` : ""}
