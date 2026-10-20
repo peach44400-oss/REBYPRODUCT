@@ -4145,8 +4145,8 @@ async function invQuery() {
   catch (e) { return; }
   INV.data = d;
   $("invDoc").innerHTML = invoiceSheetHtml(d, $("invHideAmt").checked);
-  $("invPrintBtn").style.display = (d.items || []).length ? "" : "none";
-  if ($("invPrint2Btn")) $("invPrint2Btn").style.display = (d.items || []).length ? "" : "none";
+  $("invPrintBtn").style.display = "";   // 조회만 되면 항상 표시 (내역이 없어도 빈 명세서 인쇄 가능)
+  if ($("invPrint2Btn")) $("invPrint2Btn").style.display = "";
 }
 // 금액 숨김 토글 — 이미 조회된 명세서면 즉시 다시 그림
 if ($("invHideAmt")) $("invHideAmt").addEventListener("change", () => {
