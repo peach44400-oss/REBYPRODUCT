@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.107.1"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.108.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -3969,7 +3969,7 @@ def whereused(mid: int, request: Request):
 
 
 # ── 공급자(회사) 정보 — 거래명세서·발주서 상단에 쓰는 우리 회사 정보 ──
-CO_KEYS = ["co_name", "co_bizno", "co_ceo", "co_addr", "co_tel", "co_type", "co_item"]
+CO_KEYS = ["co_name", "co_bizno", "co_ceo", "co_addr", "co_tel", "co_type", "co_item", "co_stamp"]   # co_stamp = 대표 도장 이미지 파일명(Image/ 폴더)
 
 
 @app.get("/api/company")
@@ -3984,8 +3984,57 @@ def company_get():
 def company_set(request: Request, body: dict):
     require_admin(request)
     for k in CO_KEYS:
-        if k in body:
+        if k in body and k != "co_stamp":   # 도장은 별도 업로드 API로만
             set_app_setting(k, str(body.get(k) or ""))
+    return {"ok": True}
+
+
+@app.post("/api/company/stamp")
+def company_stamp_set(request: Request, body: dict):
+    """회사 대표 도장 이미지 등록(admin) — data URL(png/jpg/webp/gif, 2MB 이하). 거래명세서 공급자 대표자 칸에 찍힌다.
+    배경이 투명한 png를 올리면 문서 위에 자연스럽게 겹친다."""
+    require_admin(request)
+    mm = re.match(r"data:image/([\w.+-]+);base64,(.+)$", body.get("data") or "", re.S)
+    if not mm:
+        raise HTTPException(400, "이미지 데이터가 올바르지 않습니다")
+    ext = {"jpeg": "jpg"}.get(mm.group(1).lower(), mm.group(1).lower())
+    if ext not in ("png", "jpg", "webp", "gif"):
+        raise HTTPException(400, "지원 형식: png · jpg · webp · gif (배경 투명 png 권장)")
+    try:
+        raw = base64.b64decode(mm.group(2), validate=True)
+    except Exception:
+        raise HTTPException(400, "이미지 디코딩 실패")
+    if len(raw) > 2 * 1024 * 1024:
+        raise HTTPException(400, "도장 이미지는 2MB 이하만 가능합니다")
+    IMAGE_DIR.mkdir(exist_ok=True)
+    old = get_app_setting("co_stamp", "")
+    fname = f"_company_stamp.{ext}"
+    if old and old != fname:
+        try:
+            (IMAGE_DIR / old).unlink(missing_ok=True)
+        except OSError:
+            pass
+    (IMAGE_DIR / fname).write_bytes(raw)
+    set_app_setting("co_stamp", fname)
+    con = connect()
+    try:
+        audit(con, "company_stamp", f"대표 도장 등록 ({len(raw)}B)")
+        con.commit()
+    finally:
+        con.close()
+    return {"ok": True, "co_stamp": fname}
+
+
+@app.delete("/api/company/stamp")
+def company_stamp_del(request: Request):
+    require_admin(request)
+    old = get_app_setting("co_stamp", "")
+    if old:
+        try:
+            (IMAGE_DIR / old).unlink(missing_ok=True)
+        except OSError:
+            pass
+    set_app_setting("co_stamp", "")
     return {"ok": True}
 
 

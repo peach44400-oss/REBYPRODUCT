@@ -1139,16 +1139,12 @@
           <label style="font-size:13px;">거래처
             <input id="invPartner" class="inp sm" list="invPartnerDl" placeholder="🔍 거래처 검색·선택" autocomplete="off" style="min-width:200px; margin-left:5px;">
             <datalist id="invPartnerDl"></datalist></label>
-          <label style="font-size:13px;">기간
-            <input type="date" id="invFrom" class="inp sm" style="margin-left:5px;">
-            <span>~</span>
-            <input type="date" id="invTo" class="inp sm"></label>
-          <div style="display:inline-flex; gap:3px;">
-            <button class="btn ghost sm" data-invrange="today">오늘</button>
-            <button class="btn ghost sm" data-invrange="week">이번주</button>
-            <button class="btn ghost sm" data-invrange="month">이번달</button>
-            <button class="btn ghost sm" data-invrange="year">올해</button>
-          </div>
+          <label style="font-size:13px; display:inline-flex; align-items:center; gap:4px;">출고일
+            <button class="btn ghost sm" id="invPrev" title="전날" style="padding:2px 8px;">◀</button>
+            <input type="date" id="invDate" class="inp sm">
+            <button class="btn ghost sm" id="invNext" title="다음날" style="padding:2px 8px;">▶</button>
+            <button class="btn ghost sm" data-invrange="today">오늘</button></label>
+          <input type="hidden" id="invFrom"><input type="hidden" id="invTo">
           <label style="font-size:13px; display:inline-flex; align-items:center; gap:4px;">
             <input type="checkbox" id="invTaxfree"> 면세(부가세 0)</label>
           <label style="font-size:13px; display:inline-flex; align-items:center; gap:4px;" title="체크하면 단가·공급가액·세액·합계를 숨겨 수량만 있는 납품서로 인쇄합니다">

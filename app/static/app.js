@@ -4122,12 +4122,20 @@ function loadInvoice() {
     .sort((a, b) => (pHasType(b, "판매처") - pHasType(a, "판매처")) || a.name.localeCompare(b.name, "ko"));
   $("invPartnerDl").innerHTML = parts.map(p => `<option value="${esc(p.name)}">`).join("");
   const t = todayISO();
-  if (!$("invFrom").value) $("invFrom").value = t.slice(0, 8) + "01";
-  if (!$("invTo").value) $("invTo").value = t;
+  if (!$("invDate").value) $("invDate").value = t;
+  $("invFrom").value = $("invTo").value = $("invDate").value;   // 명세서는 '그날' 출고분만 — 기간 입력은 숨김(서버 API는 from~to 유지)
   $("invCompanyBtn").style.display = ROLE === "admin" ? "" : "none";
   if (!INV.data) { $("invDoc").innerHTML = `<div class="auto" style="padding:22px;">거래처와 기간을 고른 뒤 <b>[조회]</b>를 누르세요.</div>`; $("invPrintBtn").style.display = "none"; }
 }
+function _invShift(n) {   // ◀ ▶ — 하루 이동 후 거래처가 있으면 바로 조회
+  const d = new Date(($("invDate").value || todayISO()) + "T00:00:00"); d.setDate(d.getDate() + n);
+  $("invDate").value = fmtISO(d); $("invFrom").value = $("invTo").value = $("invDate").value;
+  if ($("invPartner").value) invQuery();
+}
+if ($("invPrev")) { $("invPrev").onclick = () => _invShift(-1); $("invNext").onclick = () => _invShift(1); }
+if ($("invDate")) $("invDate").addEventListener("change", () => { $("invFrom").value = $("invTo").value = $("invDate").value; if ($("invPartner").value) invQuery(); });
 async function invQuery() {
+  $("invFrom").value = $("invTo").value = $("invDate").value || todayISO();
   const nm = $("invPartner").value.trim();
   const p = (M.partner || []).find(x => x.name === nm);
   if (!p) { toast("거래처를 목록에서 검색·선택하세요"); return; }
@@ -4154,7 +4162,7 @@ function invSetRange(k) {
     const sun = new Date(mon); sun.setDate(mon.getDate() + 6); from = fmt(mon); to = fmt(sun);
   } else if (k === "month") { from = fmt(new Date(y, m, 1)); to = fmt(new Date(y, m + 1, 0)); }
   else if (k === "year") { from = fmt(new Date(y, 0, 1)); to = fmt(new Date(y, 11, 31)); }
-  $("invFrom").value = from; $("invTo").value = to;
+  $("invDate").value = from; $("invFrom").value = from; $("invTo").value = to;
   if ($("invPartner").value) invQuery();
 }
 document.querySelectorAll("#scr-invoice [data-invrange]").forEach(btn =>
@@ -4178,7 +4186,9 @@ function invoiceSheetHtml(d, hideAmt) {
      <tr><td style="${LB}">주소</td><td style="${VB}">${esc(b.address || "") || "—"}</td></tr>`);
   // 도장 자리 — 대표자 칸 오른쪽에 겹치는 (인) 원형
   const stampVB = `${VB} position:relative;`;
-  const stamp = `<span style="position:absolute; right:10px; top:50%; transform:translateY(-50%); width:32px; height:32px; border:1px dashed #c4c4c4; border-radius:50%; color:#cfcfcf; font-size:8.5px; text-align:center; line-height:32px;">(인)</span>`;
+  const stamp = s.co_stamp
+    ? `<img src="/image/${encodeURIComponent(s.co_stamp)}?v=${encodeURIComponent(s.co_stamp_ver || "")}" alt="(인)" style="position:absolute; right:6px; top:50%; transform:translateY(-50%); height:44px; width:44px; object-fit:contain; opacity:.92; mix-blend-mode:multiply; pointer-events:none;">`
+    : `<span style="position:absolute; right:10px; top:50%; transform:translateY(-50%); width:32px; height:32px; border:1px dashed #c4c4c4; border-radius:50%; color:#cfcfcf; font-size:8.5px; text-align:center; line-height:32px;">(인)</span>`;
   const supBox = infoTable("공급자",
     `<tr><td style="${LB}">상호</td><td style="${VB} font-weight:700;">${esc(s.co_name || "") || "—"}</td></tr>
      <tr><td style="${LB}">사업자번호</td><td style="${VB}">${esc(s.co_bizno || "") || "—"}</td></tr>
@@ -4240,7 +4250,7 @@ function invoiceSheetHtml(d, hideAmt) {
   const thead = cols.map(c => `<th style="${TD} background:#f0f0f0;${c.w ? ` width:${c.w}px;` : ""}">${c.t}</th>`).join("");
   return `<div id="invSheet" style="background:#fff; color:#111; max-width:820px; margin:0 auto; padding:6px;">
     <div style="text-align:center; font-size:22px; font-weight:800; letter-spacing:8px; margin:4px 0 2px;">거 래 명 세 서</div>
-    <div style="text-align:center; font-size:12px; color:#555; margin-bottom:8px;">${esc(d.from)} ~ ${esc(d.to)}${d.taxfree ? " · 면세" : ""}${hideAmt ? " · 납품서(금액 생략)" : ""}</div>
+    <div style="text-align:center; font-size:12px; color:#555; margin-bottom:8px;">${d.from === d.to ? esc(d.from) + " (" + dowOf(d.from) + ")" : esc(d.from) + " ~ " + esc(d.to)}${d.taxfree ? " · 면세" : ""}${hideAmt ? " · 납품서(금액 생략)" : ""}</div>
     <div style="display:flex; gap:10px; margin-bottom:8px; align-items:flex-start;">
       <div style="flex:1;">${buyerBox}</div>
       <div style="flex:1;">${supBox}</div></div>
@@ -4279,7 +4289,23 @@ async function openInvCompany() {
   }
   const F = [["co_name", "상호"], ["co_bizno", "사업자등록번호"], ["co_ceo", "대표자"], ["co_addr", "주소"], ["co_tel", "전화"], ["co_type", "업태"], ["co_item", "종목"]];
   $("invCoForm").innerHTML = F.map(([k, lbl]) => `<label style="font-size:13px;">${lbl}
-    <input id="ic_${k}" class="inp" value="${esc(d[k] || "")}" style="width:100%; margin-top:2px;"></label>`).join("");
+    <input id="ic_${k}" class="inp" value="${esc(d[k] || "")}" style="width:100%; margin-top:2px;"></label>`).join("")
+    + `<div style="font-size:13px; border-top:1px solid var(--line-soft); padding-top:8px; margin-top:2px;">대표 도장
+        <div style="display:flex; align-items:center; gap:10px; margin-top:4px;">
+          <div id="icStampBox" style="width:56px; height:56px; border:1px dashed #c4c4c4; border-radius:50%; display:flex; align-items:center; justify-content:center; color:#cfcfcf; font-size:10px; overflow:hidden; background:#fff;">${d.co_stamp ? `<img src="/image/${encodeURIComponent(d.co_stamp)}?v=${Date.now()}" style="width:100%; height:100%; object-fit:contain;">` : "(인)"}</div>
+          <div style="display:flex; flex-direction:column; gap:4px;">
+            <label class="btn ghost sm" style="cursor:pointer;">🖼 도장 이미지 등록<input type="file" id="icStampFile" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none;"></label>
+            ${d.co_stamp ? `<button class="btn ghost sm" id="icStampDel" style="color:var(--crit);">도장 삭제</button>` : ""}
+            <span class="auto" style="font-size:11px;">거래명세서 '대표자' 칸에 찍힙니다 · 배경 투명 png 권장 · 2MB 이하</span></div></div></div>`;
+  $("icStampFile").onchange = async e => {
+    const f = e.target.files && e.target.files[0]; if (!f) return;
+    const dataUrl = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(f); });
+    try { await api("/api/company/stamp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ data: dataUrl }) }); }
+    catch (err) { return; }
+    toast("대표 도장을 등록했습니다"); openInvCompany(); if (INV.data) invQuery();
+  };
+  const del = $("icStampDel");
+  if (del) del.onclick = async () => { if (!confirm("등록된 대표 도장을 삭제할까요?")) return; try { await api("/api/company/stamp", { method: "DELETE" }); } catch (err) { return; } toast("도장을 삭제했습니다"); openInvCompany(); if (INV.data) invQuery(); };
   ov.classList.add("on");
 }
 async function _invCoSave() {
