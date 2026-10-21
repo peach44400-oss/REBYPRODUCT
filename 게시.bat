@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 >nul
 setlocal
-title 재고관리 새 버전 게시
+title REBYPRODUCT 새 버전 게시
 
 REM ── 새 버전 게시 스크립트 ──────────────────────────────
 REM  1) app\main.py 의 APP_VERSION 을 새 버전으로 올리고
@@ -21,15 +21,14 @@ echo.
 
 echo [1/3] exe 빌드 중...
 python -m PyInstaller --noconfirm RebyProduct.spec
-if not exist "dist\재고관리.exe" (
-  echo [오류] 빌드 실패 - dist\재고관리.exe 가 없습니다.
+if not exist "dist\RebyStock.exe" (
+  echo [오류] 빌드 실패 - dist\RebyStock.exe 가 없습니다.
   pause & exit /b 1
 )
 
 echo.
 echo [2/3] GitHub Release 생성 (v%VER%)...
 REM exe는 영문 이름(RebyStock.exe)으로 업로드 — 한글 파일명은 릴리스에서 default.exe로 깨짐
-copy /y "dist\재고관리.exe" "dist\RebyStock.exe" >nul
 gh release create "v%VER%" "dist\RebyStock.exe" "version.json" --title "v%VER%" --notes-file version.json
 if errorlevel 1 (
   echo [오류] Release 생성 실패. gh 로그인 상태를 확인하세요:  gh auth status

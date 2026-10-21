@@ -5,14 +5,14 @@
 
 ## 실행
 
-1. **`재고관리.exe` 더블클릭 (권장)** — Python 불필요. 서버 콘솔창이 뜨고 브라우저 자동 오픈.
+1. **`RebyStock.exe` 더블클릭 (권장)** — Python 불필요. 서버 콘솔창이 뜨고 브라우저 자동 오픈.
    콘솔창을 닫으면 종료. DB는 exe와 같은 폴더의 `rebyproduct.db`.
 2. `실행.bat` 또는 `python app/main.py` — Python 환경에서 실행.
 
 ## 사내 서버로 쓰기 (다른 PC에서 접속)
 
 1. 최초 1회: `서버_방화벽허용.bat`을 **관리자 권한으로 실행** (8600 포트 허용)
-2. `재고관리.exe` 실행 → 콘솔창에 표시되는 `다른 PC에서 접속: http://IP:8600` 주소를 공유
+2. `RebyStock.exe` 실행 → 콘솔창에 표시되는 `다른 PC에서 접속: http://IP:8600` 주소를 공유
 3. 다른 PC/휴대폰은 브라우저로 접속 (설치 불필요)
 - 서버 PC는 공유기에서 IP 고정(DHCP 예약) 권장. 콘솔창을 닫으면 전체 접속 종료.
 
@@ -27,7 +27,7 @@
 
 ```
 rebyproduct/
-├── 재고관리.exe             # 실행 파일 (배포본)
+├── RebyStock.exe             # 실행 파일 (배포본)
 ├── rebyproduct.db          # 데이터 원본 (SQLite) — 백업은 이 파일 복사
 ├── 서버_방화벽허용.bat       # LAN 접속 허용 (최초 1회, 관리자 실행)
 ├── 실행.bat                 # 개발용 실행
@@ -80,7 +80,7 @@ rebyproduct/
 ```
 python -m PyInstaller --noconfirm RebyProduct.spec
 ```
-→ `dist\재고관리.exe`를 루트로 복사 후 **dist/build 폴더 삭제**.
+→ `dist\RebyStock.exe`를 루트로 복사 후 **dist/build 폴더 삭제**.
 ⚠️ exe는 자기 옆의 rebyproduct.db를 사용 — dist 안의 exe를 실행하면 빈 DB가 생깁니다.
 
 ## 주의
@@ -91,3 +91,4 @@ python -m PyInstaller --noconfirm RebyProduct.spec
 - 배합비를 앱에서 수정한 뒤 `python app/import_bom.py`를 실행하면 엑셀 기준으로 덮어써짐.
 
 > v1.110.0부터 DB 파일 이름이 `rebyproduct.db` / `rebyproduct_chat.db`로 바뀌었습니다. 예전 `martin_stock.db`가 있으면 처음 실행 때 자동으로 이름이 바뀌고, 원본은 `martin_stock.db.이름변경전백업`으로 남습니다.
+> v1.111.0부터 실행 파일 이름은 `RebyStock.exe`입니다. 예전 `재고관리.exe`로 쓰던 PC는 자동 업데이트 때 이름이 바뀌고 바탕화면·시작 메뉴 바로가기도 새 파일로 고쳐집니다.

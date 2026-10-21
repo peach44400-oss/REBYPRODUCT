@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.110.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.111.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -1834,8 +1834,10 @@ def update_apply(request: Request):
     _UPDATE_STATE["updating"] = True
     _UPDATE_STATE["version"] = m["version"]
 
-    exe = Path(sys.executable)                       # 현재 실행 중인 exe (…/재고관리.exe)
-    newexe = exe.with_name(exe.stem + "_업데이트" + exe.suffix)
+    exe = Path(sys.executable)                       # 현재 실행 중인 exe (예전 배포본은 …/재고관리.exe)
+    target = exe.with_name("RebyStock.exe")          # 업데이트하면서 실행 파일 이름을 RebyStock.exe로 통일
+    newexe = target.with_name(target.stem + "_업데이트" + target.suffix)
+    renamed = exe.name.lower() != target.name.lower()
     import urllib.request
     try:
         req = _nocache_request(m["url"])   # exe도 CDN 캐시 우회 (새 릴리스 직후 이전 exe 방지)
@@ -1870,14 +1872,14 @@ def update_apply(request: Request):
     bat.write_text(
         "@echo off\r\n"
         "chcp 65001 >nul\r\n"
-        "title 재고관리 업데이트\r\n"
+        "title REBYPRODUCT 업데이트\r\n"
         'cd /d "%~dp0"\r\n'
         'echo [%date% %time%] 업데이트 적용 시작 (%~dp0) > "_업데이트로그.txt"\r\n'
         "echo  업데이트 적용 중입니다. 잠시만 기다려 주세요...\r\n"
         "timeout /t 2 /nobreak >nul\r\n"       # 실행 중이던 exe가 완전히 종료되도록 대기
         "set N=0\r\n"
         ":wait\r\n"
-        f'move /y "{newexe.name}" "{exe.name}" >> "_업데이트로그.txt" 2>&1\r\n'
+        f'move /y "{newexe.name}" "{target.name}" >> "_업데이트로그.txt" 2>&1\r\n'
         "if not errorlevel 1 goto done\r\n"
         "set /a N+=1\r\n"
         "if %N% GEQ 60 goto fallback\r\n"      # 60초까지 재시도 (파일 잠김 대비)
@@ -1885,15 +1887,26 @@ def update_apply(request: Request):
         "goto wait\r\n"
         ":done\r\n"
         f'echo [%date% %time%] 파일 교체 완료 >> "_업데이트로그.txt"\r\n'
+        + ((
+            # 예전 이름(재고관리.exe)으로 쓰던 PC: 바탕화면·시작 메뉴 바로가기가 새 파일을 가리키게 고치고, 옛 exe 삭제
+            f'echo [%date% %time%] 실행 파일 이름 변경 {exe.name} -^> {target.name} >> "_업데이트로그.txt"\r\n'
+            'powershell -NoProfile -ExecutionPolicy Bypass -Command "'
+            f"$o=Join-Path '%~dp0' '{exe.name}'; $n=Join-Path '%~dp0' '{target.name}'; $w=New-Object -ComObject WScript.Shell; "
+            "foreach($f in 'Desktop','CommonDesktopDirectory','StartMenu','CommonStartMenu','Startup'){ $d=[Environment]::GetFolderPath($f); "
+            "if($d -and (Test-Path $d)){ Get-ChildItem -LiteralPath $d -Filter *.lnk -Recurse -ErrorAction SilentlyContinue | ForEach-Object { "
+            "try { $s=$w.CreateShortcut($_.FullName); if($s.TargetPath -ieq $o){ $s.TargetPath=$n; $s.WorkingDirectory=(Split-Path $n); $s.Save() } } catch {} } } }"
+            '" >> "_업데이트로그.txt" 2>&1\r\n'
+            f'del /f /q "{exe.name}" >> "_업데이트로그.txt" 2>&1\r\n'
+        ) if renamed else "") + (
         "timeout /t 2 /nobreak >nul\r\n"       # 교체 직후 백신 스캔 대기
         f'echo [%date% %time%] 재실행(탐색기) >> "_업데이트로그.txt"\r\n'
         # 탐색기로 실행 = 사용자가 더블클릭한 것과 같은 방식 (start가 막히는 환경 대비)
-        f'explorer.exe "%~dp0{exe.name}"\r\n'
+        f'explorer.exe "%~dp0{target.name}"\r\n'
         "echo.\r\n"
         "echo ==================================================\r\n"
         "echo   업데이트가 완료되었습니다. 프로그램을 다시 실행했습니다.\r\n"
         "echo   잠시 뒤에도 프로그램(브라우저) 창이 안 뜨면, 이 폴더의\r\n"
-        f"echo      {exe.name}\r\n"
+        f"echo      {target.name}\r\n"
         "echo   파일을 직접 두 번 눌러 실행해 주세요. (이 창은 곧 닫힙니다)\r\n"
         "echo ==================================================\r\n"
         "timeout /t 12 /nobreak\r\n"
@@ -1905,7 +1918,7 @@ def update_apply(request: Request):
         f"echo  업데이트 파일 교체에 실패했습니다. 이 폴더의  {newexe.name}  파일을\r\n"
         "echo  직접 실행해 주세요. (아무 키나 누르면 창이 닫힙니다)\r\n"
         "pause >nul\r\n"
-        "exit\r\n", encoding="utf-8")
+        "exit\r\n"), encoding="utf-8")
 
     def _relaunch():
         import subprocess

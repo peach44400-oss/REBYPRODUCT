@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 # 빌드: python -m PyInstaller --noconfirm RebyProduct.spec
-# 결과: dist\재고관리.exe (DB는 exe와 같은 폴더의 rebyproduct.db 사용)
+# 결과: dist\RebyStock.exe (DB는 exe와 같은 폴더의 rebyproduct.db 사용)
 
 a = Analysis(
     ['app\\main.py'],
@@ -26,7 +26,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='재고관리',
+    name='RebyStock',
     debug=False,
     strip=False,
     upx=False,
