@@ -4,6 +4,7 @@
 실행:  python app/main.py   →  http://127.0.0.1:8600
 """
 import os
+import shutil
 import re
 import sys
 import json
@@ -41,7 +42,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.111.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.111.1"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -7722,11 +7723,63 @@ def _wait_port_free(port, timeout=25):
     return False
 
 
+def _self_rename_exe():
+    """실행 파일 이름 통일(재고관리.exe → RebyStock.exe).
+    PyInstaller 단일 exe는 실행 중에도 자기 파일에서 코드를 읽으므로 '실행 중 이름 변경'은 불가(바꾸면 즉시 종료됨).
+    ① 옛 이름으로 켜졌으면: 자기 자신을 RebyStock.exe로 '복사' + 바탕화면·시작 메뉴·시작프로그램 바로가기를 새 파일로 재지정 → 그대로 계속 실행.
+    ② RebyStock.exe로 켜졌으면: 옆에 남은 옛 재고관리.exe를 지운다(실행 중이면 실패 → 다음에 다시).
+    어떤 실패도 실행을 막지 않는다. 결과는 exe 옆 _이름변경로그.txt."""
+    if not getattr(sys, "frozen", False):
+        return
+    exe = Path(sys.executable)
+    tgt = exe.with_name("RebyStock.exe")
+    old = exe.with_name("재고관리.exe")
+    log = exe.with_name("_이름변경로그.txt")
+    def _log(t):
+        try:
+            with open(log, "a", encoding="utf-8") as f:
+                f.write(f"{dt.datetime.now():%Y-%m-%d %H:%M:%S} {t}\n")
+        except OSError:
+            pass
+    if exe.name.lower() == tgt.name.lower():        # ② 새 이름으로 실행 중 → 옛 파일 정리
+        if old.exists():
+            try:
+                old.unlink(); _log(f"옛 실행 파일 {old.name} 삭제")
+            except OSError:
+                pass
+        return
+    # ① 옛 이름으로 실행 중
+    if not tgt.exists() or tgt.stat().st_size != exe.stat().st_size:
+        try:
+            tmp = tgt.with_name("RebyStock_복사중.exe")
+            shutil.copy2(str(exe), str(tmp)); os.replace(str(tmp), str(tgt))
+        except OSError as e:
+            _log(f"{tgt.name} 만들기 실패: {e}"); return
+    ps = ("$o='" + str(exe).replace("'", "''") + "'; $n='" + str(tgt).replace("'", "''") + "'; $w=New-Object -ComObject WScript.Shell; $c=0; "
+          "foreach($f in 'Desktop','CommonDesktopDirectory','StartMenu','CommonStartMenu','Startup'){ $d=[Environment]::GetFolderPath($f); "
+          "if($d -and (Test-Path $d)){ Get-ChildItem -LiteralPath $d -Filter *.lnk -Recurse -ErrorAction SilentlyContinue | ForEach-Object { "
+          "try { $s=$w.CreateShortcut($_.FullName); if($s.TargetPath -ieq $o){ $s.TargetPath=$n; $s.WorkingDirectory=(Split-Path $n); $s.Save(); $c++ } } catch {} } } }; "
+          "Write-Output ('shortcuts=' + $c)")
+    msg = ""
+    try:
+        import subprocess
+        r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
+                           capture_output=True, timeout=60, creationflags=0x08000000)   # CREATE_NO_WINDOW
+        msg = (r.stdout or b"").decode("ascii", "replace").strip()
+    except Exception as e:
+        msg = f"shortcut error: {e}"
+    _log(f"{exe.name} → {tgt.name} 복사 완료, 바로가기 재지정 ({msg}). 다음 실행부터 {tgt.name} 사용")
+
+
 if __name__ == "__main__":
     import socket
     import threading
     import webbrowser
     import uvicorn
+    try:
+        _self_rename_exe()   # 옛 이름(재고관리.exe)으로 실행됐으면 RebyStock.exe로 바꾸고 바로가기도 고침
+    except Exception:        # 어떤 이유로도 실행을 막지 않는다
+        pass
     # 업데이트 후 자동 재시작 시 직전 exe가 포트를 놓을 때까지 기다린다 (개발 프리뷰는 고유 포트라 생략)
     if not os.environ.get("PORT"):
         _wait_port_free(int(os.environ.get("PORT", "8600")), 25)
