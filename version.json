@@ -1,5 +1,5 @@
 {
-  "version": "1.109.2",
+  "version": "1.110.0",
   "url": "https://github.com/peach44400-oss/REBYPRODUCT/releases/latest/download/RebyStock.exe",
-  "notes": "· 거래명세서 — [🖨 인쇄] [🖨 2부 인쇄(절취선)] 버튼이 출고 내역이 없는 날에는 숨겨져 안 보이던 문제 수정. 이제 [조회]를 누르면 항상 조회 버튼 오른쪽에 나타납니다."
+  "notes": "· 프로젝트 내부 이름을 Martin → REBYPRODUCT(리바이프로덕트)로 통일했습니다.\n· DB 파일 이름 변경: martin_stock.db → rebyproduct.db, martin_chat.db → rebyproduct_chat.db. 업데이트 후 처음 실행할 때 자동으로 바뀌며(반영 안 된 기록까지 먼저 저장), 원본은 'martin_stock.db.이름변경전백업'으로 같은 폴더에 남습니다. 데이터는 그대로입니다.\n· 다른 프로그램이 DB 파일을 쓰고 있어 이름을 못 바꾸면 이번에는 예전 파일을 그대로 쓰고, 다음 실행 때 다시 바꿉니다."
 }

@@ -21,7 +21,7 @@ if hasattr(sys.stdout, "buffer") and (sys.stdout.encoding or "").lower() != "utf
 import openpyxl
 
 BASE = Path(__file__).resolve().parent.parent
-DB = BASE / "martin_stock.db"
+DB = BASE / ("rebyproduct.db" if (BASE / "rebyproduct.db").exists() or not (BASE / "martin_stock.db").exists() else "martin_stock.db")
 DATE = "2026-07-07"
 SHEET = "26-07-07"
 

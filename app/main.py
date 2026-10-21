@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""martin_stock — 리바이프로덕트 재고 관리 웹앱 (FastAPI + SQLite).
+"""REBYPRODUCT — 리바이프로덕트 재고 관리 웹앱 (FastAPI + SQLite).
 
 실행:  python app/main.py   →  http://127.0.0.1:8600
 """
@@ -41,7 +41,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.109.2"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.110.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -62,7 +62,7 @@ def manifest_url():
     return UPDATE_MANIFEST_URL
 
 
-app = FastAPI(title="martin_stock")
+app = FastAPI(title="REBYPRODUCT")
 
 # 요청 처리 중인 로그인 사용자 (audit_log에 '누가'를 남기기 위한 컨텍스트)
 CURRENT_USER = contextvars.ContextVar("current_user", default="")
@@ -1776,7 +1776,7 @@ def _nocache_request(url):
     sep = "&" if "?" in url else "?"
     busted = f"{url}{sep}_cb={int(time.time())}"
     return urllib.request.Request(busted, headers={
-        "User-Agent": "martin_stock-updater",
+        "User-Agent": "rebyproduct-updater",
         "Cache-Control": "no-cache", "Pragma": "no-cache"})
 
 
@@ -6756,7 +6756,7 @@ def costs(request: Request):
         con.close()
 
 
-# ── 분석 (martin_data 대시보드 이식용 원천데이터) ──
+# ── 분석 (수불부 대시보드 이식용 원천데이터) ──
 
 
 @app.get("/api/analytics")

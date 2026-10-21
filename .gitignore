@@ -1,6 +1,9 @@
 # ── 실제 업무 데이터 (절대 커밋 금지) ─────────────────
 martin_stock.db
+rebyproduct.db
 martin_chat.db
+rebyproduct_chat.db
+*.이름변경전백업
 *.db
 *.db-wal
 *.db-shm

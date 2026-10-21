@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""doc/ 폴더의 엑셀 4종을 martin_stock.db로 임포트 (재실행 시 전체 갱신 — 사용 시작 후 금지).
+"""doc/ 폴더의 엑셀 4종을 rebyproduct.db로 임포트 (재실행 시 전체 갱신 — 사용 시작 후 금지).
 
 원본 → DB 매핑:
 - ★ 전제품완제품수불부: product + production(생산·비고)/shipment(출고) + lot_snapshot(우측 LOT 블록:

@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
-"""martin_stock DB — SQLite 스키마 및 연결.
+"""REBYPRODUCT(리바이프로덕트) 재고관리 DB — SQLite 스키마 및 연결.
 
 설계 원칙:
 - 자체 DB가 데이터 원본 (엑셀은 최초 1회 임포트 + 이후 내보내기 전용)
 - 트랜잭션 원장: 일일 기록(생산/출고/자재/인원)이 쌓이면 재고·수불부·집계는 전부 파생 계산
 - 기준정보(제품/자재/거래처/인원/라인/배합비)는 마스터, 일일 기록은 마스터 id 참조
 """
+import os
 import sys
+import shutil
 import sqlite3
 from pathlib import Path
 
@@ -15,9 +17,46 @@ if getattr(sys, "frozen", False):
     BASE = Path(sys.executable).resolve().parent
 else:
     BASE = Path(__file__).resolve().parent.parent
-DB_PATH = BASE / "martin_stock.db"
+# DB 파일 이름 (v1.110.0~): rebyproduct.db / rebyproduct_chat.db  — 예전 이름(martin_*.db)은 처음 실행 때 자동 이전
+DB_NAME, CHAT_DB_NAME = "rebyproduct.db", "rebyproduct_chat.db"
+_LEGACY_DB = {DB_NAME: "martin_stock.db", CHAT_DB_NAME: "martin_chat.db"}
+
+
+def _migrate_legacy_db(new_name):
+    """옛 이름 DB가 있고 새 이름이 없으면: WAL 반영(체크포인트) → 원본 백업 복사 → 이름 변경(-wal/-shm 함께).
+    이름 변경에 실패하면(다른 프로그램이 파일을 쥐고 있는 등) 옛 파일을 그대로 쓴다 — 빈 DB가 생겨 데이터가 사라진 것처럼 보이는 일 방지.
+    반환: 실제로 쓸 경로."""
+    new_p, old_p = BASE / new_name, BASE / _LEGACY_DB[new_name]
+    if new_p.exists() or not old_p.exists():
+        return new_p
+    try:
+        c = sqlite3.connect(str(old_p))
+        try:
+            c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        finally:
+            c.close()
+    except sqlite3.Error:
+        pass
+    try:
+        bak = BASE / (old_p.name + ".이름변경전백업")
+        if not bak.exists():
+            shutil.copy2(str(old_p), str(bak))
+        os.replace(str(old_p), str(new_p))
+        for suf in ("-wal", "-shm"):
+            o = BASE / (old_p.name + suf)
+            if o.exists():
+                try:
+                    os.replace(str(o), str(BASE / (new_p.name + suf)))
+                except OSError:
+                    pass
+        return new_p
+    except OSError:
+        return old_p
+
+
+DB_PATH = _migrate_legacy_db(DB_NAME)
 # 사내 채팅은 별도 DB — 업무 데이터(재고·생산)와 분리해 백업·삭제·보관 주기를 따로 관리
-CHAT_DB_PATH = BASE / "martin_chat.db"
+CHAT_DB_PATH = _migrate_legacy_db(CHAT_DB_NAME)
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -564,7 +603,7 @@ CREATE TABLE IF NOT EXISTS day_photo (
 );
 CREATE INDEX IF NOT EXISTS idx_dayphoto_date ON day_photo(date);
 
--- 사내 채팅은 별도 DB(martin_chat.db)로 분리 — CHAT_SCHEMA 참고
+-- 사내 채팅은 별도 DB(rebyproduct_chat.db)로 분리 — CHAT_SCHEMA 참고
 
 -- 수정 이력
 CREATE TABLE IF NOT EXISTS audit_log (
@@ -694,7 +733,7 @@ def init_chat_db() -> None:
         if col not in cols:
             con.execute(f"ALTER TABLE chat ADD COLUMN {col} {ddl}")
     con.commit()
-    # 본 DB(martin_stock.db)에 남아 있던 chat 테이블 → 채팅 DB로 옮기고 원본은 제거
+    # 본 DB(rebyproduct.db)에 남아 있던 chat 테이블 → 채팅 DB로 옮기고 원본은 제거
     main = connect()
     try:
         if main.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='chat'").fetchone():

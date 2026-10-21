@@ -14,7 +14,7 @@ if hasattr(sys.stdout, "buffer") and (sys.stdout.encoding or "").lower() != "utf
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
 BASE = Path(__file__).resolve().parent.parent
-DB = BASE / "martin_stock.db"
+DB = BASE / ("rebyproduct.db" if (BASE / "rebyproduct.db").exists() or not (BASE / "martin_stock.db").exists() else "martin_stock.db")
 
 
 def nrm(s):

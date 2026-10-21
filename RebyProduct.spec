@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
-# 빌드: python -m PyInstaller --noconfirm MartinStock.spec
-# 결과: dist\재고관리.exe (DB는 exe와 같은 폴더의 martin_stock.db 사용)
+# 빌드: python -m PyInstaller --noconfirm RebyProduct.spec
+# 결과: dist\재고관리.exe (DB는 exe와 같은 폴더의 rebyproduct.db 사용)
 
 a = Analysis(
     ['app\\main.py'],

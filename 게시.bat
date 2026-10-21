@@ -20,7 +20,7 @@ echo 게시할 버전: v%VER%
 echo.
 
 echo [1/3] exe 빌드 중...
-python -m PyInstaller --noconfirm MartinStock.spec
+python -m PyInstaller --noconfirm RebyProduct.spec
 if not exist "dist\재고관리.exe" (
   echo [오류] 빌드 실패 - dist\재고관리.exe 가 없습니다.
   pause & exit /b 1
@@ -39,7 +39,7 @@ if errorlevel 1 (
 echo.
 echo [3/3] 정리...
 rmdir /s /q dist build 2>nul
-del MartinStock.spec.bak 2>nul
+del RebyProduct.spec.bak 2>nul
 
 echo.
 echo ============================================

@@ -1,4 +1,4 @@
-/* martin_stock 프론트엔드 — REBYPRODUCT 재고관리 */
+/* REBYPRODUCT 재고관리 프론트엔드 */
 "use strict";
 
 const $ = (id) => document.getElementById(id);
@@ -241,7 +241,7 @@ function openLeaveGuard(scr) {
   $("leaveCancel").onclick = () => $("leaveGuardOverlay").classList.remove("on");
 }
 
-/* ── Chart.js 설정 (martin_data 대시보드 방식, 로컬 번들) ── */
+/* ── Chart.js 설정 (수불부 대시보드 방식, 로컬 번들) ── */
 Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
 Chart.defaults.font.size = 11.5;
 Chart.defaults.color = "#75726C";
@@ -8529,7 +8529,7 @@ $("lkFrom").addEventListener("change", () => { if ($("lkSearch").value.trim()) d
 $("lkTo").addEventListener("change", () => { if ($("lkSearch").value.trim()) doLkSearch(); });
 window.lkPick = (date) => { lkCal.ym = date.slice(0, 7); lkCal.sel = date; lkCal.render(); loadLookup(date); };
 
-/* ══ 분석 (martin_data 대시보드 이식) ═══ */
+/* ══ 분석 (수불부 대시보드 이식) ═══ */
 const ANA = { raw: null, dates: [], P: {}, S: {}, stock: {}, from: null, to: null,
   agg: "d", metric: "stock", prods: [], deadThr: 7, trendSel: -1 };
 const PALETTE = ["#121212", "#C2372C", "#3E7A50", "#C4841D", "#4A5FA5", "#8E44AD", "#0E7490", "#6E6A63"];

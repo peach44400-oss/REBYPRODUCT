@@ -1,4 +1,4 @@
-# martin_stock — 리바이프로덕트(REBYPRODUCT) 재고관리
+# REBYPRODUCT — 리바이프로덕트 재고관리
 
 제빵공장 재고·생산 관리 웹앱. **자체 SQLite DB가 데이터 원본**.
 ※ 2026-07-07 사용자 결정으로 엑셀 임포트 이력을 전부 비우고 **일일 입력으로 새로 작성 시작**.
@@ -6,7 +6,7 @@
 ## 실행
 
 1. **`재고관리.exe` 더블클릭 (권장)** — Python 불필요. 서버 콘솔창이 뜨고 브라우저 자동 오픈.
-   콘솔창을 닫으면 종료. DB는 exe와 같은 폴더의 `martin_stock.db`.
+   콘솔창을 닫으면 종료. DB는 exe와 같은 폴더의 `rebyproduct.db`.
 2. `실행.bat` 또는 `python app/main.py` — Python 환경에서 실행.
 
 ## 사내 서버로 쓰기 (다른 PC에서 접속)
@@ -26,12 +26,12 @@
 ## 구성
 
 ```
-martin_stock/
+rebyproduct/
 ├── 재고관리.exe             # 실행 파일 (배포본)
-├── martin_stock.db          # 데이터 원본 (SQLite) — 백업은 이 파일 복사
+├── rebyproduct.db          # 데이터 원본 (SQLite) — 백업은 이 파일 복사
 ├── 서버_방화벽허용.bat       # LAN 접속 허용 (최초 1회, 관리자 실행)
 ├── 실행.bat                 # 개발용 실행
-├── MartinStock.spec         # exe 빌드 설정
+├── RebyProduct.spec         # exe 빌드 설정
 ├── 백업/                    # DB 백업 (일일기록전체삭제전 = 과거 엑셀 이력 복구용)
 ├── doc/                     # 원본 엑셀 (참고용) + 배합비/ + 배합비_통합정리.xlsx
 └── app/
@@ -78,14 +78,16 @@ martin_stock/
 ## exe 재빌드 (개발)
 
 ```
-python -m PyInstaller --noconfirm MartinStock.spec
+python -m PyInstaller --noconfirm RebyProduct.spec
 ```
 → `dist\재고관리.exe`를 루트로 복사 후 **dist/build 폴더 삭제**.
-⚠️ exe는 자기 옆의 martin_stock.db를 사용 — dist 안의 exe를 실행하면 빈 DB가 생깁니다.
+⚠️ exe는 자기 옆의 rebyproduct.db를 사용 — dist 안의 exe를 실행하면 빈 DB가 생깁니다.
 
 ## 주의
 
 - `백업\martin_stock_백업_20260707_일일기록전체삭제전.db` = 과거 엑셀 이력(2026-01~06) 전체가
-  담긴 유일한 복구본 — 삭제 금지. 복구 = 앱 종료 후 이 파일을 martin_stock.db로 복사.
+  담긴 유일한 복구본 — 삭제 금지. 복구 = 앱 종료 후 이 파일을 rebyproduct.db로 복사.
 - 과거 엑셀 이력은 다시 넣지 않기로 결정(2026-07-07) — import/update 스크립트 실행 금지.
 - 배합비를 앱에서 수정한 뒤 `python app/import_bom.py`를 실행하면 엑셀 기준으로 덮어써짐.
+
+> v1.110.0부터 DB 파일 이름이 `rebyproduct.db` / `rebyproduct_chat.db`로 바뀌었습니다. 예전 `martin_stock.db`가 있으면 처음 실행 때 자동으로 이름이 바뀌고, 원본은 `martin_stock.db.이름변경전백업`으로 남습니다.
