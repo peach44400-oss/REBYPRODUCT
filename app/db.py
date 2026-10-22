@@ -364,10 +364,35 @@ CREATE TABLE IF NOT EXISTS purchase_order (
   created_by TEXT DEFAULT '',
   sent_at TEXT DEFAULT '',             -- 메일 발송 시각
   sent_to TEXT DEFAULT '',             -- 발송 수신 주소
-  received_at TEXT DEFAULT '',         -- 입고 처리 시각 (자재 입고 자동 반영됨)
-  received_by TEXT DEFAULT ''          -- 입고 처리한 사용자
+  received_at TEXT DEFAULT '',         -- 첫 입고 처리 시각 (입고 기록이 있으면 채워짐 — 삭제 잠금 판단용)
+  received_by TEXT DEFAULT '',         -- 첫 입고 처리한 사용자
+  receipts TEXT DEFAULT '[]',          -- 입고 이력 [{no,date,at,by,in_ids,items:[{i,qty,price}]}] — 분할 입고 지원
+  closed_at TEXT DEFAULT '',           -- 잔량 종결(남은 수량을 더 받지 않음) 시각 → '완료'
+  closed_by TEXT DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_po_date ON purchase_order(date);
+
+-- AI 질문 기록 — 누가 무엇을 물었고 어떤 조회가 실행됐는지 (질문 문장·DB 구조만 외부 AI로 전송, 데이터는 전송 안 함)
+CREATE TABLE IF NOT EXISTS ai_log (
+  id INTEGER PRIMARY KEY,
+  at TEXT DEFAULT (datetime('now','localtime')),
+  username TEXT DEFAULT '',
+  question TEXT DEFAULT '',
+  sql TEXT DEFAULT '',
+  title TEXT DEFAULT '',
+  rows INTEGER DEFAULT 0,
+  ok INTEGER DEFAULT 0,
+  error TEXT DEFAULT '',
+  model TEXT DEFAULT ''
+);
+-- AI 자주 쓰는 질문 (사용자별 ☆)
+CREATE TABLE IF NOT EXISTS ai_fav (
+  id INTEGER PRIMARY KEY,
+  username TEXT NOT NULL,
+  question TEXT NOT NULL,
+  created_at TEXT DEFAULT (datetime('now','localtime')),
+  UNIQUE(username, question)
+);
 
 -- 수금(입금) — 거래처별 미수금(매출−수금) 관리
 CREATE TABLE IF NOT EXISTS receipt (
@@ -941,9 +966,11 @@ def init_db() -> None:
         con.execute("ALTER TABLE partner ADD COLUMN show_fin INTEGER DEFAULT 0")
     # 발주서 메일 발송 기록 + 미등록 거래처명 + 입고 처리 기록
     pocols = [r[1] for r in con.execute("PRAGMA table_info(purchase_order)")]
-    for col in ("sent_at", "sent_to", "partner_name", "received_at", "received_by"):
+    for col in ("sent_at", "sent_to", "partner_name", "received_at", "received_by", "closed_at", "closed_by"):
         if col not in pocols:
             con.execute(f"ALTER TABLE purchase_order ADD COLUMN {col} TEXT DEFAULT ''")
+    if "receipts" not in pocols:   # 분할 입고 이력
+        con.execute("ALTER TABLE purchase_order ADD COLUMN receipts TEXT DEFAULT '[]'")
     # 용역도 출근·퇴근·휴게 입력 지원 (정직원 staffing_member와 동일)
     if "start_time" not in sacols:
         con.execute("ALTER TABLE staffing_agency ADD COLUMN start_time TEXT DEFAULT ''")

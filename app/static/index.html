@@ -165,6 +165,18 @@
     #scr-items img{width:16px !important; height:16px !important;}
     #scr-items .uselink{font-size:8.5px !important;}
   }
+  /* 발주 현황 — 진행상태 탭 · 상태 칩 · 입고 진행 막대 (이카운트 발주서조회 방식) */
+  .po-sttabs{display:inline-flex; gap:4px; margin-left:8px;}
+  .po-sttabs button{border:1px solid var(--line); background:var(--surface); color:var(--muted); border-radius:999px;
+    padding:3px 12px; font-size:12px; cursor:pointer;}
+  .po-sttabs button.on{background:#1f5fd6; border-color:#1f5fd6; color:#fff; font-weight:700;}
+  .po-st{display:inline-block; padding:1px 8px; border-radius:999px; font-size:11.5px; font-weight:700; white-space:nowrap;}
+  .po-st.open{background:#e8f0ff; color:#1f5fd6;}
+  .po-st.done{background:#fff1e3; color:#d9730d;}
+  .po-prog{display:inline-block; width:54px; height:6px; border-radius:3px; background:var(--line-soft); vertical-align:middle; overflow:hidden; margin-right:5px;}
+  .po-prog i{display:block; height:100%; background:#2f9e5b;}
+  #postListTbl td, #postListTbl th{white-space:nowrap;}
+  #postListTbl td.po-items{white-space:normal; min-width:200px; max-width:340px;}
   /* 발주서 인쇄 — 인쇄 시 발주서만 보이게 */
   #poPrintArea{display:none;}
   @media print{
@@ -667,6 +679,12 @@
     border:0; border-radius:999px; padding:12px 22px; font-size:14px; font-weight:800;
     box-shadow:0 8px 22px rgba(0,0,0,.30); cursor:pointer; white-space:nowrap;}
   .save-fab:hover{filter:brightness(1.15);}
+  /* AI에게 묻기 — 오른쪽 아래 고정 버튼 (저장 버튼 아래) */
+  .ai-fab{position:fixed; right:22px; bottom:22px; z-index:1140; background:linear-gradient(135deg,#1f5fd6,#7b3fe4); color:#fff;
+    border:0; border-radius:999px; padding:10px 18px; font-size:13.5px; font-weight:800; cursor:pointer;
+    box-shadow:0 8px 22px rgba(31,95,214,.35); white-space:nowrap;}
+  .ai-fab:hover{filter:brightness(1.1);}
+  @media print{ .ai-fab{display:none !important;} }
   .save-fab:active{transform:translateY(1px);}
   .chartbox{position:relative; margin-bottom:10px;}
   .chartbox canvas{width:100% !important; height:100% !important;}
@@ -1140,11 +1158,15 @@
             <input id="invPartner" class="inp sm" list="invPartnerDl" placeholder="🔍 거래처 검색·선택" autocomplete="off" style="min-width:200px; margin-left:5px;">
             <datalist id="invPartnerDl"></datalist></label>
           <label style="font-size:13px; display:inline-flex; align-items:center; gap:4px;">출고일
-            <button class="btn ghost sm" id="invPrev" title="전날" style="padding:2px 8px;">◀</button>
-            <input type="date" id="invDate" class="inp sm">
-            <button class="btn ghost sm" id="invNext" title="다음날" style="padding:2px 8px;">▶</button>
-            <button class="btn ghost sm" data-invrange="today">오늘</button></label>
-          <input type="hidden" id="invFrom"><input type="hidden" id="invTo">
+            <button class="btn ghost sm" id="invPrev" title="이전 기간 (하루면 전날)" style="padding:2px 8px;">◀</button>
+            <input type="date" id="invFrom" class="inp sm" title="시작일">
+            <span>~</span>
+            <input type="date" id="invTo" class="inp sm" title="종료일">
+            <button class="btn ghost sm" id="invNext" title="다음 기간 (하루면 다음날)" style="padding:2px 8px;">▶</button>
+            <button class="btn ghost sm" data-invrange="today">오늘</button>
+            <button class="btn ghost sm" data-invrange="prevweek" title="지난주 월~일">전주</button>
+            <button class="btn ghost sm" data-invrange="prevmonth" title="지난달 1일~말일">전월</button></label>
+          <input type="hidden" id="invDate">
           <label style="font-size:13px; display:inline-flex; align-items:center; gap:4px;">
             <input type="checkbox" id="invTaxfree"> 면세(부가세 0)</label>
           <label style="font-size:13px; display:inline-flex; align-items:center; gap:4px;" title="체크하면 단가·공급가액·세액·합계를 숨겨 수량만 있는 납품서로 인쇄합니다">
@@ -1270,10 +1292,10 @@
       <div class="card">
         <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
           <div class="tabs" id="postTabs" style="border-bottom:0; margin-bottom:0;">
-            <button data-pot="all">전체</button>
+            <button class="on" data-pot="all">전체</button>
             <button data-pot="d">일별</button>
             <button data-pot="w">주별</button>
-            <button class="on" data-pot="m">월별</button>
+            <button data-pot="m">월별</button>
             <button data-pot="y">년별</button>
           </div>
           <span class="spacer"></span>
@@ -1286,6 +1308,11 @@
           <b class="num" style="font-size:14.5px; cursor:pointer; border-bottom:1px dotted var(--muted);" id="postLbl"
              title="클릭하면 달력이 열립니다">-</b>
           <button class="btn ghost sm" id="postNext">▶</button>
+          <button class="btn ghost sm" id="postPrevWeek" title="지난주(월~일) 발주 보기">전주</button>
+          <button class="btn ghost sm" id="postPrevMonth" title="지난달 발주 보기">전월</button>
+          <div class="po-sttabs" id="postStTabs" title="진행상태로 거르기 — 진행중 = 아직 다 안 들어온 발주(미입고·부분입고)">
+            <button class="on" data-pst="">전체</button><button data-pst="진행중">진행중</button><button data-pst="완료">완료</button>
+          </div>
           <span class="spacer"></span>
           <input class="mini-input" id="postFilter" autocomplete="off"
                  placeholder="🔍 품목명·거래처명으로 검색" style="text-align:left; width:230px;">
@@ -1924,9 +1951,9 @@
 
 <!-- 발주서 작성 모달 -->
 <div class="overlay" id="poOverlay">
-  <div class="modal" style="max-width:640px;">
+  <div class="modal" style="width:min(800px, 96vw); max-width:800px;">
     <h3>📋 발주서</h3>
-    <p class="hint">부족 자재를 거래처에 주문하는 발주서를 만들고 인쇄합니다. 저장하면 아래 최근 발주서에 남습니다.</p>
+    <p class="hint">거래처에 주문하는 발주서를 만듭니다. <b>저장·인쇄·메일·복사 중 무엇을 눌러도 저장</b>되어 [발주 현황] 목록에 나타납니다. 단가를 비워 두면 최근 입고 단가로 채워집니다.</p>
     <div class="fgrid">
       <div class="fld"><label>거래처 (수신) — 검색 또는 직접 입력 (미등록 거래처도 가능)</label>
         <input id="poPartner" list="poPartnerDl" placeholder="🔍 거래처 이름 검색" autocomplete="off">
@@ -1944,15 +1971,19 @@
       <button class="btn sm" id="poAddItem">+ 품목 추가</button>
     </div>
     <div class="tbl-wrap" style="max-height:250px; overflow-y:auto;"><table>
-      <thead><tr><th>자재명</th><th class="r">수량</th><th>단위</th><th></th></tr></thead>
+      <thead><tr><th>자재명</th><th class="r">수량</th><th>단위</th><th class="r po-money">단가(원)</th><th class="r po-money">공급가액</th><th></th></tr></thead>
       <tbody class="num" id="poItems"></tbody>
     </table></div>
+    <div id="poSum" class="po-money" style="text-align:right; font-size:12.5px; margin-top:6px;"></div>
     <datalist id="poMatDl"></datalist>
     <div style="margin-top:12px;">
       <b style="font-size:13px;">최근 발주서</b>
       <div id="poHistory" style="max-height:140px; overflow-y:auto; margin-top:6px; border:1px solid var(--line-soft); border-radius:8px;"></div>
     </div>
     <div class="modal-foot">
+      <label class="po-money" id="poShowAmtWrap" style="margin-right:auto; font-size:12.5px; display:flex; align-items:center; gap:5px; cursor:pointer;"
+        title="체크를 끄면 인쇄·메일 발주서에 단가·공급가액·부가세·금액이 빠집니다 (수량만 표시) — 이 기기에 기억됩니다">
+        <input type="checkbox" id="poShowAmt" checked> 발주서에 금액 표시</label>
       <button class="btn" onclick="closePo()">닫기</button>
       <button class="btn" id="poSaveBtn">저장</button>
       <button class="btn" id="poMailBtn" title="발주서를 거래처 이메일로 보냅니다 (관리 > 메일 설정 필요)">📧 메일 보내기</button>
@@ -2183,10 +2214,10 @@
 </div>
 
 <!-- 발주서 입고 처리 모달 -->
-<div class="overlay" id="poRecvOverlay">
-  <div class="modal" style="width:min(560px, 94vw);">
+<div class="overlay" id="poRecvOverlay" style="z-index:63;">
+  <div class="modal" style="width:min(720px, 94vw);">
     <h3 id="poRecvTitle">📥 입고 처리</h3>
-    <p class="hint">실제 입고된 수량을 확인하고 확정하면 <b>원부자재 입고에 자동 기록</b>되어 재고에 바로 반영됩니다 (일일 입력의 입고 카드에도 나타나며 거기서 수정 가능). 실제 단가를 입력하면 거래처별 정산 금액이 계산됩니다.</p>
+    <p class="hint"><b>이번에 실제로 들어온 수량</b>만 입력하세요 (기본값 = 남은 수량). 예: 100개 발주에 50개만 왔으면 50 → 50개만 입고되고 <b>잔량 50개는 '진행중'으로 남아</b> 다음에 이어서 입고할 수 있습니다. 확정하면 원부자재 입고에 자동 기록되어 재고에 바로 반영됩니다.</p>
     <div class="fgrid">
       <div class="fld"><label>입고일</label>
         <input class="datepick" type="text" readonly id="poRecvDate" placeholder="📅 입고일"></div>
@@ -2196,7 +2227,7 @@
         <input class="datepick" type="text" readonly id="poRecvExpiry" placeholder="📅 유통기한"></div>
     </div>
     <div class="tbl-wrap" style="max-height:300px; overflow-y:auto;"><table>
-      <thead><tr><th>자재명</th><th class="r">발주 수량</th><th class="r">실제 입고</th><th class="r" id="poRecvPriceTh">실제 단가(원)</th></tr></thead>
+      <thead><tr><th>자재명</th><th class="r">발주</th><th class="r">입고됨</th><th class="r">잔량</th><th class="r">이번 입고</th><th class="r" id="poRecvPriceTh">단가(원)</th></tr></thead>
       <tbody class="num" id="poRecvItems"></tbody>
     </table></div>
     <div class="modal-foot">
@@ -2209,12 +2240,19 @@
 <!-- 발송된 발주서 보기 전용 모달 -->
 <!-- z-index 62: 자재 이력 등 다른 팝업(60) 위에서 열리는 보기 전용 팝업이라 항상 위로 -->
 <div class="overlay" id="poViewOverlay" style="z-index:62;">
-  <div class="modal" style="width:min(720px, 94vw);">
+  <div class="modal" style="width:min(820px, 96vw);">
     <h3 id="poViewTitle">📧 보낸 발주서</h3>
     <p class="hint" id="poViewSub"></p>
-    <div id="poViewBody" style="max-height:56vh; overflow-y:auto; border:1px solid var(--line-soft); border-radius:10px; padding:14px; background:#fff;"></div>
-    <div class="modal-foot">
+    <div id="poViewBody" style="max-height:52vh; overflow-y:auto; border:1px solid var(--line-soft); border-radius:10px; padding:14px; background:#fff;"></div>
+    <div id="poViewRecv" style="margin-top:10px;"></div>
+    <div class="modal-foot" style="flex-wrap:wrap;">
+      <label class="po-money" id="poViewAmtWrap" style="margin-right:auto; font-size:12.5px; display:flex; align-items:center; gap:5px; cursor:pointer;"
+        title="체크를 끄면 인쇄 발주서에 금액이 빠집니다 (수량만 표시)"><input type="checkbox" id="poViewShowAmt" checked> 금액 표시</label>
       <button class="btn" onclick="closePoView()">닫기</button>
+      <button class="btn" id="poViewEdit" style="display:none;">✏ 수정</button>
+      <button class="btn" id="poViewClose" style="display:none;" title="남은 수량을 더 받지 않기로 하고 '완료'로 마감합니다">⛔ 잔량 종결</button>
+      <button class="btn" id="poViewReopen" style="display:none;">↺ 종결 해제</button>
+      <button class="btn" id="poViewRecvBtn" style="display:none; color:var(--ok); border-color:var(--ok);">📥 입고 처리</button>
       <button class="btn" id="poViewKakao" title="발주 내용을 복사해 대화방(카톡 등)에 붙여넣어 거래처에 보냅니다" style="background:#2f7a44; color:#fff; border-color:#2f7a44;">📋 복사해서 보내기</button>
       <button class="btn primary" id="poViewPrint">🖨 인쇄</button>
     </div>
@@ -2815,6 +2853,54 @@
   <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button><button data-k="C" class="pfn">지움</button><button data-k="*" class="pop">×</button>
   <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button><button data-k="00" class="pfn">00</button><button data-k="-" class="pop">−</button>
   <button data-k="0">0</button><button data-k=".">.</button><button data-k="000" class="pfn">000</button><button data-k="+" class="pop">＋</button><button data-k="OK" class="pok">확인</button>
+</div>
+<!-- AI에게 묻기 — 어느 화면에서나 오른쪽 아래 버튼 (질문 문장·DB 구조만 Gemini로 전송, 데이터는 이 PC에서만 조회) -->
+<button type="button" class="ai-fab" id="aiFab" style="display:none;" title="AI에게 묻기 — 평소 말투로 물으면 표·차트로 뽑아 줍니다">✨ AI에게 묻기</button>
+<div class="overlay" id="aiOverlay" style="z-index:64;">
+  <div class="modal" style="width:min(980px, 97vw);">
+    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+      <h3 style="margin:0;">✨ AI에게 묻기</h3>
+      <span class="auto" id="aiUsage" style="font-size:12px;"></span>
+      <span class="spacer"></span>
+      <button class="btn ghost sm" id="aiCfgBtn" style="display:none;">⚙ AI 설정</button>
+    </div>
+    <p class="hint" style="margin:6px 0 10px;">평소 말투로 물어보세요 — 예: "이번 달 거래처별 매입 합계", "어제 달광도넛 몇 개 만들었어?" · AI에게는 <b>질문 문장과 DB 구조만</b> 보내고, 실제 수량·금액은 이 PC에서만 조회합니다.</p>
+    <div style="display:flex; gap:8px;">
+      <input id="aiQ" class="inp" autocomplete="off" maxlength="500" placeholder="무엇이 궁금하세요? (Enter)" style="flex:1; font-size:14px; padding:9px 12px;">
+      <button class="btn primary" id="aiAsk">묻기</button>
+    </div>
+    <div id="aiChips" style="display:flex; flex-wrap:wrap; gap:6px; margin:10px 0 4px;"></div>
+    <div id="aiResult" style="margin-top:10px; max-height:58vh; overflow:auto;"></div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeAi()">닫기</button>
+    </div>
+  </div>
+</div>
+<!-- AI 설정 (관리자) — 무료 키 등록·모델·하루 상한·사용 허용 계정 -->
+<div class="overlay" id="aiCfgOverlay" style="z-index:65;">
+  <div class="modal" style="width:min(620px, 95vw);">
+    <h3>⚙ AI 설정 <span class="auto" style="font-size:12px; font-weight:400;">Google Gemini 무료 등급</span></h3>
+    <div class="hint" style="background:#fff7e6; border:1px solid #f3d19c; border-radius:8px; padding:8px 10px; margin-bottom:10px; line-height:1.6;">
+      <b>요금이 나오지 않게 하려면</b> AI Studio(aistudio.google.com)에서 <b>[Set up billing / 결제 설정]을 누르지 마세요.</b>
+      결제 계정이 없는 무료 키는 한도를 넘어도 요청이 거절될 뿐 요금이 청구되지 않습니다. 이 앱은 무료 등급 모델만 쓰고, 하루 질문 수도 아래 상한으로 한 번 더 막습니다.</div>
+    <div class="fgrid">
+      <div class="fld" style="grid-column:1/-1;"><label>API 키 <span class="auto" id="aiKeyHint"></span></label>
+        <div style="display:flex; gap:6px;"><input id="aiKey" type="password" autocomplete="off" placeholder="AI Studio에서 복사한 키를 붙여넣기 (바꿀 때만 입력)" style="flex:1;">
+          <button class="btn ghost sm" id="aiKeyDel" style="color:var(--crit);">키 삭제</button></div></div>
+      <div class="fld"><label>모델 (무료 등급)</label><select id="aiModel"></select></div>
+      <div class="fld"><label>하루 질문 상한 (전체)</label><input id="aiLimit" type="number" min="1" max="1000"></div>
+      <div class="fld" style="grid-column:1/-1;"><label>AI 사용을 허용할 계정 <span class="auto">(관리자는 항상 사용 가능)</span></label>
+        <div id="aiUsers" style="display:flex; flex-wrap:wrap; gap:10px; font-size:13px;"></div></div>
+    </div>
+    <div id="aiTestMsg" style="font-size:12.5px; margin-top:8px;"></div>
+    <details style="margin-top:10px;"><summary style="cursor:pointer; font-size:12.5px; font-weight:700;">최근 질문 기록</summary>
+      <div id="aiLog" style="max-height:220px; overflow:auto; margin-top:6px;"></div></details>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeAiCfg()">닫기</button>
+      <button class="btn" id="aiTest">🔌 연결 테스트</button>
+      <button class="btn primary" id="aiCfgSave">저장</button>
+    </div>
+  </div>
 </div>
 <script src="/static/vendor/chart.umd.js"></script>
 <script src="/static/vendor/chartjs-plugin-zoom.min.js"></script>

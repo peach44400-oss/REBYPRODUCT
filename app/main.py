@@ -42,7 +42,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.111.1"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.112.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -1961,24 +1961,10 @@ def lowstock(request: Request):
 
 def latest_material_prices(con, upto=None):
     """자재별 최신 실입고 단가 {mid: price}.
-    발주 입고 단가(purchase_order.items) + 일일 입고 직접 단가(material_in, 발주 유래 행 제외)를
+    원부자재 입고(material_in — 발주 입고 처리분 포함, 분할 입고는 차수마다 한 행) 단가를
     날짜순으로 합쳐 각 자재의 가장 최근 값을 남긴다. upto(YYYY-MM-DD) 지정 시 그 날짜까지만."""
     priced = []   # (날짜, material_id, price)
-    q1 = "SELECT received_at, items FROM purchase_order WHERE received_at!=''"
-    p1 = []
-    if upto:
-        q1 += " AND substr(received_at,1,10)<=?"
-        p1.append(upto)
-    q1 += " ORDER BY received_at"
-    for r in con.execute(q1, p1):
-        try:
-            its = json.loads(r["items"] or "[]")
-        except ValueError:
-            continue
-        for it in its:
-            if it.get("material_id") and (it.get("price") or 0) > 0:
-                priced.append((r["received_at"][:10], it["material_id"], it["price"]))
-    q2 = "SELECT date, material_id, price FROM material_in WHERE price>0 AND note NOT LIKE '발주 #%'"
+    q2 = "SELECT date, material_id, price FROM material_in WHERE price>0"
     p2 = []
     if upto:
         q2 += " AND date<=?"
@@ -1999,6 +1985,20 @@ def latest_material_prices(con, upto=None):
     return {mid: price for _, mid, price in priced}
 
 
+@app.get("/api/matlastprice")
+def matlastprice(request: Request):
+    """자재별 최근 실입고 단가(없으면 기준 단가) {material_id: price} — 발주서 단가 칸 기본값."""
+    if not (mcan(request, "mat_price") or mcan(request, "mat_amt")):
+        raise HTTPException(403, "단가 열람 권한이 없습니다")
+    con = connect()
+    try:
+        out = {r["id"]: r["unit_price"] for r in con.execute("SELECT id, unit_price FROM material WHERE unit_price>0")}
+        out.update(latest_material_prices(con))
+        return out
+    finally:
+        con.close()
+
+
 @app.get("/api/matprice/{mid}")
 def matprice(request: Request, mid: int):
     """자재 단가 추이 — 발주 입고 처리 때 입력한 실제 단가 이력 (입고 완료 발주서의 items 스냅샷)."""
@@ -2010,24 +2010,11 @@ def matprice(request: Request, mid: int):
         if not m:
             raise HTTPException(404, "자재를 찾을 수 없습니다")
         pts = []
-        for r in con.execute("""
-                SELECT po.id, po.date, po.received_at, po.items,
-                       COALESCE(pa.name, po.partner_name, '') pname
-                FROM purchase_order po LEFT JOIN partner pa ON pa.id=po.partner_id
-                WHERE po.received_at!='' ORDER BY po.received_at"""):
-            try:
-                its = json.loads(r["items"] or "[]")
-            except ValueError:
-                continue
-            for it in its:
-                if it.get("material_id") == mid and (it.get("price") or 0) > 0:
-                    pts.append({"date": (r["received_at"] or r["date"])[:10], "po_id": r["id"],
-                                "price": it["price"], "partner": r["pname"],
-                                "qty": it.get("recv") or it.get("qty") or 0})
-        # 일일 입력에서 직접 입력한 입고 단가 — 발주 유래 행(note '발주 #')은 위에서 이미 집계되므로 제외
-        for r in con.execute("""SELECT date, qty, price, COALESCE(partner,'') partner FROM material_in
-                WHERE material_id=? AND price>0 AND note NOT LIKE '발주 #%' ORDER BY date""", (mid,)):
-            pts.append({"date": r["date"], "po_id": None, "price": r["price"],
+        # 실입고 단가 — 일일 입고 + 발주 입고 처리분(note '발주 #id', 분할 입고는 차수마다 한 행)
+        for r in con.execute("""SELECT date, qty, price, COALESCE(partner,'') partner, COALESCE(note,'') note
+                FROM material_in WHERE material_id=? AND price>0 ORDER BY date, id""", (mid,)):
+            pm = re.match(r"발주 #(\d+)", r["note"])
+            pts.append({"date": r["date"], "po_id": int(pm.group(1)) if pm else None, "price": r["price"],
                         "partner": r["partner"], "qty": r["qty"]})
         # 관리자가 '적용 시작일'과 함께 지정한 단가 변경 이력
         manual = []
@@ -3071,56 +3058,180 @@ def require_stock_duty(request: Request):
         raise HTTPException(403, "자재(재고·입고) 담당 또는 관리자만 가능합니다")
 
 
+def _jl(s, default):
+    """JSON 문자열 → 값 (깨졌거나 타입이 다르면 default)."""
+    try:
+        v = json.loads(s or "")
+    except (ValueError, TypeError):
+        return default
+    return v if isinstance(v, type(default)) else default
+
+
+# 발주서 조회 공통 SELECT — 거래처명 + 일자별 순번(이카운트 '2026/10/20 -3'의 -3)
+PO_SEL = """SELECT po.*, COALESCE(pa.name, NULLIF(po.partner_name,''), '거래처 미지정') partner,
+    (SELECT COUNT(*) FROM purchase_order x WHERE x.date=po.date AND x.id<=po.id) seq
+    FROM purchase_order po LEFT JOIN partner pa ON pa.id=po.partner_id"""
+
+
+def po_enrich(po, money=True):
+    """발주서 행 → 화면용 dict.
+    · 품목별 입고 누계(recv)·잔량(remain) — 분할 입고 이력(receipts)의 수량 합. 옛 방식(한 번에 입고, receipts 없음)은
+      items[].recv를 1회 입고로 본다.
+    · 진행상태: 잔량 있음 = '진행중'(미입고/부분입고), 전량 입고 또는 잔량 종결 = '완료'.
+    · 금액: 발주 기준 공급가액·부가세(10%)·합계(total) + 입고 기준 금액(amount, 정산용)."""
+    po = dict(po)
+    items = _jl(po.get("items"), [])
+    receipts = _jl(po.get("receipts"), [])
+    if not receipts and po.get("received_at"):
+        receipts = [{"no": 1, "date": (po["received_at"] or "")[:10], "at": po["received_at"],
+                     "by": po.get("received_by") or "", "legacy": True,
+                     "items": [{"i": i, "qty": float(it["recv"] if it.get("recv") is not None else (it.get("qty") or 0)),
+                                "price": float(it.get("price") or 0)} for i, it in enumerate(items)]}]
+    got, got_amt = {}, {}   # 품목별 입고 수량 누계 / 입고 금액 누계(차수마다 그때 단가)
+    for rc in receipts:
+        for x in rc.get("items") or []:
+            i, xq = x.get("i"), float(x.get("qty") or 0)
+            got[i] = got.get(i, 0.0) + xq
+            xp = float(x.get("price") or 0) or (float(items[i].get("price") or 0) if isinstance(i, int) and 0 <= i < len(items) else 0)
+            got_amt[i] = got_amt.get(i, 0.0) + xq * xp
+    supply = vat = amount = oq = rq = 0.0
+    full = bool(items)
+    for i, it in enumerate(items):
+        q = float(it.get("qty") or 0)
+        r = round(got.get(i, 0.0), 4)
+        price = float(it.get("price") or 0)
+        it["recv"] = r if receipts else None
+        it["remain"] = round(max(q - r, 0.0), 4)
+        sup = q * price
+        it["supply"] = round(sup)
+        it["vat"] = 0 if it.get("taxfree") else round(sup * 0.1)
+        it["amount"] = got_amt.get(i) or None if receipts else None   # 입고 기준 (정산)
+        supply += it["supply"]
+        vat += it["vat"]
+        amount += it["amount"] or 0
+        oq += q
+        rq += min(r, q)
+        if r + 1e-9 < q:
+            full = False
+    if po.get("closed_at"):
+        state = "종결"
+    elif full:
+        state = "입고완료"
+    elif any(v > 0 for v in got.values()):
+        state = "부분입고"
+    else:
+        state = "미입고"
+    po.update({"items": items, "receipts": receipts, "recv_state": state,
+               "status": "완료" if state in ("종결", "입고완료") else "진행중",
+               "order_qty": round(oq, 4), "recv_qty": round(sum(got.values()), 4),
+               "progress": round(100 * rq / oq) if oq else 0,
+               "supply": round(supply), "vat": round(vat), "total": round(supply) + round(vat),
+               "amount": amount})
+    if not money:   # 단가·금액 열람 권한 없음 → 마스킹
+        for k in ("supply", "vat", "total", "amount"):
+            po[k] = None
+        for it in items:
+            for k in ("price", "supply", "vat", "amount"):
+                it[k] = None
+        for rc in receipts:
+            for x in rc.get("items") or []:
+                x["price"] = None
+    return po
+
+
+def _po_money(request):
+    return mcan(request, "mat_amt") or mcan(request, "mat_price")
+
+
+def _recalc_mat_day(con, mid, rdate, drop_empty=False):
+    """그날 자재 재고 행 재계산 — day_save의 자동 행 규칙과 동일 (발주 입고 처리·입고 취소 공용)."""
+    in_total = con.execute("SELECT COALESCE(SUM(qty),0) q FROM material_in WHERE date=? AND material_id=?",
+                           (rdate, mid)).fetchone()["q"]
+    used = con.execute("SELECT COALESCE(SUM(qty),0) q FROM material_usage WHERE date=? AND material_id=?",
+                       (rdate, mid)).fetchone()["q"]
+    manual = con.execute("SELECT 1 FROM material_daily WHERE date=? AND material_id=? AND src!='auto'",
+                         (rdate, mid)).fetchone()
+    if manual:   # 실사 행 = 실재고(측정값) 유지, 입고·사용량만 재계산
+        con.execute("""UPDATE material_daily SET in_qty=?, used_qty=prev_qty+?-real_qty
+            WHERE date=? AND material_id=? AND src!='auto'""", (in_total, in_total, rdate, mid))
+    elif drop_empty and in_total == 0 and used == 0:   # 입고 취소로 빈 자동 행 — 통째로 제거
+        con.execute("DELETE FROM material_daily WHERE date=? AND material_id=? AND src='auto'", (rdate, mid))
+    else:
+        prev_row = con.execute("""SELECT real_qty FROM material_daily
+            WHERE material_id=? AND date<? ORDER BY date DESC LIMIT 1""", (mid, rdate)).fetchone()
+        prev = float(prev_row["real_qty"]) if prev_row else 0.0
+        con.execute("""INSERT OR REPLACE INTO material_daily
+            (date, material_id, prev_qty, in_qty, real_qty, used_qty, src)
+            VALUES(?,?,?,?,?,?,'auto')""", (rdate, mid, prev, in_total, prev + in_total - used, used))
+    ripple_material(con, mid, rdate)   # 이후 날짜 전일재고 체인 재계산
+
+
 @app.get("/api/po")
 def po_list(request: Request, limit: int = 30):
     require_stock_duty(request)
+    money = _po_money(request)
     con = connect()
     try:
-        out = rows(con.execute("""
-            SELECT po.*, COALESCE(pa.name, NULLIF(po.partner_name,''), '거래처 미지정') partner
-            FROM purchase_order po LEFT JOIN partner pa ON pa.id=po.partner_id
-            ORDER BY po.id DESC LIMIT ?""", (limit,)))
-        for r in out:
-            try:
-                r["items"] = json.loads(r["items"] or "[]")
-            except ValueError:
-                r["items"] = []
-        return out
+        return [po_enrich(r, money) for r in con.execute(PO_SEL + " ORDER BY po.id DESC LIMIT ?", (limit,))]
     finally:
         con.close()
 
 
 @app.post("/api/po")
 def po_save(request: Request, body: dict):
-    """발주서 저장 — 품목은 이름·규격·단위를 스냅샷으로 저장 (자재 정보가 나중에 바뀌어도 발주서는 그대로)."""
+    """발주서 저장(새로 만들기 / id가 있으면 수정) — 품목은 코드·이름·규격·단위·단가를 스냅샷으로 저장.
+    단가를 비우면: (수정 시) 이전 단가 → 최근 실입고 단가 → 기준 단가 순으로 채운다."""
     require_stock_duty(request)
     items = body.get("items") or []
-    clean = []
+    po_id = body.get("id")
     con = connect()
     try:
+        old = None
+        if po_id:
+            old = con.execute("SELECT * FROM purchase_order WHERE id=?", (po_id,)).fetchone()
+            if not old:
+                raise HTTPException(404, "발주서를 찾을 수 없습니다")
+            if po_enrich(old)["receipts"]:
+                raise HTTPException(400, "입고 기록이 있는 발주서는 수정할 수 없습니다 — 입고를 취소한 뒤 수정해주세요")
+            if old["sent_at"] and request.state.user["role"] != "admin":
+                raise HTTPException(403, "이미 보낸 발주서는 관리자만 수정할 수 있습니다")
+        oldp = {it.get("material_id"): it.get("price") for it in (_jl(old["items"], []) if old else [])}
+        lastp = latest_material_prices(con)
+        clean = []
         for it in items:
             mid = it.get("material_id")
             if not mid:
                 continue
-            m = con.execute("SELECT name, spec, unit FROM material WHERE id=?", (mid,)).fetchone()
-            if not m:
+            mt = con.execute("SELECT name, spec, unit, unit_price, COALESCE(code,'') code FROM material WHERE id=?",
+                             (mid,)).fetchone()
+            if not mt:
                 continue
-            clean.append({"material_id": mid, "name": m["name"], "spec": m["spec"] or "",
-                          "unit": m["unit"] or "", "qty": float(it.get("qty") or 0),
-                          "price": float(it.get("price") or 0)})   # 발주 단가 스냅샷 (월말 정산용)
+            qty = float(str(it.get("qty") or 0).replace(",", "") or 0)
+            if qty <= 0:
+                continue
+            pr = it.get("price")
+            pr = float(str(pr).replace(",", "")) if pr not in (None, "") else 0.0
+            if pr <= 0:
+                pr = float(oldp.get(mid) or 0) or float(lastp.get(mid) or 0) or float(mt["unit_price"] or 0)
+            clean.append({"material_id": mid, "code": mt["code"], "name": mt["name"], "spec": mt["spec"] or "",
+                          "unit": mt["unit"] or "", "qty": qty, "price": pr})   # 발주 단가 스냅샷
         if not clean:
-            raise HTTPException(400, "발주 품목이 없습니다 — 자재를 추가해주세요")
-        cur = con.execute("""INSERT INTO purchase_order(date, partner_id, partner_name, due, note, items, created_by)
-            VALUES(?,?,?,?,?,?,?)""",
-                          (body.get("date") or dt.date.today().isoformat(),
-                           body.get("partner_id") or None,
-                           (body.get("partner_name") or "").strip(),
-                           body.get("due") or "",
-                           body.get("note") or "", json.dumps(clean, ensure_ascii=False),
-                           request.state.user.get("username", "")))
-        audit(con, "save_po", f"발주서 #{cur.lastrowid} — 품목 {len(clean)}종")
+            raise HTTPException(400, "발주 품목이 없습니다 — 자재와 수량을 입력해주세요")
+        vals = (body.get("date") or dt.date.today().isoformat(), body.get("partner_id") or None,
+                (body.get("partner_name") or "").strip(), body.get("due") or "", body.get("note") or "",
+                json.dumps(clean, ensure_ascii=False))
+        if old:
+            con.execute("""UPDATE purchase_order SET date=?, partner_id=?, partner_name=?, due=?, note=?, items=?
+                WHERE id=?""", (*vals, po_id))
+            audit(con, "save_po", f"발주서 #{po_id} 수정 — 품목 {len(clean)}종")
+            new_id = po_id
+        else:
+            cur = con.execute("""INSERT INTO purchase_order(date, partner_id, partner_name, due, note, items, created_by)
+                VALUES(?,?,?,?,?,?,?)""", (*vals, request.state.user.get("username", "")))
+            new_id = cur.lastrowid
+            audit(con, "save_po", f"발주서 #{new_id} — 품목 {len(clean)}종")
         con.commit()
-        return {"ok": True, "id": cur.lastrowid}
+        return {"ok": True, "id": new_id}
     finally:
         con.close()
 
@@ -3146,10 +3257,10 @@ def po_kakao(request: Request, po_id: int):
 
 
 @app.get("/api/postatus")
-def po_status(request: Request, mode: str = "m", date: str = "", q: str = "", limit: int = 50):
-    """발주 현황 — 기간(전체/일/주/월/년) + 검색(품목명·거래처명)으로 발주서 목록·거래처별 정산 집계.
-    금액 = 입고 처리 때 입력한 실제 단가 × 수량 (미입력 품목은 집계 제외, '미입력'으로 표시).
-    집계는 검색·기간에 걸린 전체 기준, 목록은 최근 limit건만 (수량이 많아져도 화면 유지)."""
+def po_status(request: Request, mode: str = "m", date: str = "", q: str = "", limit: int = 50, status: str = ""):
+    """발주 현황(이카운트 발주서조회 방식) — 기간(전체/일/주/월/년) + 검색(품목명·거래처명) + 진행상태(진행중/완료).
+    목록 금액 = 발주 기준 합계(VAT 포함). 거래처별 정산 금액 = 입고 처리 때의 단가 × 입고 수량.
+    집계는 검색·기간·상태에 걸린 전체 기준, 목록은 최근 limit건만."""
     require_stock_duty(request)
     money = mcan(request, "mat_amt")   # 자재 단가·금액 열람 권한
     con = connect()
@@ -3163,65 +3274,59 @@ def po_status(request: Request, mode: str = "m", date: str = "", q: str = "", li
                 date = con.execute("SELECT MAX(date) d FROM purchase_order").fetchone()["d"] \
                     or dt.date.today().isoformat()
             a, b = period_range(mode, date)
-        pos = rows(con.execute("""
-            SELECT po.*, COALESCE(pa.name, NULLIF(po.partner_name,''), '거래처 미지정') partner
-            FROM purchase_order po LEFT JOIN partner pa ON pa.id=po.partner_id
-            WHERE po.date BETWEEN ? AND ? ORDER BY po.id DESC""", (a, b)))
+        pos = [po_enrich(r, True) for r in con.execute(
+            PO_SEL + " WHERE po.date BETWEEN ? AND ? ORDER BY po.date DESC, po.id DESC", (a, b))]
         ql = (q or "").strip().lower()
         out_pos, by_part = [], {}
-        total_amt, unpriced, recv_cnt = 0.0, 0, 0
+        total_amt, order_total, unpriced, done_cnt, open_cnt = 0.0, 0, 0, 0, 0
         for po in pos:
-            try:
-                po["items"] = json.loads(po["items"] or "[]")
-            except ValueError:
-                po["items"] = []
             # 검색: 거래처명 또는 품목명에 걸리는 발주서만
             if ql and ql not in po["partner"].lower() \
                and not any(ql in (it.get("name") or "").lower() for it in po["items"]):
                 continue
-            amt = 0.0
-            for it in po["items"]:
-                qn = float(it.get("recv") if it.get("recv") is not None else (it.get("qty") or 0))
-                pr = float(it.get("price") or 0)
-                it["amount"] = qn * pr if pr > 0 else None
-                if pr > 0:
-                    amt += qn * pr
-                else:
-                    unpriced += 1
-            po["amount"] = amt
-            total_amt += amt
-            if po["received_at"]:
-                recv_cnt += 1
-            bp = by_part.setdefault(po["partner"], {"partner": po["partner"], "cnt": 0, "recv": 0,
-                                                    "items": 0, "amount": 0.0, "unpriced": 0})
+            if status in ("진행중", "완료") and po["status"] != status:
+                continue
+            done = po["status"] == "완료"
+            done_cnt += 1 if done else 0
+            open_cnt += 0 if done else 1
+            total_amt += po["amount"]
+            order_total += po["total"]
+            npr = sum(1 for it in po["items"] if not (it.get("price") or 0) > 0)
+            unpriced += npr
+            bp = by_part.setdefault(po["partner"], {"partner": po["partner"], "cnt": 0, "recv": 0, "items": 0,
+                                                    "amount": 0.0, "total": 0, "unpriced": 0})
             bp["cnt"] += 1
-            bp["recv"] += 1 if po["received_at"] else 0
+            bp["recv"] += 1 if done else 0
             bp["items"] += len(po["items"])
-            bp["amount"] += amt
-            bp["unpriced"] += sum(1 for it in po["items"] if not (it.get("price") or 0) > 0)
+            bp["amount"] += po["amount"]
+            bp["total"] += po["total"]
+            bp["unpriced"] += npr
             out_pos.append(po)
         total = len(out_pos)
         out_pos = out_pos[:max(1, int(limit))]
         if not money:   # 금액 열람 권한 없으면 마스킹
-            total_amt = None
-            for po in out_pos:
-                po["amount"] = None
-                for it in po["items"]:
-                    it["price"] = None
-                    it["amount"] = None
+            total_amt = order_total = None
+            out_pos = [po_enrich(dict(p, items=json.dumps([{k: v for k, v in it.items()
+                                                            if k not in ("recv", "remain", "supply", "vat", "amount")}
+                                                           for it in p["items"]], ensure_ascii=False),
+                                      receipts=json.dumps([x for x in p["receipts"] if not x.get("legacy")],
+                                                          ensure_ascii=False)), False)
+                       for p in out_pos]
             for v in by_part.values():
-                v["amount"] = None
+                v["amount"] = v["total"] = None
         return {"date": date, "mode": mode, "range": [a, b], "pos": out_pos,
                 "total": total, "shown": len(out_pos),
-                "by_partner": sorted(by_part.values(), key=lambda x: (-(x["amount"] or 0), -x["cnt"])),
-                "total_amount": total_amt, "recv_cnt": recv_cnt, "unpriced": unpriced}
+                "by_partner": sorted(by_part.values(), key=lambda x: (-(x["total"] or 0), -x["cnt"])),
+                "total_amount": total_amt, "order_total": order_total,
+                "recv_cnt": done_cnt, "done_cnt": done_cnt, "open_cnt": open_cnt, "unpriced": unpriced}
     finally:
         con.close()
 
 
 @app.post("/api/po/{po_id}/receive")
 def po_receive(request: Request, po_id: int, body: dict):
-    """발주서 입고 처리 — 품목별 실제 입고 수량(+실제 단가)을 원부자재 입고(material_in)에 자동 기록.
+    """발주서 입고 처리(분할 입고 가능) — 이번에 들어온 품목별 수량(+실제 단가)을 원부자재 입고(material_in)에 기록.
+    100개 발주 중 50개만 오면 50개만 입고되고 잔량 50개는 남아 '진행중'으로 유지된다. 전량 들어오면 '완료'.
     재고 반영은 일일 입력의 입고와 완전히 같은 경로(자동 행 재계산 + 이후 날짜 체인)로 처리된다."""
     require_stock_duty(request)
     con = connect()
@@ -3229,13 +3334,26 @@ def po_receive(request: Request, po_id: int, body: dict):
         po = con.execute("SELECT * FROM purchase_order WHERE id=?", (po_id,)).fetchone()
         if not po:
             raise HTTPException(404, "발주서가 없습니다")
-        if po["received_at"]:
-            raise HTTPException(400, "이미 입고 처리된 발주서입니다")
+        cur_e = po_enrich(po, True)
+        if cur_e["status"] == "완료":
+            raise HTTPException(400, "이미 완료된 발주서입니다 (전량 입고 또는 잔량 종결)")
+        items = _jl(po["items"], [])
         rdate = (body.get("date") or "").strip() or dt.date.today().isoformat()
         made = (body.get("made") or "").strip()
         expiry = (body.get("expiry") or "").strip()
-        recvs = [it for it in (body.get("items") or [])
-                 if it.get("material_id") and float(it.get("qty") or 0) > 0]
+        recvs = []
+        for x in body.get("items") or []:
+            q = float(str(x.get("qty") or 0).replace(",", "") or 0)
+            if q <= 0:
+                continue
+            i = x.get("i")
+            if i is None and x.get("material_id"):   # 옛 화면 호환 — 자재 id로 품목 찾기
+                i = next((k for k, it in enumerate(items) if it.get("material_id") == x["material_id"]), None)
+            if i is None or not (0 <= int(i) < len(items)):
+                continue
+            i = int(i)
+            pr = float(str(x.get("price") or 0).replace(",", "") or 0) or float(items[i].get("price") or 0)
+            recvs.append({"i": i, "qty": q, "price": pr, "expiry": (x.get("expiry") or "").strip() or expiry})
         if not recvs:
             raise HTTPException(400, "입고 수량을 1개 이상 입력해주세요")
         pa = con.execute("SELECT name FROM partner WHERE id=?", (po["partner_id"],)).fetchone() \
@@ -3243,109 +3361,124 @@ def po_receive(request: Request, po_id: int, body: dict):
         pname = (pa["name"] if pa else "") or (po["partner_name"] or "")
         note = f"발주 #{po_id}" + (f" · {pname}" if pname else "")
         con.execute("INSERT OR IGNORE INTO day_record(date) VALUES(?)", (rdate,))
-        for it in recvs:
-            con.execute("""INSERT INTO material_in(date, material_id, qty, made_date, expiry, note, partner, price)
-                VALUES(?,?,?,?,?,?,?,?)""",
-                        (rdate, it["material_id"], float(it["qty"]), made, expiry, note,
-                         pname, float(it.get("price") or 0)))
-        # 자재별 재고 자동 반영 — day_save의 자동 행 로직과 동일 규칙
-        for mid in {it["material_id"] for it in recvs}:
-            in_total = con.execute("SELECT COALESCE(SUM(qty),0) q FROM material_in WHERE date=? AND material_id=?",
-                                   (rdate, mid)).fetchone()["q"]
-            used = con.execute("SELECT COALESCE(SUM(qty),0) q FROM material_usage WHERE date=? AND material_id=?",
-                               (rdate, mid)).fetchone()["q"]
-            manual = con.execute("SELECT 1 FROM material_daily WHERE date=? AND material_id=? AND src!='auto'",
-                                 (rdate, mid)).fetchone()
-            if manual:   # 실사 행 = 실재고(측정값) 유지, 입고·사용량만 재계산
-                con.execute("""UPDATE material_daily SET in_qty=?, used_qty=prev_qty+?-real_qty
-                    WHERE date=? AND material_id=? AND src!='auto'""", (in_total, in_total, rdate, mid))
-            else:
-                prev_row = con.execute("""SELECT real_qty FROM material_daily
-                    WHERE material_id=? AND date<? ORDER BY date DESC LIMIT 1""", (mid, rdate)).fetchone()
-                prev = float(prev_row["real_qty"]) if prev_row else 0.0
-                con.execute("""INSERT OR REPLACE INTO material_daily
-                    (date, material_id, prev_qty, in_qty, real_qty, used_qty, src)
-                    VALUES(?,?,?,?,?,?,'auto')""",
-                            (rdate, mid, prev, in_total, prev + in_total - used, used))
-            ripple_material(con, mid, rdate)   # 이후 날짜 전일재고 체인 재계산
-        # 발주서 품목에 입고 수량·실제 단가 스냅샷 기록 (정산 = 이 단가 기준)
-        try:
-            items = json.loads(po["items"] or "[]")
-        except ValueError:
-            items = []
-        rmap = {it["material_id"]: it for it in recvs}
-        for it in items:
-            r = rmap.get(it.get("material_id"))
-            if r:
-                it["recv"] = float(r.get("qty") or 0)
-                if float(r.get("price") or 0) > 0:
-                    it["price"] = float(r["price"])
-        con.execute("""UPDATE purchase_order SET items=?, received_at=datetime('now','localtime'), received_by=?
-            WHERE id=?""",
-                    (json.dumps(items, ensure_ascii=False), request.state.user.get("username", ""), po_id))
-        audit(con, "receive_po", f"발주서 #{po_id} 입고 처리 → {rdate} · {len(recvs)}품목 (재고 자동 반영)")
+        in_ids = []
+        for r in recvs:
+            cur = con.execute("""INSERT INTO material_in(date, material_id, qty, made_date, expiry, note, partner, price)
+                VALUES(?,?,?,?,?,?,?,?)""", (rdate, items[r["i"]]["material_id"], r["qty"], made, r["expiry"], note,
+                                            pname, r["price"]))
+            in_ids.append(cur.lastrowid)
+        for mid in {items[r["i"]]["material_id"] for r in recvs}:
+            _recalc_mat_day(con, mid, rdate)
+        # 입고 이력 추가 (옛 방식 1회 입고가 있으면 이력으로 보존한 뒤 이어 붙임) + 품목 입고 누계·실제 단가 갱신
+        receipts = [dict(x) for x in cur_e["receipts"]]
+        no = max([x.get("no") or 0 for x in receipts] + [0]) + 1
+        now = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        user = request.state.user.get("username", "")
+        receipts.append({"no": no, "date": rdate, "at": now, "by": user, "in_ids": in_ids,
+                         "items": [{"i": r["i"], "qty": r["qty"], "price": r["price"]} for r in recvs]})
+        tot = {}
+        for rc in receipts:
+            for x in rc["items"]:
+                tot[x["i"]] = tot.get(x["i"], 0.0) + float(x.get("qty") or 0)
+        for r in recvs:
+            if r["price"] > 0:
+                items[r["i"]]["price"] = r["price"]
+        for i, it in enumerate(items):
+            it["recv"] = round(tot.get(i, 0.0), 4)
+        con.execute("""UPDATE purchase_order SET items=?, receipts=?,
+                received_at=CASE WHEN COALESCE(received_at,'')='' THEN ? ELSE received_at END,
+                received_by=CASE WHEN COALESCE(received_by,'')='' THEN ? ELSE received_by END
+            WHERE id=?""", (json.dumps(items, ensure_ascii=False), json.dumps(receipts, ensure_ascii=False),
+                            now, user, po_id))
+        e = po_enrich(con.execute("SELECT * FROM purchase_order WHERE id=?", (po_id,)).fetchone(), True)
+        left = sum(1 for it in e["items"] if it["remain"] > 0)
+        audit(con, "receive_po", f"발주서 #{po_id} 입고 {no}차 → {rdate} · {len(recvs)}품목 ({e['recv_state']}, 재고 자동 반영)")
         con.commit()
-        chat_system(f"📥 발주 #{po_id} 입고 완료" + (f" — {pname}" if pname else "")
-                    + f" ({len(recvs)}품목, 재고 자동 반영)")
-        return {"ok": True, "date": rdate}
+        chat_system(f"📥 발주 #{po_id} 입고" + (f" — {pname}" if pname else "")
+                    + (f" ({len(recvs)}품목 · 부분입고, 잔량 {left}품목 남음)" if e["status"] == "진행중"
+                       else f" ({len(recvs)}품목 · 입고완료)"))
+        return {"ok": True, "date": rdate, "no": no, "status": e["status"], "recv_state": e["recv_state"],
+                "remain_items": left}
     finally:
         con.close()
 
 
 @app.post("/api/po/{po_id}/unreceive")
-def po_unreceive(request: Request, po_id: int):
-    """입고 취소 — 입고 처리 때 자동 기록된 원부자재 입고를 삭제하고 재고를 되돌린다.
-    발주서는 다시 '진행중'이 되어 재입고 처리할 수 있다."""
+def po_unreceive(request: Request, po_id: int, body: dict = None):
+    """입고 취소 — 지정한 입고 차수(no, 없으면 마지막 입고)에서 기록된 원부자재 입고를 삭제하고 재고를 되돌린다.
+    발주서는 '진행중'으로 돌아가 다시 입고 처리할 수 있다(잔량 종결도 해제)."""
     require_stock_duty(request)
     con = connect()
     try:
         po = con.execute("SELECT * FROM purchase_order WHERE id=?", (po_id,)).fetchone()
         if not po:
             raise HTTPException(404, "발주서가 없습니다")
-        if not po["received_at"]:
-            raise HTTPException(400, "입고 처리되지 않은 발주서입니다")
-        # 입고 처리 때 남긴 기록 찾기 — note '발주 #id' 또는 '발주 #id · 거래처' (#1이 #10에 안 걸리게 정확 매칭)
-        rows_in = rows(con.execute(
-            "SELECT id, date, material_id FROM material_in WHERE note=? OR note LIKE ?",
-            (f"발주 #{po_id}", f"발주 #{po_id} ·%")))
+        e = po_enrich(po, True)
+        receipts = e["receipts"]
+        if not receipts:
+            raise HTTPException(400, "입고 기록이 없는 발주서입니다")
+        want = (body or {}).get("no")
+        target = next((x for x in receipts if want and x.get("no") == want), receipts[-1])
+        if target.get("legacy"):   # 옛 방식 1회 입고 — note '발주 #id' 또는 '발주 #id · 거래처'로 찾기 (#1이 #10에 안 걸리게)
+            rows_in = rows(con.execute("SELECT id, date, material_id FROM material_in WHERE note=? OR note LIKE ?",
+                                       (f"발주 #{po_id}", f"발주 #{po_id} ·%")))
+        else:
+            ids = [int(x) for x in target.get("in_ids") or []]
+            rows_in = rows(con.execute(f"SELECT id, date, material_id FROM material_in WHERE id IN ({','.join('?' * len(ids))})",
+                                       ids)) if ids else []
         affected = {(r["date"], r["material_id"]) for r in rows_in}
         for r in rows_in:
             con.execute("DELETE FROM material_in WHERE id=?", (r["id"],))
-        # 재고 재계산 — 입고 처리와 동일 규칙의 역방향
         for (rdate, mid) in affected:
-            in_total = con.execute("SELECT COALESCE(SUM(qty),0) q FROM material_in WHERE date=? AND material_id=?",
-                                   (rdate, mid)).fetchone()["q"]
-            used = con.execute("SELECT COALESCE(SUM(qty),0) q FROM material_usage WHERE date=? AND material_id=?",
-                               (rdate, mid)).fetchone()["q"]
-            manual = con.execute("SELECT 1 FROM material_daily WHERE date=? AND material_id=? AND src!='auto'",
-                                 (rdate, mid)).fetchone()
-            if manual:   # 실사 행: 실재고(측정값) 유지, 입고·사용량만 재계산
-                con.execute("""UPDATE material_daily SET in_qty=?, used_qty=prev_qty+?-real_qty
-                    WHERE date=? AND material_id=? AND src!='auto'""", (in_total, in_total, rdate, mid))
-            elif in_total == 0 and used == 0:   # 입고 취소로 빈 자동 행 — 통째로 제거 (일일 입력에서도 사라짐)
-                con.execute("DELETE FROM material_daily WHERE date=? AND material_id=? AND src='auto'", (rdate, mid))
+            _recalc_mat_day(con, mid, rdate, drop_empty=True)
+        rest = [x for x in receipts if x is not target]
+        items = _jl(po["items"], [])
+        tot = {}
+        for rc in rest:
+            for x in rc["items"]:
+                tot[x["i"]] = tot.get(x["i"], 0.0) + float(x.get("qty") or 0)
+        for i, it in enumerate(items):
+            if rest:
+                it["recv"] = round(tot.get(i, 0.0), 4)
             else:
-                prev_row = con.execute("""SELECT real_qty FROM material_daily
-                    WHERE material_id=? AND date<? ORDER BY date DESC LIMIT 1""", (mid, rdate)).fetchone()
-                prev = float(prev_row["real_qty"]) if prev_row else 0.0
-                con.execute("""INSERT OR REPLACE INTO material_daily
-                    (date, material_id, prev_qty, in_qty, real_qty, used_qty, src)
-                    VALUES(?,?,?,?,?,?,'auto')""",
-                            (rdate, mid, prev, in_total, prev + in_total - used, used))
-            ripple_material(con, mid, rdate)
-        # 발주서 되돌리기 — 입고 수량·입고 단가 스냅샷 제거
-        try:
-            items = json.loads(po["items"] or "[]")
-        except ValueError:
-            items = []
-        for it in items:
-            it.pop("recv", None)
-            it["price"] = 0
-        con.execute("UPDATE purchase_order SET items=?, received_at='', received_by='' WHERE id=?",
-                    (json.dumps(items, ensure_ascii=False), po_id))
-        audit(con, "unreceive_po", f"발주서 #{po_id} 입고 취소 — 자동 입고 기록 {len(rows_in)}건 삭제, 재고 원복")
+                it.pop("recv", None)
+        if rest:
+            con.execute("UPDATE purchase_order SET items=?, receipts=?, closed_at='', closed_by='' WHERE id=?",
+                        (json.dumps(items, ensure_ascii=False), json.dumps(rest, ensure_ascii=False), po_id))
+        else:
+            con.execute("""UPDATE purchase_order SET items=?, receipts='[]', received_at='', received_by='',
+                closed_at='', closed_by='' WHERE id=?""", (json.dumps(items, ensure_ascii=False), po_id))
+        audit(con, "unreceive_po", f"발주서 #{po_id} 입고 {target.get('no')}차 취소 — 입고 기록 {len(rows_in)}건 삭제, 재고 원복")
         con.commit()
-        return {"ok": True, "removed": len(rows_in)}
+        return {"ok": True, "removed": len(rows_in), "no": target.get("no")}
+    finally:
+        con.close()
+
+
+@app.post("/api/po/{po_id}/close")
+def po_close(request: Request, po_id: int, body: dict):
+    """잔량 종결 — 일부만 들어오고 나머지는 더 받지 않기로 한 발주서를 '완료'로 마감 (close=false면 종결 해제)."""
+    require_stock_duty(request)
+    con = connect()
+    try:
+        po = con.execute("SELECT * FROM purchase_order WHERE id=?", (po_id,)).fetchone()
+        if not po:
+            raise HTTPException(404, "발주서가 없습니다")
+        e = po_enrich(po, True)
+        close = bool(body.get("close", True))
+        user = request.state.user.get("username", "")
+        if close:
+            if e["recv_state"] == "입고완료":
+                raise HTTPException(400, "이미 전량 입고된 발주서입니다")
+            con.execute("UPDATE purchase_order SET closed_at=datetime('now','localtime'), closed_by=? WHERE id=?",
+                        (user, po_id))
+            left = ", ".join(f"{it['name']} {it['remain']:g}" for it in e["items"] if it["remain"] > 0)
+            audit(con, "close_po", f"발주서 #{po_id} 잔량 종결 — 미입고: {left}")
+        else:
+            con.execute("UPDATE purchase_order SET closed_at='', closed_by='' WHERE id=?", (po_id,))
+            audit(con, "close_po", f"발주서 #{po_id} 잔량 종결 해제")
+        con.commit()
+        return {"ok": True}
     finally:
         con.close()
 
@@ -3355,21 +3488,10 @@ def po_get(request: Request, po_id: int):
     """발주서 단건 — 자재 이력의 입고 기록에서 클릭해 볼 때 사용. 금액은 mat 권한 마스킹."""
     con = connect()
     try:
-        po = con.execute("""
-            SELECT po.*, COALESCE(pa.name, NULLIF(po.partner_name,''), '거래처 미지정') partner
-            FROM purchase_order po LEFT JOIN partner pa ON pa.id=po.partner_id
-            WHERE po.id=?""", (po_id,)).fetchone()
+        po = con.execute(PO_SEL + " WHERE po.id=?", (po_id,)).fetchone()
         if not po:
             raise HTTPException(404, "발주서가 없습니다")
-        po = dict(po)
-        try:
-            po["items"] = json.loads(po["items"] or "[]")
-        except ValueError:
-            po["items"] = []
-        if not mcan(request, "mat_amt"):
-            for it in po["items"]:
-                it["price"] = None
-        return po
+        return po_enrich(po, _po_money(request))
     finally:
         con.close()
 
@@ -3379,11 +3501,11 @@ def po_delete(request: Request, po_id: int):
     require_stock_duty(request)
     con = connect()
     try:
-        po = con.execute("SELECT sent_at, received_at FROM purchase_order WHERE id=?", (po_id,)).fetchone()
+        po = con.execute("SELECT * FROM purchase_order WHERE id=?", (po_id,)).fetchone()
         if not po:
             raise HTTPException(404, "발주서가 없습니다")
         # 발송·입고된 발주서 = 거래 기록 — 일반 사용자는 삭제 불가, 관리자만 삭제 가능 (감사 이력에 남음)
-        locked = bool(po["sent_at"] or po["received_at"])
+        locked = bool(po["sent_at"] or po_enrich(po)["receipts"])
         if locked and request.state.user["role"] != "admin":
             raise HTTPException(403, "메일을 보냈거나 입고 처리된 발주서는 관리자만 삭제할 수 있습니다")
         con.execute("DELETE FROM purchase_order WHERE id=?", (po_id,))
@@ -4950,19 +5072,9 @@ def dashboard(request: Request):
                                              ELSE p.unit_price END),0) a
             FROM shipment s JOIN product p ON p.id=s.product_id
             WHERE s.date BETWEEN ? AND ?""", (ma, mb)).fetchone()["a"]
-        # 이번달 매입액 = 발주 입고분(입고일 기준) + 일일 입고 단가 입력분 (단가 미입력 제외)
-        buy_month = 0.0
-        for r in con.execute("""SELECT items FROM purchase_order
-                WHERE received_at!='' AND substr(received_at,1,10) BETWEEN ? AND ?""", (ma, mb)):
-            try:
-                for it in json.loads(r["items"] or "[]"):
-                    if (it.get("price") or 0) > 0:
-                        buy_month += (it.get("recv") or it.get("qty") or 0) * it["price"]
-            except ValueError:
-                pass
-        buy_month += con.execute("""SELECT COALESCE(SUM(qty*price),0) a FROM material_in
-            WHERE price>0 AND note NOT LIKE '발주 #%' AND date BETWEEN ? AND ?""",
-            (ma, mb)).fetchone()["a"]
+        # 이번달 매입액 = 원부자재 입고(발주 입고 처리분 포함, 입고일 기준) 단가 입력분 (단가 미입력 제외)
+        buy_month = con.execute("""SELECT COALESCE(SUM(qty*price),0) a FROM material_in
+            WHERE price>0 AND date BETWEEN ? AND ?""", (ma, mb)).fetchone()["a"]
         # 이번달 노무비 (직원 개인시간→라인 폴백 + 용역 상세→구방식 폴백)
         labor_month = con.execute("""
             SELECT COALESCE(SUM(
@@ -5264,24 +5376,13 @@ def month_report(request: Request, ym: str = ""):
             r["amount"] = round(r["used"] * r["price"])
             r.pop("unit_price", None)
         used.sort(key=lambda x: -x["amount"])
-        # 발주 입고액 — 이 달 입고 처리분 (실제 매입), 단가 미입력 품목은 집계 제외하고 건수만 안내
-        po_pa, unpriced = {}, 0
-        for r in con.execute("""SELECT COALESCE(pa.name, NULLIF(po.partner_name,''), '미지정') pname, po.items
-                FROM purchase_order po LEFT JOIN partner pa ON pa.id=po.partner_id
-                WHERE po.received_at!='' AND substr(po.received_at,1,10) BETWEEN ? AND ?""", (a, b)):
-            try:
-                its = json.loads(r["items"] or "[]")
-            except ValueError:
-                continue
-            for it in its:
-                q = it.get("recv") or it.get("qty") or 0
-                if (it.get("price") or 0) > 0:
-                    po_pa[r["pname"]] = po_pa.get(r["pname"], 0) + round(q * it["price"])
-                else:
-                    unpriced += 1
-        # 일일 입력에서 단가를 직접 입력한 입고분도 매입액에 포함 (발주 유래 행은 위에서 집계됨)
+        # 매입액 — 이 달 원부자재 입고(발주 입고 처리분 포함, 분할 입고는 입고일별) 단가 입력분.
+        #  발주 입고인데 단가가 없는 행은 집계 제외하고 건수만 안내
+        po_pa = {}
+        unpriced = con.execute("""SELECT COUNT(*) c FROM material_in
+            WHERE COALESCE(price,0)<=0 AND note LIKE '발주 #%' AND date BETWEEN ? AND ?""", (a, b)).fetchone()["c"]
         for r in con.execute("""SELECT COALESCE(NULLIF(partner,''),'미지정') pname, SUM(qty*price) amt
-                FROM material_in WHERE price>0 AND note NOT LIKE '발주 #%' AND date BETWEEN ? AND ?
+                FROM material_in WHERE price>0 AND date BETWEEN ? AND ?
                 GROUP BY COALESCE(NULLIF(partner,''),'미지정')""", (a, b)):
             po_pa[r["pname"]] = po_pa.get(r["pname"], 0) + round(r["amt"] or 0)
         po_in = sorted(({"partner": k, "amount": v} for k, v in po_pa.items()),
@@ -7721,6 +7822,381 @@ def _wait_port_free(port, timeout=25):
             s.close()
             return True           # 연결 거부 = 포트 비어있음
     return False
+
+
+# ── AI 질문 (Google Gemini 무료 등급) ──────────────────────────────────────
+# 동작: 질문 문장 + DB 구조(테이블·컬럼 이름과 설명)만 Gemini로 보내 '조회 SQL'을 받고,
+#       그 SQL은 이 PC에서 읽기 전용으로 실행해 결과를 사용자에게만 보여준다 — 실제 데이터(수량·금액·거래처 실적)는 외부로 안 나감.
+# 요금: 결제 계정이 연결되지 않은 무료 키 전용. 무료 등급 모델만 고를 수 있고, 하루 질문 수 상한을 앱에서 한 번 더 건다.
+AI_MODELS = ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash"]   # 무료 등급 제공 모델 (앞이 기본)
+# AI가 아예 볼 수 없는 테이블 — 계정·비밀번호·설정·메일·감사 이력·채팅 등
+AI_BLOCK_TABLES = {"users", "app_setting", "audit_log", "ledger_print", "mail_template", "sent_mail", "user_setting",
+                   "day_photo", "ai_log", "ai_fav", "schedule", "prod_schedule", "material_expiry_ack", "daily_check"}
+# 금액 열람 권한이 없는 사용자에게는 빈 값(NULL)으로 보이는 컬럼 → 필요한 권한
+AI_MONEY_COLS = {("material", "unit_price"): "mat_price", ("material_in", "price"): "mat_price",
+                 ("material_price", "price"): "mat_price", ("purchase_order", "items"): "mat_amt",
+                 ("purchase_order", "receipts"): "mat_amt", ("payment", "amount"): "mat_amt",
+                 ("product", "unit_price"): "prod_price", ("product_price", "price"): "prod_price",
+                 ("production", "unit_price"): "prod_price", ("shipment", "unit_price"): "prod_price",
+                 ("receipt", "amount"): "ship_amt", ("staff", "wage"): "wage", ("staffing", "agency_wage"): "wage",
+                 ("staffing_agency", "wage"): "wage", ("staffing_agency", "ot_wage"): "wage",
+                 ("staffing_agency", "cost"): "wage"}
+AI_EXAMPLES = ["이번 주 제품별 생산량", "이번 달 거래처별 매입 합계", "소비기한 3일 이내 남은 자재",
+               "지난주 날짜별 출고량", "이번 달 거래처별 출고 수량", "현재 재고가 안전재고보다 적은 자재"]
+AI_HINTS = """업무 용어 → 테이블 안내 (SQLite):
+- 날짜 컬럼은 모두 'YYYY-MM-DD' 문자열. 주는 월요일 시작. 이번 주 = date(오늘, 'weekday 0', '-6 days') ~ 그 +6일.
+- 원부자재(자재) = material (kind 'raw'=원재료, 'sub'=부재료, is_semi=1 반제품). 품목코드 = code.
+- 자재 재고 = material_daily: 날짜·자재별 prev_qty(전일재고), in_qty(입고), used_qty(사용), real_qty(그날 마감 실재고).
+  자재의 현재 재고 = 그 자재의 가장 최근 date 행의 real_qty. 안전재고 = material.safety_stock.
+- 자재 입고 상세 = material_in (date 입고일, qty, price 단가, partner 거래처 이름(문자열), expiry 소비기한, note '발주 #번호'면 발주 입고).
+  매입액 = qty*price (price 0은 단가 미입력).
+- 소비기한별 남은 자재(배치) = material_in 의 expiry 기준. 지난 소비기한은 제외.
+- 자재 사용 상세 = material_usage (date, material_id, product_id, qty, block 'semi:<id>'는 반제품 생산에 쓴 원료). 자재 폐기 = material_disposal.
+- 제품 = product (category 제품군). 생산 = production (date, product_id, prod_qty 생산수량, defect_qty 불량, line_id → line).
+- 출고(판매) = shipment (date, product_id, partner_id → partner, qty, unit_price, expiry 소비기한). 매출액 = qty * (unit_price, 0이면 product.unit_price).
+- 거래처 = partner (type 에 '판매처'·'자재 공급처' 등이 쉼표로 들어감).
+- 인원 = staffing (날짜·라인별 headcount, work_hours), staffing_member (직원별 hours → staff), staffing_agency (용역: hours, wage, cost=확정 금액, gender).
+- 발주 = purchase_order (date 발주일, due 납기, partner_id/partner_name, closed_at 잔량종결). 품목은 JSON 배열 items
+  [{material_id,name,spec,unit,qty,price,recv}] → json_each(purchase_order.items) 와 json_extract(value,'$.qty') 로 펼친다.
+- 이름 조건은 반드시 LIKE '%키워드%' (띄어쓰기·괄호 차이 허용). 예: p.name LIKE '%달광%'."""
+AI_SCHEMA_OUT = {"type": "OBJECT", "properties": {
+    "answerable": {"type": "BOOLEAN"},
+    "sql": {"type": "STRING"},
+    "title": {"type": "STRING"},
+    "note": {"type": "STRING"},
+    "chart": {"type": "STRING", "enum": ["none", "bar", "line"]},
+    "x": {"type": "STRING"},
+    "y": {"type": "ARRAY", "items": {"type": "STRING"}}},
+    "required": ["answerable", "sql", "title", "chart"]}
+
+
+def _ai_allowed(user):
+    if user["role"] == "admin":
+        return True
+    return user.get("username", "") in [x for x in get_app_setting("ai_users", "").split(",") if x]
+
+
+def _ai_schema_text():
+    """DB 구조 설명 — 실제 테이블·컬럼(PRAGMA) + db.py 스키마의 한국어 주석. 데이터 값은 하나도 포함하지 않는다."""
+    import db as dbm
+    comments, cur_t, pending = {}, None, []
+    for line in dbm.SCHEMA.splitlines():
+        s = line.strip()
+        mt = re.match(r"CREATE TABLE IF NOT EXISTS (\w+)", s)
+        if mt:
+            cur_t = mt.group(1)
+            comments[cur_t] = " ".join(pending)[:160]
+            pending = []
+            continue
+        if s.startswith("--"):
+            pending.append(s[2:].strip())
+            continue
+        if s.startswith(")"):
+            cur_t, pending = None, []
+            continue
+        if cur_t:
+            mc = re.match(r"(\w+)\s+[A-Za-z]+.*?--\s*(.+)$", s)
+            if mc:
+                comments[(cur_t, mc.group(1))] = mc.group(2).strip()[:120]
+        elif s:
+            pending = []
+    con = connect()
+    try:
+        out = []
+        for (t,) in con.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"):
+            if t in AI_BLOCK_TABLES:
+                continue
+            tc = comments.get(t, "")
+            out.append(f"## {t}" + (f"  -- {tc}" if tc else ""))
+            for c in con.execute(f'PRAGMA table_info("{t}")'):
+                cm = comments.get((t, c[1]), "")
+                out.append(f"  {c[1]} {c[2] or ''}" + (f"  -- {cm}" if cm else ""))
+        return "\n".join(out)
+    finally:
+        con.close()
+
+
+class AIError(Exception):
+    pass
+
+
+def _gemini_call(key, model, system, text):
+    """Gemini generateContent(JSON 구조 출력) 호출 → dict. 오류는 사용자에게 보여줄 한국어 메시지로 바꾼다."""
+    import urllib.request
+    import urllib.error
+    body = {"systemInstruction": {"parts": [{"text": system}]},
+            "contents": [{"role": "user", "parts": [{"text": text}]}],
+            "generationConfig": {"temperature": 0.1, "responseMimeType": "application/json",
+                                 "responseSchema": AI_SCHEMA_OUT}}
+    req = urllib.request.Request(
+        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+        data=json.dumps(body).encode("utf-8"), method="POST",
+        headers={"Content-Type": "application/json", "x-goog-api-key": key})
+    try:
+        with urllib.request.urlopen(req, timeout=90) as r:
+            data = json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        msg = ""
+        try:
+            msg = json.loads(e.read().decode("utf-8", "replace")).get("error", {}).get("message", "")
+        except Exception:
+            pass
+        if e.code == 429:
+            raise AIError("무료 사용량을 다 썼습니다 — 잠시 후(분당 한도) 또는 내일(하루 한도) 다시 시도해주세요. 요금은 청구되지 않습니다.")
+        if e.code == 404:
+            raise AIError(f"MODEL_NOT_FOUND:{model}")
+        if e.code in (400, 401, 403) and ("API key" in msg or "API_KEY" in msg or e.code != 400):
+            raise AIError("AI 키가 올바르지 않거나 사용할 수 없습니다 — 관리자에게 [AI 설정]의 키 확인을 요청하세요.")
+        raise AIError(f"AI 요청 오류 ({e.code}) {msg[:160]}")
+    except (urllib.error.URLError, TimeoutError, OSError):
+        raise AIError("AI 서버에 연결하지 못했습니다 — 인터넷 연결을 확인해주세요.")
+    try:
+        parts = data["candidates"][0]["content"]["parts"]
+        txt = "".join(p.get("text", "") for p in parts if not p.get("thought"))
+        return json.loads(txt)
+    except (KeyError, IndexError, ValueError, TypeError):
+        fb = (data.get("promptFeedback") or {}).get("blockReason")
+        raise AIError("AI가 답을 만들지 못했습니다" + (f" ({fb})" if fb else "") + " — 질문을 조금 바꿔 다시 해보세요.")
+
+
+def _gemini(key, system, text):
+    """설정 모델로 호출, 모델이 없어졌으면(404) 무료 목록의 다음 모델로 자동 전환."""
+    first = get_app_setting("ai_model", AI_MODELS[0])
+    order = [first] + [m for m in AI_MODELS if m != first]
+    last = None
+    for mdl in order:
+        try:
+            return _gemini_call(key, mdl, system, text), mdl
+        except AIError as e:
+            if str(e).startswith("MODEL_NOT_FOUND:"):
+                last = e
+                continue
+            raise
+    raise AIError("사용할 수 있는 무료 AI 모델을 찾지 못했습니다 — 관리자에게 [AI 설정] 확인을 요청하세요." if last else "AI 오류")
+
+
+def _ai_run_sql(sql, user):
+    """AI가 만든 SQL을 읽기 전용 연결 + 권한 검사(authorizer)로 실행. 차단 테이블은 오류, 금액 권한 없는 컬럼은 빈 값."""
+    import db as dbm
+    s = (sql or "").strip().rstrip(";").strip()
+    if not re.match(r"(?is)^(select|with)\b", s):
+        raise AIError("조회(SELECT) 문이 아니라 실행하지 않았습니다")
+    con = sqlite3.connect(Path(dbm.DB_PATH).resolve().as_uri() + "?mode=ro", uri=True, timeout=5)
+    try:
+        con.execute("PRAGMA query_only=ON")
+        perms = money_set(user)
+        ok_actions = {sqlite3.SQLITE_SELECT, sqlite3.SQLITE_FUNCTION, getattr(sqlite3, "SQLITE_RECURSIVE", 33)}
+
+        def auth(action, a1, a2, dbname, src):
+            if action == sqlite3.SQLITE_READ:
+                if a1 in AI_BLOCK_TABLES or (a1 or "").startswith("sqlite_"):
+                    return sqlite3.SQLITE_DENY
+                need = AI_MONEY_COLS.get((a1, a2))
+                if need and need not in perms:
+                    return sqlite3.SQLITE_IGNORE
+                return sqlite3.SQLITE_OK
+            return sqlite3.SQLITE_OK if action in ok_actions else sqlite3.SQLITE_DENY
+
+        con.set_authorizer(auth)
+        deadline = time.time() + 10
+        con.set_progress_handler(lambda: 1 if time.time() > deadline else 0, 20000)
+        cur = con.execute(s)
+        cols = [d[0] for d in cur.description or []]
+        got = cur.fetchmany(2001)
+        out = [[round(v, 4) if isinstance(v, float) else v for v in r] for r in got[:2000]]
+        return cols, out, len(got) > 2000
+    except sqlite3.DatabaseError as e:
+        msg = str(e)
+        if "interrupted" in msg:
+            raise AIError("조회가 너무 오래 걸려 중단했습니다 — 기간을 좁혀 다시 물어보세요")
+        if "prohibited" in msg or "not authorized" in msg:
+            raise AIError("볼 수 없는 정보(계정·설정 등)를 조회하려 해서 막았습니다")
+        raise AIError("SQL_ERROR:" + msg)
+    finally:
+        con.close()
+
+
+def _ai_log(username, q, sql, title, n, ok, err, model):
+    con = connect()
+    try:
+        con.execute("INSERT INTO ai_log(username, question, sql, title, rows, ok, error, model) VALUES(?,?,?,?,?,?,?,?)",
+                    (username, q, sql or "", title or "", n, 1 if ok else 0, err or "", model or ""))
+        con.commit()
+    finally:
+        con.close()
+
+
+def _ai_used_today():
+    con = connect()
+    try:
+        return con.execute("SELECT COUNT(*) c FROM ai_log WHERE substr(at,1,10)=?",
+                           (dt.date.today().isoformat(),)).fetchone()["c"]
+    finally:
+        con.close()
+
+
+@app.get("/api/ai/config")
+def ai_config_get(request: Request):
+    u = request.state.user
+    key = get_app_setting("ai_key", "")
+    out = {"enabled": bool(key), "allowed": _ai_allowed(u), "model": get_app_setting("ai_model", AI_MODELS[0]),
+           "models": AI_MODELS, "daily_limit": int(get_app_setting("ai_daily_limit", "100") or 100),
+           "used_today": _ai_used_today(), "examples": AI_EXAMPLES}
+    if u["role"] == "admin":
+        con = connect()
+        try:
+            names = [r["username"] for r in con.execute("SELECT username FROM users WHERE role!='admin' ORDER BY id")]
+        finally:
+            con.close()
+        out.update({"key_set": bool(key), "key_hint": ("…" + key[-4:]) if key else "",
+                    "users": [x for x in get_app_setting("ai_users", "").split(",") if x], "all_users": names})
+    return out
+
+
+@app.post("/api/ai/config")
+def ai_config_set(request: Request, body: dict):
+    """AI 설정(admin) — 키(무료 키만), 모델(무료 등급 목록 중), 하루 상한, 사용 허용 계정."""
+    require_admin(request)
+    if body.get("clear_key"):
+        set_app_setting("ai_key", "")
+    elif (body.get("key") or "").strip():
+        k = body["key"].strip()
+        if not re.match(r"^[A-Za-z0-9_\-]{20,120}$", k):
+            raise HTTPException(400, "API 키 형식이 아닙니다 — AI Studio에서 복사한 키를 그대로 붙여넣어 주세요")
+        set_app_setting("ai_key", k)
+    if body.get("model"):
+        if body["model"] not in AI_MODELS:
+            raise HTTPException(400, "무료 등급 모델만 선택할 수 있습니다")
+        set_app_setting("ai_model", body["model"])
+    if body.get("daily_limit") is not None:
+        set_app_setting("ai_daily_limit", str(max(1, min(1000, int(body["daily_limit"] or 100)))))
+    if body.get("users") is not None:
+        set_app_setting("ai_users", ",".join(str(x) for x in body["users"] if x))
+    con = connect()
+    try:
+        audit(con, "ai_config", "AI 설정 변경" + (" (키 변경)" if body.get("key") or body.get("clear_key") else ""))
+        con.commit()
+    finally:
+        con.close()
+    return {"ok": True}
+
+
+@app.post("/api/ai/test")
+def ai_test(request: Request):
+    require_admin(request)
+    key = get_app_setting("ai_key", "")
+    if not key:
+        raise HTTPException(400, "AI 키가 등록되지 않았습니다")
+    try:
+        r, mdl = _gemini(key, "SQLite 조회문을 만드는 도우미입니다.", "테스트: 'SELECT 1' 을 sql로, title은 '연결 확인'으로 답하세요.")
+    except AIError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True, "model": mdl, "title": r.get("title", "")}
+
+
+@app.post("/api/ai/ask")
+def ai_ask(request: Request, body: dict):
+    """AI에게 묻기 — 질문 → (Gemini: 질문+DB 구조만) SQL → 이 PC에서 읽기 전용 실행 → 표·차트용 결과."""
+    u = request.state.user
+    if not _ai_allowed(u):
+        raise HTTPException(403, "AI 질문 권한이 없습니다 — 관리자에게 요청하세요")
+    key = get_app_setting("ai_key", "")
+    if not key:
+        raise HTTPException(400, "AI가 아직 설정되지 않았습니다 — 관리자가 [AI 설정]에서 키를 등록해야 합니다")
+    q = (body.get("q") or "").strip()[:500]
+    if not q:
+        raise HTTPException(400, "질문을 입력해주세요")
+    limit = int(get_app_setting("ai_daily_limit", "100") or 100)
+    if _ai_used_today() >= limit:
+        raise HTTPException(429, f"오늘 AI 질문 한도({limit}회)를 다 썼습니다 — 내일 다시 써주세요")
+    today = dt.date.today()
+    system = ("너는 제빵공장 재고관리 DB(SQLite)에서 사용자의 질문에 답할 조회 SQL을 만드는 도우미다.\n"
+              f"오늘 날짜: {today.isoformat()} ({'월화수목금토일'[today.weekday()]}요일)\n"
+              "규칙:\n- SQLite SELECT 문 하나만 (WITH 허용). 수정·삭제·PRAGMA 금지.\n"
+              "- 아래 DB 구조에 있는 테이블·컬럼만 사용.\n- 결과 컬럼은 한국어 별칭: AS \"날짜\", AS \"생산수량\".\n"
+              "- 사람이 읽기 좋게 이름을 JOIN해서 보여주고(id만 보여주지 말 것), 의미 있는 순서로 ORDER BY.\n"
+              "- 행이 많아질 수 있으면 LIMIT 500. 숫자는 ROUND(수량,2), 금액은 ROUND(금액).\n"
+              "- 기간이 없으면 상식적인 기본값(예: 이번 달)을 쓰고 note에 적는다.\n"
+              "- DB로 답할 수 없는 질문(데이터 없음·수정 요청·잡담)이면 answerable=false, sql='', note에 이유와 대신 물을 수 있는 예시.\n"
+              "- chart: 날짜·주·월별 추이면 line, 항목별 비교면 bar, 아니면 none. x=x축 컬럼 별칭, y=숫자 컬럼 별칭 목록.\n"
+              "- title: 결과 제목(짧게). note: 조회 기준 한 줄(예: 입고일 기준, 단가 미입력 제외).\n\n"
+              + AI_HINTS + "\n\nDB 구조:\n" + _ai_schema_text())
+    sql = title = ""
+    mdl = ""
+    try:
+        r, mdl = _gemini(key, system, q)
+        if not r.get("answerable") or not (r.get("sql") or "").strip():
+            _ai_log(u.get("username", ""), q, "", r.get("title", ""), 0, False, "unanswerable", mdl)
+            return {"ok": False, "answerable": False, "note": r.get("note") or "DB 데이터로 답할 수 없는 질문입니다.",
+                    "examples": AI_EXAMPLES}
+        sql, title = r["sql"], r.get("title") or q
+        try:
+            cols, data, trunc = _ai_run_sql(sql, u)
+        except AIError as e:
+            if not str(e).startswith("SQL_ERROR:"):
+                raise
+            # 한 번만 고쳐 달라고 다시 요청 — 보내는 것은 SQL과 오류 문구뿐 (데이터 없음)
+            r2, mdl = _gemini(key, system, f"질문: {q}\n이전 SQL:\n{sql}\n실행 오류: {str(e)[10:]}\n오류를 고친 SQL로 다시 답하세요.")
+            if not r2.get("answerable") or not (r2.get("sql") or "").strip():
+                raise AIError("질문을 조회문으로 바꾸지 못했습니다 — 조금 더 구체적으로 물어봐 주세요")
+            r = r2
+            sql, title = r2["sql"], r2.get("title") or title
+            try:
+                cols, data, trunc = _ai_run_sql(sql, u)
+            except AIError as e2:
+                raise AIError("조회에 실패했습니다 — 질문을 조금 바꿔 다시 해보세요" if str(e2).startswith("SQL_ERROR:") else str(e2))
+    except AIError as e:
+        _ai_log(u.get("username", ""), q, sql, title, 0, False, str(e), mdl)
+        raise HTTPException(400, str(e))
+    _ai_log(u.get("username", ""), q, sql, title, len(data), True, "", mdl)
+    return {"ok": True, "title": title, "note": r.get("note") or "", "sql": sql, "columns": cols, "rows": data,
+            "truncated": trunc, "chart": r.get("chart") or "none", "x": r.get("x") or "", "y": r.get("y") or [],
+            "model": mdl}
+
+
+@app.get("/api/ai/fav")
+def ai_fav_list(request: Request):
+    con = connect()
+    try:
+        return rows(con.execute("SELECT id, question FROM ai_fav WHERE username=? ORDER BY id DESC",
+                                (request.state.user.get("username", ""),)))
+    finally:
+        con.close()
+
+
+@app.post("/api/ai/fav")
+def ai_fav_add(request: Request, body: dict):
+    q = (body.get("question") or "").strip()[:500]
+    if not q:
+        raise HTTPException(400, "질문이 비어 있습니다")
+    con = connect()
+    try:
+        con.execute("INSERT OR IGNORE INTO ai_fav(username, question) VALUES(?,?)", (request.state.user.get("username", ""), q))
+        con.commit()
+        return {"ok": True}
+    finally:
+        con.close()
+
+
+@app.delete("/api/ai/fav/{fid}")
+def ai_fav_del(request: Request, fid: int):
+    con = connect()
+    try:
+        con.execute("DELETE FROM ai_fav WHERE id=? AND username=?", (fid, request.state.user.get("username", "")))
+        con.commit()
+        return {"ok": True}
+    finally:
+        con.close()
+
+
+@app.get("/api/ai/log")
+def ai_log_list(request: Request, limit: int = 200):
+    require_admin(request)
+    con = connect()
+    try:
+        return rows(con.execute("SELECT * FROM ai_log ORDER BY id DESC LIMIT ?", (limit,)))
+    finally:
+        con.close()
 
 
 def _self_rename_exe():
