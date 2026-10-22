@@ -42,7 +42,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.112.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.112.1"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -8060,8 +8060,9 @@ def ai_config_set(request: Request, body: dict):
     if body.get("clear_key"):
         set_app_setting("ai_key", "")
     elif (body.get("key") or "").strip():
-        k = body["key"].strip()
-        if not re.match(r"^[A-Za-z0-9_\-]{20,120}$", k):
+        k = re.sub(r"\s+", "", body["key"])   # 복사할 때 섞인 공백·줄바꿈 제거
+        # 구글 키 형식은 바뀔 수 있어(AIza…, AQ.… 등 점·기호 포함) 길이·인쇄 가능 문자만 확인 — 실제 확인은 [연결 테스트]
+        if not re.match(r"^[!-~]{20,400}$", k):
             raise HTTPException(400, "API 키 형식이 아닙니다 — AI Studio에서 복사한 키를 그대로 붙여넣어 주세요")
         set_app_setting("ai_key", k)
     if body.get("model"):

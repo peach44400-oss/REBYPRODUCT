@@ -10932,7 +10932,7 @@ async function openAiCfg() {
   $("aiKeyHint").textContent = c.key_set ? `(등록됨 ${c.key_hint})` : "(미등록)";
   $("aiModel").innerHTML = c.models.map(m => `<option value="${esc(m)}"${m === c.model ? " selected" : ""}>${esc(m)}${m === c.models[0] ? " (기본)" : ""}</option>`).join("");
   $("aiLimit").value = c.daily_limit;
-  $("aiUsers").innerHTML = (c.all_users || []).map(u => `<label style="display:inline-flex; align-items:center; gap:4px; cursor:pointer;">
+  $("aiUsers").innerHTML = (c.all_users || []).map(u => `<label style="display:inline-flex; align-items:center; gap:4px; cursor:pointer; white-space:nowrap; width:auto; margin:0; font-weight:400;">
     <input type="checkbox" data-aiuser="${esc(u)}"${(c.users || []).includes(u) ? " checked" : ""}> ${esc(u)}</label>`).join("") || '<span class="auto">관리자 외 계정이 없습니다</span>';
   $("aiTestMsg").textContent = "";
   try {
