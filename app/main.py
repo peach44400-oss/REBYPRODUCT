@@ -42,7 +42,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.112.1"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.112.2"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -7841,6 +7841,10 @@ AI_MONEY_COLS = {("material", "unit_price"): "mat_price", ("material_in", "price
                  ("receipt", "amount"): "ship_amt", ("staff", "wage"): "wage", ("staffing", "agency_wage"): "wage",
                  ("staffing_agency", "wage"): "wage", ("staffing_agency", "ot_wage"): "wage",
                  ("staffing_agency", "cost"): "wage"}
+# 분류 라벨 컬럼 — 실제 값 목록을 AI에 알려준다 (업무 수치·이름은 보내지 않음)
+AI_CODE_COLS = [("material", "status"), ("material", "kind"), ("product", "status"), ("product", "category"),
+                ("partner", "status"), ("partner", "type"), ("staff", "status"), ("staff", "kind"),
+                ("line", "status"), ("staffing_agency", "gender")]
 AI_EXAMPLES = ["이번 주 제품별 생산량", "이번 달 거래처별 매입 합계", "소비기한 3일 이내 남은 자재",
                "지난주 날짜별 출고량", "이번 달 거래처별 출고 수량", "현재 재고가 안전재고보다 적은 자재"]
 AI_HINTS = """업무 용어 → 테이블 안내 (SQLite):
@@ -7911,6 +7915,16 @@ def _ai_schema_text():
             for c in con.execute(f'PRAGMA table_info("{t}")'):
                 cm = comments.get((t, c[1]), "")
                 out.append(f"  {c[1]} {c[2] or ''}" + (f"  -- {cm}" if cm else ""))
+        # 상태·구분 코드값 목록 (예: material.status = 사용중/중단) — 추측으로 없는 값(활성 등)을 쓰지 않게.
+        #  거래처명·수량·금액 같은 업무 데이터가 아니라 분류 라벨만 보낸다.
+        out.append("\n코드값 (이 값만 사용):")
+        for t, c in AI_CODE_COLS:
+            try:
+                vals = [r[0] for r in con.execute(f'SELECT DISTINCT "{c}" FROM "{t}" WHERE COALESCE("{c}",\'\')!=\'\' LIMIT 20')]
+            except sqlite3.Error:
+                continue
+            if vals:
+                out.append(f"  {t}.{c}: " + ", ".join(str(v) for v in vals))
         return "\n".join(out)
     finally:
         con.close()
@@ -7945,6 +7959,8 @@ def _gemini_call(key, model, system, text):
             raise AIError("무료 사용량을 다 썼습니다 — 잠시 후(분당 한도) 또는 내일(하루 한도) 다시 시도해주세요. 요금은 청구되지 않습니다.")
         if e.code == 404:
             raise AIError(f"MODEL_NOT_FOUND:{model}")
+        if e.code in (500, 502, 503, 504):   # 구글 쪽 일시 과부하 — 재시도·다른 무료 모델로 넘어감
+            raise AIError(f"MODEL_BUSY:{model}")
         if e.code in (400, 401, 403) and ("API key" in msg or "API_KEY" in msg or e.code != 400):
             raise AIError("AI 키가 올바르지 않거나 사용할 수 없습니다 — 관리자에게 [AI 설정]의 키 확인을 요청하세요.")
         raise AIError(f"AI 요청 오류 ({e.code}) {msg[:160]}")
@@ -7960,19 +7976,28 @@ def _gemini_call(key, model, system, text):
 
 
 def _gemini(key, system, text):
-    """설정 모델로 호출, 모델이 없어졌으면(404) 무료 목록의 다음 모델로 자동 전환."""
+    """설정 모델로 호출. 구글이 붐비면(503 등) 잠깐 쉬고 한 번 더, 그래도 안 되거나 모델이 없어졌으면(404)
+    무료 목록의 다음 모델로 자동 전환."""
     first = get_app_setting("ai_model", AI_MODELS[0])
     order = [first] + [m for m in AI_MODELS if m != first]
-    last = None
+    busy = False
     for mdl in order:
-        try:
-            return _gemini_call(key, mdl, system, text), mdl
-        except AIError as e:
-            if str(e).startswith("MODEL_NOT_FOUND:"):
-                last = e
-                continue
-            raise
-    raise AIError("사용할 수 있는 무료 AI 모델을 찾지 못했습니다 — 관리자에게 [AI 설정] 확인을 요청하세요." if last else "AI 오류")
+        for attempt in range(2):
+            try:
+                return _gemini_call(key, mdl, system, text), mdl
+            except AIError as e:
+                if str(e).startswith("MODEL_BUSY:"):
+                    busy = True
+                    if attempt == 0:
+                        time.sleep(2)
+                        continue
+                    break
+                if str(e).startswith("MODEL_NOT_FOUND:"):
+                    break
+                raise
+    if busy:
+        raise AIError("구글 AI 서버가 지금 붐빕니다 — 1~2분 뒤 다시 시도해주세요 (일시적인 현상, 요금과 무관)")
+    raise AIError("사용할 수 있는 무료 AI 모델을 찾지 못했습니다 — 관리자에게 [AI 설정] 확인을 요청하세요.")
 
 
 def _ai_run_sql(sql, user):
@@ -8114,7 +8139,9 @@ def ai_ask(request: Request, body: dict):
     system = ("너는 제빵공장 재고관리 DB(SQLite)에서 사용자의 질문에 답할 조회 SQL을 만드는 도우미다.\n"
               f"오늘 날짜: {today.isoformat()} ({'월화수목금토일'[today.weekday()]}요일)\n"
               "규칙:\n- SQLite SELECT 문 하나만 (WITH 허용). 수정·삭제·PRAGMA 금지.\n"
-              "- 아래 DB 구조에 있는 테이블·컬럼만 사용.\n- 결과 컬럼은 한국어 별칭: AS \"날짜\", AS \"생산수량\".\n"
+              "- 아래 DB 구조에 있는 테이블·컬럼만 사용. 상태·구분 조건은 아래 코드값 목록의 값만 쓴다(없는 값 추측 금지).\n"
+              "- 결과 컬럼은 내용에 맞는 한국어 별칭: 제품 이름이면 AS \"제품\", 날짜면 AS \"날짜\", 수량이면 AS \"생산수량\".\n"
+              "- 사용 중인 자재만 볼 때는 material.status='사용중', 재직 직원은 staff.status='재직'.\n"
               "- 사람이 읽기 좋게 이름을 JOIN해서 보여주고(id만 보여주지 말 것), 의미 있는 순서로 ORDER BY.\n"
               "- 행이 많아질 수 있으면 LIMIT 500. 숫자는 ROUND(수량,2), 금액은 ROUND(금액).\n"
               "- 기간이 없으면 상식적인 기본값(예: 이번 달)을 쓰고 note에 적는다.\n"
