@@ -11037,6 +11037,76 @@ $("aiTest").onclick = async () => {
   } catch (e) { $("aiTestMsg").innerHTML = `<span style="color:var(--crit);">❌ ${esc(e.message || "연결 실패")}</span>`; }
 };
 
+/* ══ 스케줄 기준표 — 파렛트(PLT) 적재수량 · 소비기한 기준 (확인용, 새 제품 추가 가능) ══ */
+const SREF = { d: null, edit: false };
+const SREF_COLS = {
+  plt: [["name", "품목 (입수)", 150], ["layout", "적재 (박스×단)", 120], ["boxes", "파렛트당 박스", 90], ["qty", "파렛트당 수량", 100], ["note", "비고", 160]],
+  exp: [["target", "대상 제품", 140], ["base", "기준일", 100], ["period", "소비기한", 80], ["note", "비고", 140]],
+};
+async function openSref() {
+  try { SREF.d = await api("/api/schedrefs"); } catch (e) { return; }
+  SREF.edit = false; renderSref();
+  $("srefOverlay").classList.add("on");
+}
+window.closeSref = () => $("srefOverlay").classList.remove("on");
+function srefRead() {   // 편집 중인 입력값을 SREF.d에 반영
+  if (!SREF.edit) return;
+  ["plt", "exp"].forEach(k => {
+    SREF.d[k] = [...document.querySelectorAll(`#srefBody tr[data-sk="${k}"]`)].map(tr => {
+      const o = {}; tr.querySelectorAll("[data-sf]").forEach(el => { o[el.dataset.sf] = el.value; }); return o;
+    });
+  });
+}
+function renderSref() {
+  const d = SREF.d, ed = SREF.edit, guest = ROLE === "guest";
+  $("srefMeta").textContent = d.updated_at ? `마지막 저장 ${d.updated_at} · ${d.updated_by}` : "기본 기준표 (아직 저장 전)";
+  $("srefEdit").style.display = ed || guest ? "none" : "";
+  $("srefSave").style.display = $("srefCancel").style.display = ed ? "" : "none";
+  const TH = "background:#f3f3f3; border:1px solid #bbb; padding:5px 8px; font-size:12.5px; white-space:nowrap;";
+  const TD = "border:1px solid #ccc; padding:4px 8px; font-size:13px;";
+  const tbl = (k, title) => `<div style="flex:1 1 ${k === "plt" ? 560 : 420}px; min-width:300px;">
+    <div style="font-weight:800; margin-bottom:6px;">${title}</div>
+    <table style="border-collapse:collapse; width:100%;"><thead><tr>${SREF_COLS[k].map(([f, t, w]) => `<th style="${TH} min-width:${ed ? w : 0}px;">${t}</th>`).join("")}${ed ? `<th style="${TH}"></th>` : ""}</tr></thead>
+    <tbody>${(d[k] || []).map((r, i) => `<tr data-sk="${k}">${SREF_COLS[k].map(([f]) => ed
+        ? `<td style="${TD} padding:2px;"><input class="mini-input" data-sf="${f}" value="${esc(r[f] || "")}" style="width:100%; text-align:left;"></td>`
+        : `<td style="${TD}${f === "name" || f === "target" ? " font-weight:700;" : ""}${f === "qty" || f === "boxes" ? " text-align:right;" : ""}">${esc(r[f] || "")}</td>`).join("")}
+        ${ed ? `<td style="${TD} padding:2px; text-align:center;"><button class="btn ghost sm" data-srefdel="${k}|${i}" style="color:var(--crit);" title="이 줄 삭제">✕</button></td>` : ""}</tr>`).join("")
+      || `<tr><td colspan="${SREF_COLS[k].length + 1}" style="${TD} color:#999; text-align:center;">항목이 없습니다</td></tr>`}</tbody></table>
+    ${ed ? `<button class="btn sm" data-srefadd="${k}" style="margin-top:6px;">＋ 줄 추가</button>` : ""}</div>`;
+  $("srefBody").innerHTML = tbl("plt", "📦 파렛트(PLT) 적재수량") + tbl("exp", "⏰ 소비기한 기준");
+}
+$("schedRefs").onclick = openSref;
+$("srefEdit").onclick = () => { SREF.edit = true; renderSref(); };
+$("srefCancel").onclick = openSref;   // 저장된 값으로 되돌림
+$("srefBody").addEventListener("click", e => {
+  const add = e.target.closest("[data-srefadd]");
+  if (add) {
+    srefRead(); const k = add.dataset.srefadd;
+    SREF.d[k].push(Object.fromEntries(SREF_COLS[k].map(([f]) => [f, ""]))); renderSref();
+    const rowsK = document.querySelectorAll(`#srefBody tr[data-sk="${k}"]`);
+    rowsK[rowsK.length - 1]?.querySelector("input")?.focus();
+    return;
+  }
+  const del = e.target.closest("[data-srefdel]");
+  if (del) { srefRead(); const [k, i] = del.dataset.srefdel.split("|"); SREF.d[k].splice(+i, 1); renderSref(); }
+});
+// 적재 칸에 '8박스×6단'처럼 넣으면 파렛트당 박스를 비어 있을 때 자동 계산 (8×6=48)
+$("srefBody").addEventListener("change", e => {
+  if (e.target.dataset.sf !== "layout") return;
+  const tr = e.target.closest("tr"), bx = tr.querySelector('[data-sf="boxes"]');
+  const mm = e.target.value.match(/(\d+)\s*박스\s*[x×X*]\s*(\d+)\s*단/);
+  if (mm && bx && !bx.value.trim()) bx.value = String(+mm[1] * +mm[2]);
+});
+$("srefSave").onclick = async () => {
+  srefRead();
+  try {
+    await api("/api/schedrefs", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ plt: SREF.d.plt, exp: SREF.d.exp }) });
+    toast("📋 기준표를 저장했습니다");
+    openSref();
+  } catch (e) { }
+};
+
 /* ── 로그인 / 부팅 ───────────────────── */
 function showLogin(msg) {
   $("loginOverlay").style.display = "flex";

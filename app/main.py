@@ -42,7 +42,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.114.2"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.115.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -6239,6 +6239,72 @@ def _sched_assign_uids(data, used_other):
                 changed.append([gi, ii, uid])
             seen.add(uid)
     return changed
+
+
+# ── 스케줄 기준표 (파렛트 적재수량 · 소비기한 기준) — 주간 스케줄에서 [📋 기준표]로 확인·편집 ──
+SCHED_REF_DEFAULT = {
+    "plt": [
+        {"name": "135입", "layout": "8박스×6단", "boxes": "48", "qty": "6,480", "note": ""},
+        {"name": "30입", "layout": "21박스×8단", "boxes": "168", "qty": "5,040", "note": ""},
+        {"name": "20입", "layout": "18박스×15단", "boxes": "270", "qty": "5,400", "note": ""},
+        {"name": "파운드 45입", "layout": "12박스×8단", "boxes": "96", "qty": "4,320", "note": ""},
+        {"name": "소보로T", "layout": "8박스×4단", "boxes": "24", "qty": "3,840", "note": ""},
+        {"name": "소보로E", "layout": "8박스×4단", "boxes": "32", "qty": "3,200", "note": ""},
+        {"name": "베트남 112입", "layout": "6박스×9단", "boxes": "54", "qty": "6,048", "note": ""},
+        {"name": "오고단 120입", "layout": "9박스×6단", "boxes": "54", "qty": "6,480", "note": ""},
+        {"name": "베이글 100입", "layout": "8박스×5단", "boxes": "40", "qty": "4,000", "note": "1박스 = 10개×10묶음"},
+        {"name": "푸르나이", "layout": "6박스×12단", "boxes": "72", "qty": "3,600", "note": ""},
+        {"name": "맘스소보로 65입", "layout": "6박스×10단", "boxes": "60", "qty": "3,900", "note": ""},
+    ],
+    "exp": [
+        {"target": "우리밀", "base": "매주(월)", "period": "+70일", "note": ""},
+        {"target": "소보로", "base": "매주(월)", "period": "+80일", "note": ""},
+        {"target": "달광", "base": "매주(금)", "period": "+60일", "note": ""},
+        {"target": "촉촉한", "base": "출고일", "period": "+60일", "note": ""},
+        {"target": "파운드", "base": "출고일", "period": "+60일", "note": ""},
+        {"target": "오고단", "base": "출고일", "period": "+1년", "note": ""},
+        {"target": "세모앤도넛", "base": "출고일", "period": "+90일", "note": ""},
+        {"target": "베이글 냉동생지", "base": "매월 초", "period": "+120일", "note": ""},
+        {"target": "소보로15", "base": "출고일", "period": "+80일", "note": ""},
+        {"target": "푸르나이", "base": "출고일", "period": "+90일", "note": ""},
+        {"target": "달광 이마트24", "base": "출고일", "period": "+80일", "note": ""},
+    ],
+}
+SCHED_REF_FIELDS = {"plt": ("name", "layout", "boxes", "qty", "note"), "exp": ("target", "base", "period", "note")}
+
+
+@app.get("/api/schedrefs")
+def schedrefs_get(request: Request):
+    raw = get_app_setting("sched_refs", "")
+    d = _jl(raw, {}) if raw else {}
+    out = {k: d.get(k) if isinstance(d.get(k), list) else SCHED_REF_DEFAULT[k] for k in SCHED_REF_FIELDS}
+    out["updated_at"], out["updated_by"] = d.get("updated_at", ""), d.get("updated_by", "")
+    return out
+
+
+@app.post("/api/schedrefs")
+def schedrefs_set(request: Request, body: dict):
+    _require_writer(request)
+    out = {}
+    for k, fields in SCHED_REF_FIELDS.items():
+        rowsk = []
+        for r in (body.get(k) or [])[:300]:
+            if not isinstance(r, dict):
+                continue
+            row = {f: str(r.get(f) or "").strip()[:200] for f in fields}
+            if any(row.values()):
+                rowsk.append(row)
+        out[k] = rowsk
+    out["updated_at"] = dt.datetime.now().strftime("%Y-%m-%d %H:%M")
+    out["updated_by"] = request.state.user.get("username", "")
+    set_app_setting("sched_refs", json.dumps(out, ensure_ascii=False))
+    con = connect()
+    try:
+        audit(con, "sched_refs", f"스케줄 기준표 저장 — 파렛트 {len(out['plt'])}줄 · 소비기한 {len(out['exp'])}줄")
+        con.commit()
+    finally:
+        con.close()
+    return {"ok": True}
 
 
 @app.post("/api/schedule")
