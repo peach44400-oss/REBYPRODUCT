@@ -7129,7 +7129,7 @@ async function openPoView(h) {
   $("poViewRecv").innerHTML = rc.length ? `<div style="font-size:12.5px; font-weight:700; margin-bottom:4px;">📥 입고 이력</div>
     <div class="tbl-wrap"><table style="font-size:12px;"><thead><tr><th>차수</th><th>입고일</th><th>품목·수량</th><th>처리</th><th></th></tr></thead><tbody class="num">
     ${rc.map(r => `<tr><td>${r.no}차</td><td>${esc(r.date || "")}</td>
-      <td style="white-space:normal;">${(r.items || []).map(x => { const it = h.items[x.i] || {}; return `${esc(it.name || "?")} <b>${NF(x.qty)}</b>${esc(it.unit || "")}`; }).join(", ")}</td>
+      <td style="white-space:normal;">${(r.items || []).map(x => { const it = h.items[x.i] || {}; return `${esc(it.name || "?")} <b>${NF(x.qty)}</b>${esc(it.unit || "")}${x.expiry ? ` <span class="auto" style="font-size:11px;">(유통 ${esc(x.expiry)})</span>` : ""}`; }).join(", ")}</td>
       <td class="auto">${esc(r.by || "")} ${esc((r.at || "").slice(5, 16))}</td>
       <td><button class="btn ghost sm" data-pvunrecv="${r.no}" style="color:#B45309; border-color:#B45309;" title="이 차수의 입고 기록을 삭제하고 재고를 되돌립니다">↩ 취소</button></td></tr>`).join("")}
     </tbody></table></div>` : "";
@@ -7460,31 +7460,60 @@ function openPoRecv(h) {
     <td class="r auto">${NF(it.recv || 0)}</td>
     <td class="r" style="font-weight:700; color:${rem > 0 ? "#B45309" : "var(--ok)"};">${rem > 0 ? NF(rem) : "✔"}</td>
     <td class="r"><input class="mini-input num" data-prf="qty" value="${rem > 0 ? rem : ""}" placeholder="0" style="width:80px" inputmode="decimal"></td>
+    <td><input class="mini-input datepick" type="text" readonly data-prf="expiry" placeholder="📅 공통값" style="width:118px; text-align:left;"></td>
     ${money ? `<td class="r"><input class="mini-input num" data-prf="price" value="${it.price || ""}" placeholder="단가" style="width:90px" inputmode="decimal"></td>` : ""}
+    <td><button type="button" class="btn ghost sm" data-prsplit="${i}" title="같은 품목을 유통기한별로 나눠 입고 — 줄 추가">＋ 나누기</button></td>
   </tr>`; }).join("");
   $("poRecvOverlay").classList.add("on");
 }
 window.closePoRecv = () => $("poRecvOverlay").classList.remove("on");
+// [＋ 나누기] — 같은 품목, 다른 유통기한 줄 추가 (입고 기록이 유통기한별로 따로 남아 선입선출·소비기한 관리에 반영)
+$("poRecvItems").addEventListener("click", e => {
+  const del = e.target.closest("[data-prunsplit]");
+  if (del) { del.closest("tr").remove(); return; }
+  const sp = e.target.closest("[data-prsplit]"); if (!sp) return;
+  const i = sp.dataset.prsplit, money = poMoney();
+  const rows = [...document.querySelectorAll(`#poRecvItems tr[data-pri="${i}"]`)];
+  const last = rows[rows.length - 1];
+  const tr = document.createElement("tr");
+  tr.dataset.pri = i; tr.dataset.split = "1";
+  tr.innerHTML = `<td colspan="4" class="auto" style="text-align:right; font-size:11.5px;">↳ 같은 품목 · 다른 유통기한</td>
+    <td class="r"><input class="mini-input num" data-prf="qty" placeholder="0" style="width:80px" inputmode="decimal"></td>
+    <td><input class="mini-input datepick" type="text" readonly data-prf="expiry" placeholder="📅 유통기한" style="width:118px; text-align:left;"></td>
+    ${money ? `<td class="r auto" style="font-size:11px;">같은 단가</td>` : ""}
+    <td><button type="button" class="btn ghost sm" data-prunsplit title="이 줄 빼기" style="color:var(--crit);">✕</button></td>`;
+  last.after(tr);
+  tr.querySelector('[data-prf="qty"]').focus();
+  toast("위 줄 수량을 줄이고, 이 줄에 나머지 수량·유통기한을 넣으세요");
+});
 $("poRecvSave").onclick = async () => {
   const h = PORECV.h; if (!h) return;
+  const priceOf = {};   // 나눈 줄은 첫 줄 단가를 그대로 씀
   const rowsIn = [...document.querySelectorAll("#poRecvItems tr[data-pri]")].map(tr => {
     const i = +tr.dataset.pri, it = h.items[i];
     const qEl = tr.querySelector('[data-prf="qty"]'), pEl = tr.querySelector('[data-prf="price"]');
+    const eEl = tr.querySelector('[data-prf="expiry"]');
+    if (pEl) priceOf[i] = _num(pEl.value);
     return { i, name: it.name, unit: it.unit || "", remain: it.remain != null ? it.remain : it.qty,
-      qty: _num(qEl.value), price: pEl ? _num(pEl.value) : 0 };
+      qty: _num(qEl.value), expiry: eEl ? eEl.value.trim() : "", split: !!tr.dataset.split };
   });
+  rowsIn.forEach(x => { x.price = priceOf[x.i] || 0; });
   const items = rowsIn.filter(x => x.qty > 0);
   if (!items.length) return toast("이번에 들어온 수량을 1개 이상 입력해주세요");
-  const over = items.filter(x => x.qty > x.remain + 1e-9);
+  if (rowsIn.some(x => x.split && x.qty > 0 && !x.expiry))
+    return toast("나눈 줄에는 유통기한을 넣어주세요 — 같은 유통기한이면 나눌 필요가 없습니다");
+  const sumBy = {};
+  items.forEach(x => { sumBy[x.i] = (sumBy[x.i] || 0) + x.qty; });
+  const over = Object.keys(sumBy).map(k => items.find(x => x.i === +k)).filter(x => sumBy[x.i] > x.remain + 1e-9);
   if (over.length && !confirm("남은 수량보다 많이 입력한 품목이 있습니다:\n"
-      + over.map(x => `· ${x.name}: 잔량 ${NF(x.remain)} → 입고 ${NF(x.qty)}${x.unit}`).join("\n")
+      + over.map(x => `· ${x.name}: 잔량 ${NF(x.remain)} → 입고 합계 ${NF(sumBy[x.i])}${x.unit}`).join("\n")
       + "\n\n그대로 입고할까요? (초과분도 재고에 반영됩니다)")) return;
   $("poRecvSave").disabled = true;
   try {
     const r = await api(`/api/po/${h.id}/receive`, { method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ date: $("poRecvDate").value, made: $("poRecvMade").value,
-        expiry: $("poRecvExpiry").value, items: items.map(x => ({ i: x.i, qty: x.qty, price: x.price })) }) });
+        expiry: $("poRecvExpiry").value, items: items.map(x => ({ i: x.i, qty: x.qty, price: x.price, expiry: x.expiry })) }) });
     toast(r.status === "완료" ? `📥 발주서 ${poNo(h)} 입고완료 — ${r.date} 재고에 반영됐습니다`
       : `📥 ${r.no}차 입고 — ${r.date} 재고 반영 · 잔량 ${r.remain_items}품목은 '진행중'으로 남습니다`);
     closePoRecv();

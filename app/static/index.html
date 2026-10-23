@@ -2215,19 +2215,20 @@
 
 <!-- 발주서 입고 처리 모달 -->
 <div class="overlay" id="poRecvOverlay" style="z-index:63;">
-  <div class="modal" style="width:min(720px, 94vw);">
+  <div class="modal" style="width:min(940px, 96vw); max-width:940px;">
     <h3 id="poRecvTitle">📥 입고 처리</h3>
-    <p class="hint"><b>이번에 실제로 들어온 수량</b>만 입력하세요 (기본값 = 남은 수량). 예: 100개 발주에 50개만 왔으면 50 → 50개만 입고되고 <b>잔량 50개는 '진행중'으로 남아</b> 다음에 이어서 입고할 수 있습니다. 확정하면 원부자재 입고에 자동 기록되어 재고에 바로 반영됩니다.</p>
+    <p class="hint"><b>이번에 실제로 들어온 수량</b>만 입력하세요 (기본값 = 남은 수량). 예: 100개 발주에 50개만 왔으면 50 → 50개만 입고되고 <b>잔량 50개는 '진행중'으로 남아</b> 다음에 이어서 입고할 수 있습니다. 확정하면 원부자재 입고에 자동 기록되어 재고에 바로 반영됩니다.
+      한 번에 들어왔는데 <b>유통기한이 섞여 있으면</b> 품목 옆 [＋ 나누기]로 줄을 추가해 수량·유통기한을 나눠 넣으세요 (예: 500kg 11/30 + 500kg 12/15).</p>
     <div class="fgrid">
       <div class="fld"><label>입고일</label>
         <input class="datepick" type="text" readonly id="poRecvDate" placeholder="📅 입고일"></div>
       <div class="fld"><label>제조일자 (선택)</label>
         <input class="datepick" type="text" readonly id="poRecvMade" placeholder="📅 제조일자"></div>
       <div class="fld"><label>유통기한 (선택)</label>
-        <input class="datepick" type="text" readonly id="poRecvExpiry" placeholder="📅 유통기한"></div>
+        <input class="datepick" type="text" readonly id="poRecvExpiry" placeholder="📅 유통기한 (품목별 칸이 비면 이 값)"></div>
     </div>
     <div class="tbl-wrap" style="max-height:300px; overflow-y:auto;"><table>
-      <thead><tr><th>자재명</th><th class="r">발주</th><th class="r">입고됨</th><th class="r">잔량</th><th class="r">이번 입고</th><th class="r" id="poRecvPriceTh">단가(원)</th></tr></thead>
+      <thead><tr><th>자재명</th><th class="r">발주</th><th class="r">입고됨</th><th class="r">잔량</th><th class="r">이번 입고</th><th>유통기한</th><th class="r" id="poRecvPriceTh">단가(원)</th><th></th></tr></thead>
       <tbody class="num" id="poRecvItems"></tbody>
     </table></div>
     <div class="modal-foot">
