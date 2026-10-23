@@ -42,7 +42,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.116.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.116.1"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -8450,7 +8450,9 @@ def quote_rates(request: Request, days: int = 90):
                             WHERE sm.staffing_id=st.id AND COALESCE(s.wage,0)<=0)),0) nowage_hrs,
               COALESCE(SUM(COALESCE((SELECT SUM(COALESCE(sa.cost, sa.hours * sa.wage)) FROM staffing_agency sa WHERE sa.staffing_id=st.id),
                                     st.agency_hours * st.agency_wage)),0) agency_amt,
-              COALESCE(SUM(COALESCE((SELECT SUM(sa.hours) FROM staffing_agency sa WHERE sa.staffing_id=st.id), st.agency_hours)),0) agency_hrs
+              COALESCE(SUM(COALESCE((SELECT SUM(sa.hours) FROM staffing_agency sa WHERE sa.staffing_id=st.id), st.agency_hours)),0) agency_hrs,
+              COALESCE(SUM((SELECT SUM(sa.hours) FROM staffing_agency sa WHERE sa.staffing_id=st.id
+                             AND COALESCE(sa.cost, sa.hours * sa.wage, 0)<=0)),0) agency_nowage_hrs
             FROM staffing st WHERE st.date>=?""", (since,)).fetchone()
         missing = [x["name"] for x in con.execute(
             "SELECT name FROM staff WHERE status='재직' AND COALESCE(wage,0)<=0 ORDER BY name")]
@@ -8458,7 +8460,9 @@ def quote_rates(request: Request, days: int = 90):
         out.update({"since": since, "missing_wage": missing,
                     "staff_rate": round(out["staff_amt"] / (out["staff_hrs"] - out["nowage_hrs"]), 0)
                     if out["staff_hrs"] - out["nowage_hrs"] > 0 else 0,
-                    "agency_rate": round(out["agency_amt"] / out["agency_hrs"], 0) if out["agency_hrs"] > 0 else 0})
+                    # 시급(금액)이 비어 있는 용역 기록은 시간만 있고 금액이 0이라 평균을 끌어내림 → 금액 있는 기록만으로 평균
+                    "agency_rate": round(out["agency_amt"] / (out["agency_hrs"] - out["agency_nowage_hrs"]), 0)
+                    if out["agency_hrs"] - out["agency_nowage_hrs"] > 0 else 0})
         return out
     finally:
         con.close()

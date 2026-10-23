@@ -11197,7 +11197,7 @@ function qtRenderBlocks() {
       <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:13px; margin-bottom:6px;">
         <input class="mini-input" data-qbk="name" value="${esc(b.name || "")}" style="width:110px; text-align:left; font-weight:700;" placeholder="블록 이름">
         <label>1배합 생산 개수 <input class="mini-input num" data-qbk="yield" value="${b.yield ?? ""}" style="width:90px" inputmode="decimal"></label>
-        ${act ? `<button class="btn ghost sm" data-qact="${bi}" title="배합 실적 분석의 최근 3개월 1배합 실제 생산 개수">실적 ${_qf(act.per_batch, 0)}개 적용</button>` : ""}
+        ${act ? `<button class="btn ghost sm" data-qact="${bi}" title="배합 실적 분석: 최근 3개월 실제 생산량 ÷ 배합 수 — 로스가 이미 반영된 현실 값">최근 3개월 실제 1배합 ${_qf(act.per_batch, 0)}개로 바꾸기</button>` : ""}
         <span class="spacer"></span>
         <span class="auto" data-qbsum="${bi}">1배합 ${_qf(sum, 0)}원 · 개당 <b>${per ? _qf(per) : "—"}</b>원</span>
         ${d.blocks.length > 1 ? `<button class="btn ghost sm" data-qdel="block" style="color:var(--crit);">블록 삭제</button>` : ""}
@@ -11224,7 +11224,9 @@ function qtRenderFields() {
       <input class="mini-input num" data-qf="${k}" value="${f[k] ?? ""}" inputmode="decimal" style="text-align:right;"></label>`).join("");
   const r = QT.rates;
   $("qtRateHint").innerHTML = r ? [
-    r.agency_rate > 0 ? `최근 90일 용역 평균 <b>${_qf(r.agency_rate, 0)}원/시간</b> <button class="uselink" data-qrate="agency">적용</button>` : "",
+    r.agency_rate > 0 ? `최근 90일 용역 평균 <b>${_qf(r.agency_rate, 0)}원/시간</b> (용역비 ÷ 근무시간, 연장 할증 포함${r.agency_nowage_hrs > 0 ? ` · 시급이 비어 있는 용역 기록 ${_qf(r.agency_nowage_hrs, 0)}시간 제외` : ""}) <button class="uselink" data-qrate="agency">적용</button> — 용역비에 보험료가 들어 있으면 부대비용 %는 0으로`
+      : "",
+    "부대비용 % 기본 18.3 = 4대보험 회사 부담 약 10% + 퇴직금 적립 약 8.3% (직원 기준 — 데이터가 아닌 기본값)",
     r.missing_wage.length ? `<span style="color:var(--crit);">⚠ 재직 직원 ${r.missing_wage.length}명 시급 미입력</span> — 직원 평균은 계산할 수 없어 직접 넣어야 합니다 (인원 관리에서 시급 입력)` : (r.staff_rate > 0 ? `직원 평균 <b>${_qf(r.staff_rate, 0)}원/시간</b> <button class="uselink" data-qrate="staff">적용</button>` : ""),
     "가동 1시간당 제조경비 = 월 제조경비 ÷ 월 라인 가동시간 (경비 등록 기능이 생기면 자동 계산 예정)",
   ].filter(Boolean).join("<br>") : "";
@@ -11300,7 +11302,9 @@ $("qtBlocks").addEventListener("click", e => {
   const add = e.target.closest("[data-qaddrow]");
   if (add) { QT.d.blocks[+add.dataset.qaddrow].rows.push({ mid: null, name: "", qty: "", price: "" }); qtRenderBlocks(); return; }
   const act = e.target.closest("[data-qact]");
-  if (act) { const by = QT.by[QT.d.srcPid]; if (by) { QT.d.blocks[+act.dataset.qact].yield = Math.round(by.per_batch); qtRenderBlocks(); qtCalc(); } return; }
+  if (act) { const by = QT.by[QT.d.srcPid]; if (by) { QT.d.blocks[+act.dataset.qact].yield = Math.round(by.per_batch);
+    if (_qn(QT.d.loss) > 1) { QT.d.loss = 0; toast("실제 1배합 개수에는 로스가 이미 들어 있어 로스율을 0%로 바꿨습니다"); }
+    qtRenderBlocks(); qtCalc(); } return; }
   const del = e.target.closest("[data-qdel]"); if (!del) return;
   const bi = +e.target.closest("[data-qb]").dataset.qb;
   if (del.dataset.qdel === "block") { if (confirm("이 블록을 삭제할까요?")) QT.d.blocks.splice(bi, 1); }
@@ -11331,7 +11335,10 @@ $("qtFields").addEventListener("change", e => {
 });
 $("qtRateHint").addEventListener("click", e => {
   const b = e.target.closest("[data-qrate]"); if (!b || !QT.rates) return;
-  QT.d.f.hourly = Math.round(b.dataset.qrate === "agency" ? QT.rates.agency_rate : QT.rates.staff_rate); qtRenderFields(); qtCalc();
+  const ag = b.dataset.qrate === "agency";
+  QT.d.f.hourly = Math.round(ag ? QT.rates.agency_rate : QT.rates.staff_rate);
+  if (ag && _qn(QT.d.f.burden) > 0 && confirm("용역 시급을 적용합니다.\n용역비에는 보통 4대보험이 포함돼 있어 부대비용 %를 0으로 바꿀까요?\n(식대 등 따로 드는 비용이 있으면 그만큼만 넣으세요)")) QT.d.f.burden = 0;
+  qtRenderFields(); qtCalc();
 });
 $("qtResult").addEventListener("change", e => { if (e.target.id === "qtCmp") { QT.d.cmp = e.target.value; qtEnsureBy(e.target.value).then(qtCalc); } });
 async function qtEnsureBy(pid) {   // 그 제품의 최근 3개월 1배합 실제 생산 개수
