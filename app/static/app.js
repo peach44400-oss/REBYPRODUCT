@@ -10510,10 +10510,7 @@ async function loadFirewall() {
 }
 $("fwCheck").onclick = loadFirewall;
 $("fwFix").onclick = async () => {
-  if (!confirm("서버 PC 화면에 Windows 허용 창이 뜹니다.
-서버 PC 앞에서 [예]를 눌러야 처리됩니다.
-
-진행할까요?")) return;
+  if (!confirm("서버 PC 화면에 Windows 허용 창이 뜹니다.\n서버 PC 앞에서 [예]를 눌러야 처리됩니다.\n\n진행할까요?")) return;
   try { await api("/api/firewall/fix", { method: "POST" }); toast("🛡 서버 PC에 허용 창을 띄웠습니다 — [예]를 눌러주세요"); setTimeout(loadFirewall, 3000); } catch (e) { }
 };
 $("tunCopy").onclick = () => {
