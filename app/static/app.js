@@ -4310,11 +4310,17 @@ function invPrint(copies) {
   w.document.close();
 }
 // 공급자(회사) 정보 편집
+// 공급자(회사) 정보·도장이 바뀌면 열려 있는 거래명세서·발주서 보기를 바로 다시 그린다
+function coInfoChanged() {
+  if (INV.data) invQuery();
+  if ($("poViewOverlay").classList.contains("on") && POVIEW.h) openPoView(POVIEW.h);
+}
 async function openInvCompany() {
   let d; try { d = await api("/api/company"); } catch (e) { d = {}; }
   let ov = $("invCoOverlay");
   if (!ov) {
     ov = document.createElement("div"); ov.className = "overlay"; ov.id = "invCoOverlay";
+    ov.style.zIndex = "70";   // 발주서 보기(62) 위에서도 열리게
     ov.innerHTML = `<div class="modal" style="width:min(480px,95vw);">
       <h3 style="margin:0 0 4px;">🏢 공급자(회사) 정보</h3>
       <p class="hint">거래명세서 상단 '공급자' 칸에 표시됩니다.</p>
@@ -4340,10 +4346,10 @@ async function openInvCompany() {
     const dataUrl = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(f); });
     try { await api("/api/company/stamp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ data: dataUrl }) }); }
     catch (err) { return; }
-    toast("대표 도장을 등록했습니다"); openInvCompany(); if (INV.data) invQuery();
+    toast("대표 도장을 등록했습니다"); openInvCompany(); coInfoChanged();
   };
   const del = $("icStampDel");
-  if (del) del.onclick = async () => { if (!confirm("등록된 대표 도장을 삭제할까요?")) return; try { await api("/api/company/stamp", { method: "DELETE" }); } catch (err) { return; } toast("도장을 삭제했습니다"); openInvCompany(); if (INV.data) invQuery(); };
+  if (del) del.onclick = async () => { if (!confirm("등록된 대표 도장을 삭제할까요?")) return; try { await api("/api/company/stamp", { method: "DELETE" }); } catch (err) { return; } toast("도장을 삭제했습니다"); openInvCompany(); coInfoChanged(); };
   ov.classList.add("on");
 }
 async function _invCoSave() {
@@ -4351,8 +4357,8 @@ async function _invCoSave() {
   const body = {}; F.forEach(k => body[k] = ($("ic_" + k) || {}).value || "");
   try { await api("/api/company", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); }
   catch (e) { return; }
-  $("invCoOverlay").classList.remove("on"); toast("공급자 정보를 저장했습니다");
-  if (INV.data) invQuery();
+  $("invCoOverlay").classList.remove("on"); toast("공급자 정보를 저장했습니다 — 거래명세서·발주서에 함께 적용됩니다");
+  coInfoChanged();
 }
 { const on2 = (id, fn) => { const el = $(id); if (el) el.onclick = fn; };
   on2("invLoad", invQuery); on2("invPrintBtn", () => invPrint(1)); on2("invPrint2Btn", () => invPrint(2)); on2("invCompanyBtn", openInvCompany); }
@@ -7138,6 +7144,7 @@ async function openPoView(h) {
   $("poViewClose").style.display = open && rc.length ? "" : "none";
   $("poViewReopen").style.display = h.recv_state === "종결" ? "" : "none";
   $("poViewEdit").style.display = poEditable(h) ? "" : "none";
+  $("poViewCompany").style.display = ROLE === "admin" ? "" : "none";
   $("poViewOverlay").classList.add("on");
 }
 function renderPoViewDoc() {
@@ -7300,6 +7307,8 @@ $("postFilter").addEventListener("input", e => {
   clearTimeout(_postT); _postT = setTimeout(loadPoStat, 250);   // 타이핑 멈추면 검색
 });
 $("postNew").onclick = () => openPo(false);
+$("postCompany").onclick = openInvCompany;
+$("poViewCompany").onclick = openInvCompany;
 /* ── 정산 CSV — 거래처 선택 후 품목별 상세로 저장 (기간·검색은 현재 화면 그대로, 건수 제한 없음) ── */
 const POCSV = { data: null };
 $("postCsv").onclick = async () => {
@@ -7562,12 +7571,13 @@ function buildPoDocData(d, opt = {}) {   // d = {id, seq, date, due, note, creat
     <tr><td style="${LB}">FAX</td><td style="${VB}">${esc(pa.fax || "")}</td></tr>
     <tr><td colspan="2" style="${VB} text-align:center;">납기일자 : ${esc(d.due || "협의")}</td></tr></table>`;
   const stamp = co.co_stamp && !opt.forMail
-    ? `<img src="/image/${encodeURIComponent(co.co_stamp)}?v=${encodeURIComponent(co.co_stamp_ver || "")}" alt="(인)" style="position:absolute; right:4px; top:50%; transform:translateY(-50%); height:46px; width:46px; object-fit:contain; opacity:.9; mix-blend-mode:multiply; pointer-events:none;">` : "";
+    ? `<img src="/image/${encodeURIComponent(co.co_stamp)}?v=${encodeURIComponent(co.co_stamp_ver || "")}" alt="(인)" style="position:absolute; right:4px; top:50%; transform:translateY(-50%); height:46px; width:46px; object-fit:contain; opacity:.9; mix-blend-mode:multiply; pointer-events:none;">`
+    : `<span style="position:absolute; right:8px; top:50%; transform:translateY(-50%); width:30px; height:30px; border:1px dashed #bbb; border-radius:50%; color:#bbb; font-size:8.5px; text-align:center; line-height:30px;">(인)</span>`;
   const logo = `<div style="display:inline-flex; flex-direction:column; align-items:center; gap:2px; background:#111; color:#fff; padding:5px 18px 4px;">${opt.forMail ? "" : PO_LOGO_SVG}<b style="font-size:11px; letter-spacing:.08em;">REBYPRODUCT</b></div>`;
   const right = `<table style="border-collapse:collapse; width:100%; table-layout:fixed;"><colgroup><col style="width:96px"><col></colgroup>
     <tr><td colspan="2" style="${B} text-align:center; padding:6px;">${logo}</td></tr>
     <tr><td style="${LB}">사업자등록번호</td><td style="${VB}">${esc(co.co_bizno || "")}</td></tr>
-    <tr><td style="${LB}">회사명/대표</td><td style="${VB} position:relative;">${esc((co.co_name || "리바이프로덕트").replace(/\s*\(REBYPRODUCT\)\s*$/i, ""))}${co.co_ceo ? " / " + esc(co.co_ceo) : ""}${stamp}</td></tr>
+    <tr><td style="${LB}">회사명/대표</td><td style="${VB} position:relative; padding-right:44px;">${esc((co.co_name || "리바이프로덕트").replace(/\s*\(REBYPRODUCT\)\s*$/i, ""))}${co.co_ceo ? " / " + esc(co.co_ceo) : ""}${stamp}</td></tr>
     <tr><td style="${LB}">주 소</td><td style="${VB}">${esc(co.co_addr || "")}</td></tr>
     <tr><td style="${LB}">담당/연락처</td><td style="${VB}">${esc([d.created_by, co.co_tel].filter(Boolean).join(" / "))}</td></tr></table>`;
   const TD = `${B} padding:4px 6px; font-size:12px; height:20px;`;
@@ -11069,6 +11079,7 @@ async function startApp(me) {
   loadLowStock();   // 사이드바 '발주 필요' 알림 (자재 담당·admin)
   aiInit();         // ✨ AI에게 묻기 버튼 (관리자 + 허용 계정)
   $("navPoStat").style.display = canStock ? "" : "none";   // 발주 현황 탭 — 자재 담당·admin
+  $("postCompany").style.display = ROLE === "admin" ? "" : "none";   // 공급자 정보(회사·도장) — admin
   { const iv = $("navInvoice"); if (iv) iv.style.display = (canM("prod_price") || canM("ship_amt")) ? "" : "none"; }   // 거래명세서 — 단가 열람 권한
   { const rv = $("navRecv"); if (rv) rv.style.display = canM("ship_amt") ? "" : "none"; }   // 미수금 — 출고 금액 권한
   { const sr = $("navSalesRep"); if (sr) sr.style.display = canM("ship_amt") ? "" : "none"; }   // 매출 통계 — 출고 금액 권한

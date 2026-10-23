@@ -1300,6 +1300,7 @@
           </div>
           <span class="spacer"></span>
           <button class="btn sm primary" id="postNew">+ 발주서 작성</button>
+          <button class="btn sm" id="postCompany" style="display:none;" title="발주서·거래명세서에 공통으로 들어가는 우리 회사 정보와 대표 도장">🏢 공급자 정보</button>
           <button class="btn sm" id="postCsv" title="거래처를 골라 정산서를 화면으로 보고 인쇄·PDF 저장·CSV로 내보냅니다">📄 정산서</button>
           <button class="btn sm" onclick="window.print()">인쇄</button>
         </div>
@@ -2249,6 +2250,7 @@
     <div class="modal-foot" style="flex-wrap:wrap;">
       <label class="po-money" id="poViewAmtWrap" style="margin-right:auto; font-size:12.5px; display:flex; align-items:center; gap:5px; cursor:pointer;"
         title="체크를 끄면 인쇄 발주서에 금액이 빠집니다 (수량만 표시)"><input type="checkbox" id="poViewShowAmt" checked> 금액 표시</label>
+      <button class="btn ghost sm" id="poViewCompany" style="display:none;" title="회사 정보·대표 도장 (거래명세서와 공통)">🏢 공급자 정보</button>
       <button class="btn" onclick="closePoView()">닫기</button>
       <button class="btn" id="poViewEdit" style="display:none;">✏ 수정</button>
       <button class="btn" id="poViewClose" style="display:none;" title="남은 수량을 더 받지 않기로 하고 '완료'로 마감합니다">⛔ 잔량 종결</button>
