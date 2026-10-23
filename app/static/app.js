@@ -10430,6 +10430,7 @@ async function openAdmin() {
   loadBackups();
   loadBackupSettings();
   loadTunnel();
+  loadFirewall();
   updCheck(true);   // 열 때 조용히 현재 버전 표시(있으면 새 버전도)
 }
 window.closeAdmin = () => $("adminOverlay").classList.remove("on");
@@ -10495,6 +10496,25 @@ $("tunToggle").onclick = async () => {
     toast(turningOn ? "외부 접속을 켰습니다 — 주소가 곧 표시됩니다 (채팅에도 올라옵니다)" : "외부 접속을 껐습니다");
   } catch (e) { /* api 토스트 */ }
   finally { $("tunToggle").disabled = false; loadTunnel(); }
+};
+/* ── 방화벽 점검·다시 허용 (서버 PC 화면에 UAC 허용 창) ── */
+async function loadFirewall() {
+  $("fwState").textContent = "확인 중… (몇 초 걸립니다)"; $("fwState").style.color = "var(--muted)";
+  let d; try { d = await api("/api/firewall"); } catch (e) { $("fwState").textContent = ""; return; }
+  if (d.busy) { $("fwState").textContent = "⏳ 서버 PC에 허용 창이 떠 있습니다 — 서버 PC에서 [예]를 눌러주세요"; setTimeout(loadFirewall, 4000); return; }
+  if (d.supported === false) { $("fwState").textContent = "Windows가 아니라 해당 없음"; return; }
+  if (d.error) { $("fwState").textContent = d.error; return; }
+  $("fwState").innerHTML = d.need_fix
+    ? `<span style="color:var(--crit); font-weight:700;">❌ 막혀 있음</span> <span class="auto">(${esc(d.profile)} 네트워크 · 차단 규칙 ${d.block}개 · 허용 ${d.allow + d.port}개)</span>`
+    : `<span style="color:var(--ok); font-weight:700;">✅ 허용됨</span> <span class="auto">(${esc(d.profile)} 네트워크)</span>`;
+}
+$("fwCheck").onclick = loadFirewall;
+$("fwFix").onclick = async () => {
+  if (!confirm("서버 PC 화면에 Windows 허용 창이 뜹니다.
+서버 PC 앞에서 [예]를 눌러야 처리됩니다.
+
+진행할까요?")) return;
+  try { await api("/api/firewall/fix", { method: "POST" }); toast("🛡 서버 PC에 허용 창을 띄웠습니다 — [예]를 눌러주세요"); setTimeout(loadFirewall, 3000); } catch (e) { }
 };
 $("tunCopy").onclick = () => {
   const v = $("tunUrl").value;

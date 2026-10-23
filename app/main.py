@@ -42,7 +42,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.112.2"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.113.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -8227,6 +8227,139 @@ def ai_log_list(request: Request, limit: int = 200):
         con.close()
 
 
+# ── Windows 방화벽 점검·허용 ─────────────────────────────────────────────
+# 처음 실행 때 뜨는 Windows 방화벽 창에서 [취소]를 누르면 Windows가 이 exe를 막는 '차단 규칙'을 몰래 만든다.
+# 차단 규칙은 허용 규칙보다 우선이라 bat로 포트를 열어도 계속 막힌다 → 켤 때 점검해서, 막혀 있으면
+# 관리자 권한 창(UAC)을 띄워 차단 규칙 삭제 + 프로그램·포트 허용을 한 번에 처리한다.
+FIREWALL = {"busy": False, "last": None}
+FW_RULE_PROG = "REBYPRODUCT 재고관리 (프로그램)"
+FW_RULE_PORT = "REBYPRODUCT 재고관리 (8600)"
+
+
+def _ps_encoded(script):
+    return base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+
+
+def _ps_run(script, timeout=120):
+    import subprocess
+    r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", _ps_encoded(script)],
+                       capture_output=True, timeout=timeout, creationflags=0x08000000)   # CREATE_NO_WINDOW
+    return r.returncode, (r.stdout or b"").decode("utf-8", "replace").strip()
+
+
+def _fw_prog():
+    return str(Path(sys.executable).resolve()) if getattr(sys, "frozen", False) else ""
+
+
+def firewall_check():
+    """현재 네트워크 종류(개인/공용)에 실제로 적용되는 규칙 기준으로 점검 — {block, allow, port, profile, need_fix}."""
+    if os.name != "nt":
+        return {"supported": False}
+    prog, port = _fw_prog(), SERVE_PORT["v"]
+    ps = ("$ErrorActionPreference='SilentlyContinue'; $ProgressPreference='SilentlyContinue';"
+          "$p='" + prog.replace("'", "''") + "';"
+          "$cat=[string](Get-NetConnectionProfile | Select-Object -First 1).NetworkCategory;"
+          "if($cat -eq 'DomainAuthenticated'){$cat='Domain'}; if(-not $cat){$cat='Public'};"
+          "function Hit($r){ $pf=[string]$r.Profile; return ($pf -eq 'Any') -or ($pf -match $cat) };"
+          "$r=@(); if($p){"   # 프로그램 규칙은 '정확한 경로'에만 적용됨 — 다른 폴더의 같은 이름 exe 규칙은 세지 않는다
+          " $r=@(Get-NetFirewallApplicationFilter | Where-Object { $_.Program -ieq $p }"
+          " | Get-NetFirewallRule | Where-Object { $_.Direction -eq 'Inbound' -and $_.Enabled -eq 'True' -and (Hit $_) }) };"
+          "$b=@($r | Where-Object { $_.Action -eq 'Block' }).Count; $a=@($r | Where-Object { $_.Action -eq 'Allow' }).Count;"
+          f"$pt=@(Get-NetFirewallPortFilter -Protocol TCP | Where-Object {{ $_.LocalPort -eq '{port}' }} | Get-NetFirewallRule"
+          " | Where-Object { $_.Direction -eq 'Inbound' -and $_.Enabled -eq 'True' -and $_.Action -eq 'Allow' -and (Hit $_) }).Count;"
+          "Write-Output ([string]$b + ',' + [string]$a + ',' + [string]$pt + ',' + $cat)")
+    try:
+        rc, out = _ps_run(ps, 90)
+        b, a, pt, cat = (out.splitlines()[-1].split(",") + ["", "", "", ""])[:4]
+        b, a, pt = int(b), int(a), int(pt)
+    except Exception as e:
+        return {"supported": True, "error": f"점검 실패: {e}"}
+    names = {"Public": "공용", "Private": "개인", "Domain": "도메인"}
+    return {"supported": True, "block": b, "allow": a, "port": pt, "profile": names.get(cat, cat),
+            "need_fix": b > 0 or (a == 0 and pt == 0)}
+
+
+def firewall_fix(source="auto"):
+    """관리자 권한 창(UAC)을 띄워 차단 규칙 삭제 + 프로그램·포트 허용 규칙 추가. 서버 PC 화면에서 [예]를 눌러야 한다."""
+    if os.name != "nt" or FIREWALL["busy"]:
+        return
+    FIREWALL["busy"] = True
+    try:
+        prog, port = _fw_prog(), SERVE_PORT["v"]
+        log = str((Path(sys.executable).parent if getattr(sys, "frozen", False) else BASE) / "_방화벽로그.txt")
+        inner = ("$ErrorActionPreference='SilentlyContinue';"
+                 "$p='" + prog.replace("'", "''") + "'; $log='" + log.replace("'", "''") + "';"
+                 "if($p){ $n=[IO.Path]::GetFileName($p);"
+                 " Get-NetFirewallApplicationFilter | Where-Object { $_.Program -ieq $p -or $_.Program -like ('*\\'+$n) -or $_.Program -like '*\\재고관리.exe' }"
+                 " | Get-NetFirewallRule | Where-Object { $_.Action -eq 'Block' } | Remove-NetFirewallRule;"
+                 f" Remove-NetFirewallRule -DisplayName '{FW_RULE_PROG}';"
+                 f" New-NetFirewallRule -DisplayName '{FW_RULE_PROG}' -Direction Inbound -Action Allow -Program $p -Profile Any | Out-Null }};"
+                 "Remove-NetFirewallRule -DisplayName 'REBYPRODUCT 재고관리';"
+                 f"Remove-NetFirewallRule -DisplayName '{FW_RULE_PORT}';"
+                 f"New-NetFirewallRule -DisplayName '{FW_RULE_PORT}' -Direction Inbound -Action Allow -Protocol TCP -LocalPort {port} -Profile Any | Out-Null;"
+                 "(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + ' 방화벽 허용 처리 완료' | Out-File -FilePath $log -Append -Encoding utf8")
+        outer = ("try { Start-Process powershell -Verb RunAs -Wait -WindowStyle Hidden -ArgumentList "
+                 "'-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand','" + _ps_encoded(inner) + "'; Write-Output 'ok' }"
+                 " catch { Write-Output 'declined' }")
+        try:
+            rc, out = _ps_run(outer, 300)
+        except Exception as e:
+            out = f"error {e}"
+        st = firewall_check()
+        FIREWALL["last"] = dict(st, at=dt.datetime.now().strftime("%Y-%m-%d %H:%M"), result=out.splitlines()[-1] if out else "")
+        if "declined" in out:
+            chat_system("🛡 방화벽 허용 창에서 [아니요]를 눌러 허용되지 않았습니다 — 서버 PC에서 [관리 도구 > 외부 접속]의 [방화벽 다시 허용]을 눌러주세요")
+        elif st.get("need_fix") is False:
+            chat_system("🛡 방화벽 허용 완료 — 같은 네트워크의 다른 PC에서 서버 PC 주소(:%d)로 접속할 수 있습니다" % port)
+        print("  방화벽 점검 결과:", FIREWALL["last"])
+    finally:
+        FIREWALL["busy"] = False
+
+
+def _firewall_startup():
+    """켤 때 점검 — 막혀 있으면 허용 창을 띄운다. 사용자가 [아니요]를 누르면 그날은 다시 묻지 않는다."""
+    try:
+        st = firewall_check()
+        FIREWALL["last"] = dict(st, at=dt.datetime.now().strftime("%Y-%m-%d %H:%M"), result="startup")
+        if not st.get("need_fix"):
+            return
+        today = dt.date.today().isoformat()
+        if get_app_setting("fw_prompt_day", "") == today:
+            return
+        set_app_setting("fw_prompt_day", today)
+        print("  ⚠ 방화벽이 이 프로그램을 막고 있습니다 — 잠시 후 뜨는 허용 창에서 [예]를 눌러주세요")
+        firewall_fix("startup")
+    except Exception as e:
+        print("  방화벽 점검 생략:", e)
+
+
+@app.get("/api/firewall")
+def firewall_status(request: Request):
+    require_admin(request)
+    if FIREWALL["busy"]:
+        return {"busy": True, "last": FIREWALL["last"]}
+    st = firewall_check()
+    FIREWALL["last"] = dict(st, at=dt.datetime.now().strftime("%Y-%m-%d %H:%M"), result="check")
+    return dict(st, busy=False)
+
+
+@app.post("/api/firewall/fix")
+def firewall_fix_api(request: Request):
+    require_admin(request)
+    if os.name != "nt":
+        raise HTTPException(400, "Windows에서만 지원합니다")
+    if FIREWALL["busy"]:
+        return {"ok": True, "busy": True}
+    threading.Thread(target=firewall_fix, args=("manual",), daemon=True).start()
+    con = connect()
+    try:
+        audit(con, "firewall", "방화벽 다시 허용 요청")
+        con.commit()
+    finally:
+        con.close()
+    return {"ok": True}
+
+
 def _self_rename_exe():
     """실행 파일 이름 통일(재고관리.exe → RebyStock.exe).
     PyInstaller 단일 exe는 실행 중에도 자기 파일에서 코드를 읽으므로 '실행 중 이름 변경'은 불가(바꾸면 즉시 종료됨).
@@ -8309,7 +8442,7 @@ if __name__ == "__main__":
     print(f"  REBYPRODUCT 재고관리  -  {url}")
     if lan_ip:
         print(f"  다른 PC에서 접속:  http://{lan_ip}:{port}")
-        print("  (최초 1회 '서버_방화벽허용.bat'을 관리자로 실행하세요)")
+        print("  (방화벽이 막고 있으면 잠시 후 허용 창이 뜹니다 — [예]를 눌러주세요)")
     print("  이 창을 닫으면 프로그램이 종료됩니다.")
     print("=" * 52)
     if not os.environ.get("PORT"):   # 개발(프리뷰) 실행 시엔 브라우저 자동오픈 생략
@@ -8318,6 +8451,9 @@ if __name__ == "__main__":
     threading.Thread(target=_backup_scheduler, daemon=True).start()
     # 소비기한 아침 알림: 매일 7시 이후 1회, 임박·만료 LOT이 있으면 채팅에 게시
     threading.Thread(target=_alert_scheduler, daemon=True).start()
+    # 방화벽 점검: 이 exe가 막혀 있으면 허용 창(UAC)을 띄워 바로잡는다 (개발 실행 PORT 지정 시엔 생략)
+    if not os.environ.get("PORT") and os.name == "nt":
+        threading.Timer(4.0, _firewall_startup).start()
     # 외부 접속 터널: cloudflared.exe가 옆에 있고 켜져 있으면 자동 시작 (개발 실행 PORT 지정 시엔 생략)
     if not os.environ.get("PORT") and tunnel_enabled() and cloudflared_path():
         print("  외부 접속(cloudflared) 시작 중… 주소는 [관리 도구]·채팅에서 확인하세요")

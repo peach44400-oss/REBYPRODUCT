@@ -11,10 +11,14 @@ if errorlevel 1 (
 )
 title REBYPRODUCT 방화벽 허용
 echo.
-echo  [1/2] 이전 규칙 정리...
+echo  [1/3] 이전 규칙 정리...
 netsh advfirewall firewall delete rule name="REBYPRODUCT 재고관리" >nul 2>&1
 netsh advfirewall firewall delete rule name="REBYPRODUCT 재고관리 (8600)" >nul 2>&1
-echo  [2/2] 8600 포트 허용 규칙 추가...
+echo  [2/3] 숨어 있는 차단 규칙 삭제 + 프로그램 허용...
+echo        (처음 실행 때 방화벽 창에서 [취소]를 누르면 Windows가 몰래 차단 규칙을 만듭니다)
+set "REBY_EXE=%~dp0RebyStock.exe"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; $p=$env:REBY_EXE; Get-NetFirewallApplicationFilter | Where-Object { $_.Program -like '*\RebyStock.exe' -or $_.Program -like '*\재고관리.exe' } | Get-NetFirewallRule | Where-Object { $_.Action -eq 'Block' } | Remove-NetFirewallRule; Remove-NetFirewallRule -DisplayName 'REBYPRODUCT 재고관리 (프로그램)'; if (Test-Path $p) { New-NetFirewallRule -DisplayName 'REBYPRODUCT 재고관리 (프로그램)' -Direction Inbound -Action Allow -Program $p -Profile Any | Out-Null; Write-Output '   프로그램 허용: ' $p }"
+echo  [3/3] 8600 포트 허용 규칙 추가...
 netsh advfirewall firewall add rule name="REBYPRODUCT 재고관리 (8600)" dir=in action=allow protocol=TCP localport=8600 profile=any
 if errorlevel 1 (
   echo.

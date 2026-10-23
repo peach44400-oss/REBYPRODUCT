@@ -2450,6 +2450,16 @@
       <button class="btn sm" id="tunCopy">📋 복사</button>
     </div>
     <p class="hint" id="tunSec" style="margin:0 0 4px; color:var(--warn);"></p>
+    <div style="border-top:1px solid var(--line-soft); margin-top:12px; padding-top:10px;">
+      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+        <b style="font-size:13px;">🛡 방화벽 (같은 네트워크 접속)</b>
+        <span class="auto" id="fwState" style="font-size:12px;">확인 중…</span>
+        <span class="spacer"></span>
+        <button class="btn sm" id="fwCheck">다시 확인</button>
+        <button class="btn sm primary" id="fwFix">방화벽 다시 허용</button>
+      </div>
+      <p class="hint" style="margin:6px 0 0;">다른 PC에서 접속이 안 되면 누르세요. <b>서버 PC 화면</b>에 허용 창이 뜨면 [예] — 숨어 있는 차단 규칙을 지우고 접속을 허용합니다.</p>
+    </div>
     </div>
 
     <div class="admin-pane" data-apane="backup" style="display:none;">
