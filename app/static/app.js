@@ -1838,7 +1838,9 @@ $("eUsage").addEventListener("click", e => {
     const [pidS, block, op] = step.dataset.ustep.split("|");
     const pid = +pidS;
     const cur = blockRatio(pid, block);
-    setBatchRatio(pid, op === "d" ? 1 : op === "+" ? cur + 0.5 : cur - 0.5, block);
+    // − 는 0.5씩 줄이되 0.5 이하에선 절반으로 (0.5 → 0.25), 0 이하로는 안 내려감
+    const next = op === "d" ? 1 : op === "+" ? cur + 0.5 : (cur > 0.5 ? cur - 0.5 : cur / 2);
+    setBatchRatio(pid, next, block);
     return;
   }
 });
@@ -1880,7 +1882,9 @@ async function autoFillUsage(pid) {
 // 배합 배율 스테퍼(±0.5/기본값) → 그 블록(반죽/토핑)의 배합비 × 배율로 자재 사용량 입력.
 // 반죽(대표 블록)만 생산실적 배합 칸·계획과 동기화.
 async function setBatchRatio(pid, ratio, block, quiet) {
-  ratio = Math.max(0.5, Math.round(ratio * 10) / 10);
+  // 입력한 배합 수 그대로 (0.25·0.75 같은 값 허용) — 예전엔 최소 0.5·소수 1자리로 맞춰 0.25가 0.5로 바뀌던 버그
+  ratio = Math.round(Number(ratio) * 1000) / 1000;
+  if (!(ratio > 0)) return;
   E.uratio[pid + "|" + block] = ratio;
   const ok = await applyBatchUsage(pid, ratio, block, quiet);
   if (!ok) { delete E.uratio[pid + "|" + block]; renderUsage(); return; }
