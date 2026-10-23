@@ -42,7 +42,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.115.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.116.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -8424,6 +8424,140 @@ def firewall_fix_api(request: Request):
     finally:
         con.close()
     return {"ok": True}
+
+
+# ── 견적 계산 (신제품 계약 단가 산정) · 배합 실적 분석 ──────────────────────────
+# 견적 = 표준원가(예상 레시피·생산 속도·포장) + 회사 평균 단가(시간당 인건비·가동시간당 경비) → 목표 이익률로 단가.
+# 배합 실적 = 생산실적의 배합 수·계획·생산량으로 제품별 '1배합 실제 생산 개수'와 달성률 — 견적의 수율 근거.
+def require_cost(request: Request):
+    if not mcan(request, "cost"):
+        raise HTTPException(403, "원가 열람 권한이 없습니다")
+
+
+@app.get("/api/quote/rates")
+def quote_rates(request: Request, days: int = 90):
+    """최근 N일 실적 기반 기본 단가 — 1인 시간당 인건비(직원·용역 분리) + 시급 미입력 인원 수."""
+    require_cost(request)
+    since = (dt.date.today() - dt.timedelta(days=max(7, min(365, days)))).isoformat()
+    con = connect()
+    try:
+        HRS = "CASE WHEN sm.hours>0 THEN sm.hours ELSE st.work_hours END"
+        r = con.execute(f"""SELECT
+              COALESCE(SUM((SELECT COALESCE(SUM(s.wage * {HRS}),0) FROM staffing_member sm JOIN staff s ON s.id=sm.staff_id
+                            WHERE sm.staffing_id=st.id)),0) staff_amt,
+              COALESCE(SUM((SELECT COALESCE(SUM({HRS}),0) FROM staffing_member sm WHERE sm.staffing_id=st.id)),0) staff_hrs,
+              COALESCE(SUM((SELECT COALESCE(SUM({HRS}),0) FROM staffing_member sm JOIN staff s ON s.id=sm.staff_id
+                            WHERE sm.staffing_id=st.id AND COALESCE(s.wage,0)<=0)),0) nowage_hrs,
+              COALESCE(SUM(COALESCE((SELECT SUM(COALESCE(sa.cost, sa.hours * sa.wage)) FROM staffing_agency sa WHERE sa.staffing_id=st.id),
+                                    st.agency_hours * st.agency_wage)),0) agency_amt,
+              COALESCE(SUM(COALESCE((SELECT SUM(sa.hours) FROM staffing_agency sa WHERE sa.staffing_id=st.id), st.agency_hours)),0) agency_hrs
+            FROM staffing st WHERE st.date>=?""", (since,)).fetchone()
+        missing = [x["name"] for x in con.execute(
+            "SELECT name FROM staff WHERE status='재직' AND COALESCE(wage,0)<=0 ORDER BY name")]
+        out = {k: round(r[k] or 0, 1) for k in r.keys()}
+        out.update({"since": since, "missing_wage": missing,
+                    "staff_rate": round(out["staff_amt"] / (out["staff_hrs"] - out["nowage_hrs"]), 0)
+                    if out["staff_hrs"] - out["nowage_hrs"] > 0 else 0,
+                    "agency_rate": round(out["agency_amt"] / out["agency_hrs"], 0) if out["agency_hrs"] > 0 else 0})
+        return out
+    finally:
+        con.close()
+
+
+@app.get("/api/quotes")
+def quotes_list(request: Request):
+    require_cost(request)
+    con = connect()
+    try:
+        out = rows(con.execute("SELECT * FROM quote ORDER BY COALESCE(NULLIF(updated_at,''), created_at) DESC, id DESC"))
+        for q in out:
+            q["data"] = _jl(q["data"], {})
+        return out
+    finally:
+        con.close()
+
+
+@app.post("/api/quotes")
+def quote_save(request: Request, body: dict):
+    """견적 저장 — id가 있으면 덮어쓰기. data = 화면 입력값 전체(JSON)."""
+    require_cost(request)
+    name = (body.get("name") or "").strip()[:100]
+    if not name:
+        raise HTTPException(400, "견적 이름을 입력해주세요 (예: 거래처 · 신제품명)")
+    data = json.dumps(body.get("data") or {}, ensure_ascii=False)
+    if len(data) > 200000:
+        raise HTTPException(400, "견적 내용이 너무 큽니다")
+    user = request.state.user.get("username", "")
+    con = connect()
+    try:
+        qid = body.get("id")
+        if qid and con.execute("SELECT 1 FROM quote WHERE id=?", (qid,)).fetchone():
+            con.execute("UPDATE quote SET name=?, partner=?, data=?, updated_at=datetime('now','localtime'), updated_by=? WHERE id=?",
+                        (name, (body.get("partner") or "").strip()[:100], data, user, qid))
+        else:
+            qid = con.execute("INSERT INTO quote(name, partner, data, created_by) VALUES(?,?,?,?)",
+                              (name, (body.get("partner") or "").strip()[:100], data, user)).lastrowid
+        audit(con, "save_quote", f"견적 저장 #{qid} — {name}")
+        con.commit()
+        return {"ok": True, "id": qid}
+    finally:
+        con.close()
+
+
+@app.delete("/api/quotes/{qid}")
+def quote_delete(request: Request, qid: int):
+    require_cost(request)
+    con = connect()
+    try:
+        con.execute("DELETE FROM quote WHERE id=?", (qid,))
+        audit(con, "delete_quote", f"견적 삭제 #{qid}")
+        con.commit()
+        return {"ok": True}
+    finally:
+        con.close()
+
+
+@app.get("/api/batchyield")
+def batch_yield(request: Request, frm: str = "", to: str = ""):
+    """배합 실적 분석 — 제품별 배합 수·계획·생산·불량, 1배합 실제 생산 개수 vs 기준(1배합당 생산수량), 달성률.
+    배합 수가 비어 있는 생산 행은 '배합 미입력'으로 따로 세고 배합당 계산에서는 뺀다."""
+    today = dt.date.today()
+    frm = frm or today.replace(day=1).isoformat()
+    to = to or today.isoformat()
+    con = connect()
+    try:
+        prods = {}
+        for r in con.execute("""SELECT pr.date, pr.product_id, p.name, COALESCE(p.batch_yield,0) std, COALESCE(pr.batches,0) b,
+                COALESCE(pr.plan_qty,0) plan, COALESCE(pr.prod_qty,0) qty, COALESCE(pr.defect_qty,0) df, COALESCE(l.name,'') line
+              FROM production pr JOIN product p ON p.id=pr.product_id LEFT JOIN line l ON l.id=pr.line_id
+              WHERE pr.date BETWEEN ? AND ? AND (pr.prod_qty>0 OR pr.batches>0) ORDER BY pr.date""", (frm, to)):
+            d = prods.setdefault(r["product_id"], {"product_id": r["product_id"], "name": r["name"], "std_yield": r["std"],
+                                                    "days": 0, "batches": 0.0, "plan": 0.0, "qty": 0.0, "defect": 0.0,
+                                                    "b_qty": 0.0, "nobatch_days": 0, "rows": []})
+            d["days"] += 1
+            d["plan"] += r["plan"]
+            d["qty"] += r["qty"]
+            d["defect"] += r["df"]
+            if r["b"] > 0:
+                d["batches"] += r["b"]
+                d["b_qty"] += r["qty"]   # 배합 수가 있는 날의 생산량만 배합당 계산에 사용
+            else:
+                d["nobatch_days"] += 1
+            d["rows"].append({"date": r["date"], "batches": r["b"], "plan": r["plan"], "qty": r["qty"], "defect": r["df"],
+                              "line": r["line"], "per_batch": round(r["qty"] / r["b"], 1) if r["b"] > 0 else None,
+                              "rate": round(r["qty"] / r["plan"] * 100, 1) if r["plan"] > 0 else None})
+        out = []
+        for d in prods.values():
+            d["good"] = d["qty"] - d["defect"]
+            d["per_batch"] = round(d["b_qty"] / d["batches"], 1) if d["batches"] > 0 else None
+            d["rate"] = round(d["qty"] / d["plan"] * 100, 1) if d["plan"] > 0 else None
+            d["vs_std"] = round((d["per_batch"] / d["std_yield"] - 1) * 100, 1) if d["per_batch"] and d["std_yield"] else None
+            d.pop("b_qty")
+            out.append(d)
+        out.sort(key=lambda x: -x["qty"])
+        return {"from": frm, "to": to, "rows": out}
+    finally:
+        con.close()
 
 
 def _self_rename_exe():

@@ -100,7 +100,7 @@ async function reloadMaster(t) {
 }
 
 /* ── 네비게이션 ─────────────────────── */
-const TITLES = { dash: "대시보드", prod: "생산 현황", workorder: "작업지시서", ship: "출고 현황", invoice: "거래명세서", recv: "미수금", salesrep: "매출 통계", pcard: "거래처 원장", postat: "발주 현황", purchrep: "매입 통계", salesorder: "수주 관리", entry: "일일 입력", lot: "LOT 관리", matstat: "자재 현황", sched: "출고 스케줄", prodsched: "생산 스케줄", items: "기준정보 관리", ana: "분석", lookup: "기록 조회", memos: "특이사항", staff: "인원 관리", pnl: "손익 요약" };
+const TITLES = { dash: "대시보드", prod: "생산 현황", workorder: "작업지시서", ship: "출고 현황", invoice: "거래명세서", recv: "미수금", salesrep: "매출 통계", pcard: "거래처 원장", postat: "발주 현황", purchrep: "매입 통계", salesorder: "수주 관리", entry: "일일 입력", lot: "LOT 관리", matstat: "자재 현황", sched: "출고 스케줄", prodsched: "생산 스케줄", items: "기준정보 관리", ana: "분석", lookup: "기록 조회", memos: "특이사항", staff: "인원 관리", pnl: "손익 요약", quote: "견적 계산" };
 /* 표 검색(필터)은 화면·탭을 옮기면 초기화한다.
    남아 있으면 다른 화면에서 '등록된 항목이 없습니다'만 보여 데이터가 없는 것처럼 오해하게 된다.
    ※ 행 추가용 검색(qaProd 등)은 필터가 아니라 입력칸이므로 대상 아님. */
@@ -143,7 +143,7 @@ $("nav").addEventListener("click", e => {
   $("scrTitle").textContent = TITLES[b.dataset.scr];
   resetSearches();
   const fn = { dash: loadDash, prod: loadProd, ship: loadShip, entry: openEntry, lot: loadLot, items: renderMasters, ana: loadAna, lookup: () => lkCal.render(),
-    postat: loadPoStat, memos: loadMemos, matstat: loadMatStatus, sched: () => { SCHED.kind = "ship"; _schedApplyKindUI(); loadSchedule(); }, prodsched: () => loadProdSched(), invoice: loadInvoice, recv: loadReceivables, salesorder: loadSalesOrders, pcard: loadPCard, pnl: loadPnl, workorder: loadWorkorder, salesrep: loadSalesRep, purchrep: loadPurchRep,
+    postat: loadPoStat, memos: loadMemos, matstat: loadMatStatus, sched: () => { SCHED.kind = "ship"; _schedApplyKindUI(); loadSchedule(); }, prodsched: () => loadProdSched(), invoice: loadInvoice, recv: loadReceivables, salesorder: loadSalesOrders, pcard: loadPCard, pnl: loadPnl, quote: loadQuote, workorder: loadWorkorder, salesrep: loadSalesRep, purchrep: loadPurchRep,
     staff: () => { STAFF.mode = "d"; STAFF.date = todayISO();   // 진입 시 항상 일별·오늘로 초기화
       document.querySelectorAll("#staffTabs button").forEach(x => x.classList.toggle("on", x.dataset.sh === "d"));
       loadStaff(); } }[b.dataset.scr];
@@ -11107,6 +11107,330 @@ $("srefSave").onclick = async () => {
   } catch (e) { }
 };
 
+/* ══ 견적 계산 (신제품 계약 단가) · 배합 실적 분석 — 원가 권한 ══════════════
+   개당 원가 = 재료비(블록별 1배합 재료비 ÷ 1배합 생산 개수, 로스 반영) + 포장비 + 노무비(인원×시간당 인건비÷시간당 생산)
+             + 제조경비(가동 1시간당 경비÷시간당 생산) + 물류(파렛트·운임) + 초기 비용(계약 총물량으로 나눔)
+   견적 단가 = 개당 원가 ÷ (1 − 목표 이익률) */
+const QT = { d: null, id: null, list: [], rates: null, costs: null, prices: {}, by: {}, plt: [] };
+const QT_FIELDS = [
+  ["speed", "시간당 생산 개수", 3000], ["heads", "투입 인원 (명)", 10], ["hourly", "1인 시간당 인건비 (원)", 12000],
+  ["burden", "부대비용 % (4대보험·퇴직·식대 등)", 18.3], ["ohRate", "가동 1시간당 제조경비 (원)", 88000],
+  ["pltQty", "파렛트당 적재 개수", 5040], ["pltPrice", "파렛트 단가 (원)", 3700],
+  ["freight", "1회 운임 (원)", 500000], ["shipQty", "1회 출고 개수", 40000],
+  ["init", "초기 비용 (인쇄판·개발 등, 원)", 0], ["monthQty", "월 계약 물량 (개)", 100000], ["months", "계약 기간 (개월)", 12],
+  ["margin", "목표 이익률 (%)", 15],
+];
+const _qn = v => Number(String(v ?? "").replace(/,/g, "")) || 0;
+const _qf = (n, d = 1) => (Math.round(n * Math.pow(10, d)) / Math.pow(10, d)).toLocaleString("ko-KR");
+function qtBlank() {
+  return { blocks: [{ name: "반죽", yield: "", rows: [{ mid: null, name: "", qty: "", price: "" }] }], packs: [],
+    loss: 3, f: Object.fromEntries(QT_FIELDS.map(x => [x[0], x[2]])), cmp: "", srcPid: null };
+}
+function qtUnit(m) {   // 레시피 입력 단위 — kg 자재는 g로 넣고 원/kg 단가로 계산
+  const u = String(m?.unit || "").trim().toLowerCase();
+  if (!m) return { lbl: "g", div: 1000, pu: "원/kg" };
+  if (u === "kg") return { lbl: "g", div: 1000, pu: "원/kg" };
+  if (u === "g") return { lbl: "g", div: 1, pu: "원/g" };
+  if (u === "l") return { lbl: "ml", div: 1000, pu: "원/L" };
+  if (u === "ml") return { lbl: "ml", div: 1, pu: "원/ml" };
+  return { lbl: m.unit || "개", div: 1, pu: "원/" + (m.unit || "개") };
+}
+function qtAutoPrice(mid) { const m = materialById(mid); return QT.prices[mid] || (m && Number(m.unit_price)) || 0; }
+function qtRowPrice(r) { return String(r.price ?? "").trim() !== "" ? _qn(r.price) : (r.mid ? qtAutoPrice(r.mid) : 0); }
+function qtRowAmt(r) { return _qn(r.qty) / qtUnit(materialById(r.mid)).div * qtRowPrice(r); }
+function qtPackAmt(p) { const per = _qn(p.per) || 1; return (String(p.price ?? "").trim() !== "" ? _qn(p.price) : (p.mid ? qtAutoPrice(p.mid) : 0)) / per; }
+async function loadQuote() {
+  const tasks = [];
+  if (!QT.rates) tasks.push(api("/api/quote/rates").then(r => QT.rates = r).catch(() => { }));
+  if (!QT.costs) tasks.push(api("/api/costs").then(r => QT.costs = r).catch(() => { }));
+  if (!Object.keys(QT.prices).length && (canM("mat_price") || canM("mat_amt")))
+    tasks.push(api("/api/matlastprice").then(r => { QT.prices = r || {}; }).catch(() => { }));
+  tasks.push(api("/api/schedrefs").then(r => { QT.plt = (r.plt || []).filter(x => _qn(x.qty) > 0); }).catch(() => { }));
+  tasks.push(qtLoadList());
+  await Promise.all(tasks);
+  $("qtPartnerDl").innerHTML = (M.partner || []).map(p => `<option value="${esc(p.name)}">`).join("");
+  $("qtFromProd").innerHTML = `<option value="">기존 제품 배합 불러오기…</option>` + (M.product || []).filter(p => p.status !== "단종")
+    .map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
+  if (!document.getElementById("qtMatDl")) {
+    const dl = document.createElement("div");
+    dl.innerHTML = `<datalist id="qtMatDl">${M.raw.concat(M.semi || []).map(m => `<option value="${esc(m.name)}">`).join("")}</datalist>
+      <datalist id="qtPackDl">${M.sub.map(m => `<option value="${esc(m.name)}">`).join("")}</datalist>`;
+    document.body.appendChild(dl);
+  }
+  if (!QT.d) qtNew(true);
+  qtRenderAll();
+  if (!$("qyFrom").value) qySetRange("prev");
+}
+async function qtLoadList() {
+  try { QT.list = await api("/api/quotes"); } catch (e) { QT.list = []; }
+  $("qtList").innerHTML = `<option value="">📂 저장된 견적 (${QT.list.length})</option>` + QT.list.map(q =>
+    `<option value="${q.id}"${q.id === QT.id ? " selected" : ""}>${esc(q.name)}${q.partner ? " · " + esc(q.partner) : ""}</option>`).join("");
+}
+function qtNew(quiet) {
+  QT.d = qtBlank(); QT.id = null;
+  const r = QT.rates;
+  if (r && r.agency_rate > 0) QT.d.f.hourly = Math.round(r.agency_rate);   // 실적 평균 시급이 있으면 기본값으로
+  $("qtName").value = ""; $("qtPartner").value = ""; $("qtMeta").textContent = "";
+  if (!quiet) { qtRenderAll(); toast("새 견적을 시작합니다"); }
+}
+function qtRenderAll() { qtRenderBlocks(); qtRenderPacks(); qtRenderFields(); qtCalc(); }
+function qtRenderBlocks() {
+  const d = QT.d;
+  $("qtLoss").value = d.loss;
+  $("qtBlocks").innerHTML = d.blocks.map((b, bi) => {
+    let sum = 0;
+    const rowsH = b.rows.map((r, ri) => {
+      const m = materialById(r.mid), u = qtUnit(m), amt = qtRowAmt(r); sum += amt;
+      const auto = r.mid ? qtAutoPrice(r.mid) : 0;
+      return `<tr data-qb="${bi}" data-qr="${ri}">
+        <td><input class="mini-input" data-qk="name" list="qtMatDl" value="${esc(m ? m.name : r.name || "")}" placeholder="🔍 재료 검색 또는 직접 입력" style="width:100%; min-width:170px; text-align:left;"></td>
+        <td class="r"><input class="mini-input num" data-qk="qty" value="${r.qty ?? ""}" style="width:86px" inputmode="decimal"></td>
+        <td class="auto" style="font-size:11.5px;">${esc(u.lbl)}</td>
+        <td class="r"><input class="mini-input num" data-qk="price" value="${r.price ?? ""}" placeholder="${auto ? _qf(auto, 0) : "단가"}" style="width:84px" inputmode="decimal" title="${u.pu} — 비우면 최근 입고 단가"></td>
+        <td class="auto" style="font-size:11px;">${u.pu}</td>
+        <td class="r" data-qamt>${amt ? _qf(amt, 0) : "—"}</td>
+        <td><button class="btn ghost sm" data-qdel="row" style="color:var(--crit);">✕</button></td></tr>`;
+    }).join("");
+    const y = _qn(b.yield), per = y ? sum / y : 0;
+    const act = d.srcPid && bi === 0 && QT.by[d.srcPid] ? QT.by[d.srcPid] : null;
+    return `<div class="qt-block" data-qb="${bi}" style="border:1px solid var(--line-soft); border-radius:10px; padding:8px 10px; margin-bottom:8px;">
+      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:13px; margin-bottom:6px;">
+        <input class="mini-input" data-qbk="name" value="${esc(b.name || "")}" style="width:110px; text-align:left; font-weight:700;" placeholder="블록 이름">
+        <label>1배합 생산 개수 <input class="mini-input num" data-qbk="yield" value="${b.yield ?? ""}" style="width:90px" inputmode="decimal"></label>
+        ${act ? `<button class="btn ghost sm" data-qact="${bi}" title="배합 실적 분석의 최근 3개월 1배합 실제 생산 개수">실적 ${_qf(act.per_batch, 0)}개 적용</button>` : ""}
+        <span class="spacer"></span>
+        <span class="auto" data-qbsum="${bi}">1배합 ${_qf(sum, 0)}원 · 개당 <b>${per ? _qf(per) : "—"}</b>원</span>
+        ${d.blocks.length > 1 ? `<button class="btn ghost sm" data-qdel="block" style="color:var(--crit);">블록 삭제</button>` : ""}
+      </div>
+      <div class="tbl-wrap"><table style="font-size:12.5px;"><thead><tr><th>재료</th><th class="r">1배합 사용량</th><th></th><th class="r">단가</th><th></th><th class="r">금액(원)</th><th></th></tr></thead>
+      <tbody class="num">${rowsH}</tbody></table></div>
+      <button class="btn ghost sm" data-qaddrow="${bi}" style="margin-top:4px;">＋ 재료</button></div>`;
+  }).join("");
+}
+function qtRenderPacks() {
+  $("qtPacks").innerHTML = QT.d.packs.length ? `<div class="tbl-wrap"><table style="font-size:12.5px;"><thead><tr><th>포장재</th><th class="r">단가(원)</th><th class="r">몇 개당 1개</th><th class="r">개당(원)</th><th></th></tr></thead><tbody class="num">${
+    QT.d.packs.map((p, i) => { const m = materialById(p.mid), auto = p.mid ? qtAutoPrice(p.mid) : 0, a = qtPackAmt(p);
+      return `<tr data-qp="${i}"><td><input class="mini-input" data-qk="name" list="qtPackDl" value="${esc(m ? m.name : p.name || "")}" placeholder="🔍 트레이·필름·박스" style="width:100%; min-width:170px; text-align:left;"></td>
+        <td class="r"><input class="mini-input num" data-qk="price" value="${p.price ?? ""}" placeholder="${auto ? _qf(auto, 1) : "단가"}" style="width:84px" inputmode="decimal"></td>
+        <td class="r"><input class="mini-input num" data-qk="per" value="${p.per ?? 1}" style="width:70px" inputmode="decimal"></td>
+        <td class="r" data-qamt>${a ? _qf(a, 2) : "—"}</td>
+        <td><button class="btn ghost sm" data-qdel="pack" style="color:var(--crit);">✕</button></td></tr>`; }).join("")}</tbody></table></div>`
+    : `<div class="auto" style="font-size:12.5px;">[＋ 포장재]로 트레이·필름·박스를 넣으세요</div>`;
+}
+function qtRenderFields() {
+  const f = QT.d.f;
+  $("qtFields").innerHTML = QT_FIELDS.map(([k, t]) => `<label>${t}
+      ${k === "pltQty" && QT.plt.length ? `<select class="mini-input" data-qplt style="text-align:left; margin-bottom:3px;"><option value="">기준표에서 고르기…</option>${QT.plt.map(x => `<option value="${_qn(x.qty)}">${esc(x.name)} · ${esc(x.qty)}개</option>`).join("")}</select>` : ""}
+      <input class="mini-input num" data-qf="${k}" value="${f[k] ?? ""}" inputmode="decimal" style="text-align:right;"></label>`).join("");
+  const r = QT.rates;
+  $("qtRateHint").innerHTML = r ? [
+    r.agency_rate > 0 ? `최근 90일 용역 평균 <b>${_qf(r.agency_rate, 0)}원/시간</b> <button class="uselink" data-qrate="agency">적용</button>` : "",
+    r.missing_wage.length ? `<span style="color:var(--crit);">⚠ 재직 직원 ${r.missing_wage.length}명 시급 미입력</span> — 직원 평균은 계산할 수 없어 직접 넣어야 합니다 (인원 관리에서 시급 입력)` : (r.staff_rate > 0 ? `직원 평균 <b>${_qf(r.staff_rate, 0)}원/시간</b> <button class="uselink" data-qrate="staff">적용</button>` : ""),
+    "가동 1시간당 제조경비 = 월 제조경비 ÷ 월 라인 가동시간 (경비 등록 기능이 생기면 자동 계산 예정)",
+  ].filter(Boolean).join("<br>") : "";
+}
+function qtCost() {
+  const d = QT.d, f = k => _qn(d.f[k]);
+  const blocks = d.blocks.map(b => { const s = b.rows.reduce((a, r) => a + qtRowAmt(r), 0), y = _qn(b.yield); return y ? s / y : 0; });
+  const mat = blocks.reduce((a, x) => a + x, 0) / Math.max(0.01, 1 - _qn(d.loss) / 100);
+  const pack = d.packs.reduce((a, p) => a + qtPackAmt(p), 0);
+  const sp = f("speed") || 1;
+  const lab = f("heads") * f("hourly") * (1 + f("burden") / 100) / sp;
+  const oh = f("ohRate") / sp;
+  const lg = (f("pltQty") ? f("pltPrice") / f("pltQty") : 0) + (f("shipQty") ? f("freight") / f("shipQty") : 0);
+  const init = f("init") / Math.max(1, f("monthQty") * f("months"));
+  const items = [["재료비", mat], ["포장비", pack], ["노무비", lab], ["제조경비", oh], ["물류", lg], ["초기 비용", init]];
+  return { items, mat, tot: items.reduce((a, x) => a + x[1], 0) };
+}
+function qtCalc() {
+  const d = QT.d, c = qtCost(), tot = c.tot, mg = _qn(d.f.margin), mq = _qn(d.f.monthQty);
+  const COL = ["#7F77DD", "#5DCAA5", "#F0997B", "#ED93B1", "#85B7EB", "#B4B2A9"];
+  const price = m => m < 100 ? Math.ceil(tot / (1 - m / 100)) : 0;
+  const cmpRows = (QT.costs?.rows || []).filter(r => r.mat_act > 0);
+  const cr = cmpRows.find(r => String(r.id) === String(d.cmp));
+  const by = cr && QT.by[cr.id];
+  const blocksOk = d.blocks.every(b => _qn(b.yield) > 0 || !b.rows.some(r => _qn(r.qty) > 0));
+  $("qtResult").innerHTML = `
+    <div style="display:flex; align-items:baseline; gap:8px;"><span class="auto">개당 원가</span><b style="font-size:28px;">${tot ? _qf(tot) : "—"}</b><span class="auto">원</span></div>
+    ${!blocksOk ? `<div style="color:var(--crit); font-size:12px;">⚠ 1배합 생산 개수가 빈 블록이 있어 재료비가 빠졌습니다</div>` : ""}
+    <div style="display:flex; height:12px; border-radius:4px; overflow:hidden; margin:8px 0 10px; background:var(--line-soft);">${tot ? c.items.map((x, i) => `<span style="width:${x[1] / tot * 100}%; background:${COL[i]};" title="${x[0]}"></span>`).join("") : ""}</div>
+    ${c.items.map((x, i) => `<div style="display:flex; justify-content:space-between; font-size:13px; padding:4px 0; border-bottom:1px solid var(--line-soft);"><span><i style="display:inline-block; width:9px; height:9px; border-radius:2px; background:${COL[i]}; margin-right:6px;"></i>${x[0]}</span><span class="num">${_qf(x[1], 2)}원 <span class="auto">${tot ? (x[1] / tot * 100).toFixed(0) : 0}%</span></span></div>`).join("")}
+    <div style="font-size:13px; font-weight:700; margin:14px 0 6px;">견적 단가</div>
+    <div style="display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:6px;">
+      ${[...new Set([mg, 10, 15, 20])].slice(0, 4).map((m, i) => `<div style="background:var(--bg); border-radius:8px; padding:8px 10px; ${i === 0 ? "border:2px solid var(--solid);" : ""}">
+        <div class="auto" style="font-size:11.5px;">이익률 ${m}%${i === 0 ? " (목표)" : ""}</div><div class="num" style="font-size:18px; font-weight:800;">${tot ? _qf(price(m), 0) : "—"}원</div>
+        <div class="auto" style="font-size:11px;">월 이익 ${tot && mq ? _qf((price(m) - tot) * mq / 10000, 0) + "만원" : "—"}</div></div>`).join("")}
+    </div>
+    <div class="auto" style="font-size:11.5px; margin-top:6px;">이익률 기준: 단가 = 원가 ÷ (1 − 이익률). 원가에 %를 더하는 방식(마크업)보다 조금 높게 나옵니다.</div>
+    <div style="font-size:13px; font-weight:700; margin:14px 0 6px;">원재료 가격이 오르면 (목표 단가 유지 시)</div>
+    ${[5, 10, 20].map(r => { const t2 = tot + c.mat * r / 100, p = price(mg), m2 = p ? (p - t2) / p * 100 : 0;
+      return `<div style="display:flex; justify-content:space-between; font-size:12.5px; padding:3px 0;"><span>재료비 +${r}%</span><span class="num">원가 ${_qf(t2)}원 · 이익률 <b style="color:${m2 < 5 ? "var(--crit)" : "inherit"}">${m2.toFixed(1)}%</b></span></div>`; }).join("")}
+    <div style="font-size:13px; font-weight:700; margin:14px 0 6px;">비슷한 기존 제품과 비교</div>
+    <select class="mini-input" id="qtCmp" style="width:100%; text-align:left;"><option value="">제품 선택…</option>${cmpRows.map(r => `<option value="${r.id}"${String(r.id) === String(d.cmp) ? " selected" : ""}>${esc(r.name)}</option>`).join("")}</select>
+    ${cr ? `<div style="font-size:12.5px; margin-top:6px; line-height:1.7;">재료비(배합비×실입고단가) <b class="num">${_qf(cr.mat_act)}원</b> · 현재 판매가 <b class="num">${cr.sell ? _qf(cr.sell, 0) + "원" : "—"}</b>
+      ${by ? `<br>최근 3개월 1배합 실제 <b class="num">${_qf(by.per_batch, 0)}개</b> (기준 ${_qf(by.std_yield, 0)}개 · ${by.vs_std > 0 ? "+" : ""}${by.vs_std ?? "—"}%)` : ""}
+      <br><span class="auto">이 견적 재료비 ${_qf(c.mat)}원 — 차이 ${cr.mat_act ? ((c.mat / cr.mat_act - 1) * 100).toFixed(0) : "—"}%</span></div>` : ""}`;
+}
+// ── 입력 이벤트 (레시피·포장·항목) — 값만 바꾸고 결과/금액 칸만 다시 그려 입력 포커스 유지
+$("qtBlocks").addEventListener("input", e => {
+  const tr = e.target.closest("tr[data-qr]"), bk = e.target.dataset.qbk;
+  if (bk) { const b = QT.d.blocks[+e.target.closest("[data-qb]").dataset.qb]; b[bk] = e.target.value; qtUpdateSums(); qtCalc(); return; }
+  if (!tr) return;
+  const r = QT.d.blocks[+tr.dataset.qb].rows[+tr.dataset.qr], k = e.target.dataset.qk;
+  if (k === "qty" || k === "price") { r[k] = e.target.value; tr.querySelector("[data-qamt]").textContent = qtRowAmt(r) ? _qf(qtRowAmt(r), 0) : "—"; qtUpdateSums(); qtCalc(); }
+});
+function qtUpdateSums() {
+  QT.d.blocks.forEach((b, bi) => { const el = document.querySelector(`[data-qbsum="${bi}"]`); if (!el) return;
+    const s = b.rows.reduce((a, r) => a + qtRowAmt(r), 0), y = _qn(b.yield);
+    el.innerHTML = `1배합 ${_qf(s, 0)}원 · 개당 <b>${y ? _qf(s / y) : "—"}</b>원`; });
+}
+function qtResolveMat(list, name) {
+  const q = name.trim(); if (!q) return null;
+  return list.find(m => m.name === q) || null;
+}
+$("qtBlocks").addEventListener("change", e => {
+  if (e.target.dataset.qk !== "name") return;
+  const tr = e.target.closest("tr[data-qr]"); const r = QT.d.blocks[+tr.dataset.qb].rows[+tr.dataset.qr];
+  const m = qtResolveMat(M.raw.concat(M.semi || [], M.sub), e.target.value);
+  r.mid = m ? m.id : null; r.name = m ? "" : e.target.value.trim();
+  qtRenderBlocks(); qtCalc();
+});
+$("qtLoss").addEventListener("input", e => { QT.d.loss = e.target.value; qtCalc(); });
+$("qtBlocks").addEventListener("click", e => {
+  const add = e.target.closest("[data-qaddrow]");
+  if (add) { QT.d.blocks[+add.dataset.qaddrow].rows.push({ mid: null, name: "", qty: "", price: "" }); qtRenderBlocks(); return; }
+  const act = e.target.closest("[data-qact]");
+  if (act) { const by = QT.by[QT.d.srcPid]; if (by) { QT.d.blocks[+act.dataset.qact].yield = Math.round(by.per_batch); qtRenderBlocks(); qtCalc(); } return; }
+  const del = e.target.closest("[data-qdel]"); if (!del) return;
+  const bi = +e.target.closest("[data-qb]").dataset.qb;
+  if (del.dataset.qdel === "block") { if (confirm("이 블록을 삭제할까요?")) QT.d.blocks.splice(bi, 1); }
+  else QT.d.blocks[bi].rows.splice(+e.target.closest("tr[data-qr]").dataset.qr, 1);
+  qtRenderBlocks(); qtCalc();
+});
+$("qtAddBlock").onclick = () => { QT.d.blocks.push({ name: "토핑", yield: "", rows: [{ mid: null, name: "", qty: "", price: "" }] }); qtRenderBlocks(); };
+$("qtAddPack").onclick = () => { QT.d.packs.push({ mid: null, name: "", price: "", per: 1 }); qtRenderPacks(); };
+$("qtPacks").addEventListener("input", e => {
+  const tr = e.target.closest("tr[data-qp]"); if (!tr) return; const p = QT.d.packs[+tr.dataset.qp], k = e.target.dataset.qk;
+  if (k === "price" || k === "per") { p[k] = e.target.value; tr.querySelector("[data-qamt]").textContent = qtPackAmt(p) ? _qf(qtPackAmt(p), 2) : "—"; qtCalc(); }
+});
+$("qtPacks").addEventListener("change", e => {
+  if (e.target.dataset.qk !== "name") return;
+  const p = QT.d.packs[+e.target.closest("tr[data-qp]").dataset.qp];
+  const m = qtResolveMat(M.sub.concat(M.raw), e.target.value);
+  p.mid = m ? m.id : null; p.name = m ? "" : e.target.value.trim();
+  if (m && Number(m.pack_count) > 0 && _qn(p.per) <= 1) p.per = Number(m.pack_count);
+  qtRenderPacks(); qtCalc();
+});
+$("qtPacks").addEventListener("click", e => {
+  const del = e.target.closest("[data-qdel]"); if (!del) return;
+  QT.d.packs.splice(+e.target.closest("tr[data-qp]").dataset.qp, 1); qtRenderPacks(); qtCalc();
+});
+$("qtFields").addEventListener("input", e => { const k = e.target.dataset.qf; if (k) { QT.d.f[k] = e.target.value; qtCalc(); } });
+$("qtFields").addEventListener("change", e => {
+  if (e.target.matches("[data-qplt]") && e.target.value) { QT.d.f.pltQty = e.target.value; qtRenderFields(); qtCalc(); }
+});
+$("qtRateHint").addEventListener("click", e => {
+  const b = e.target.closest("[data-qrate]"); if (!b || !QT.rates) return;
+  QT.d.f.hourly = Math.round(b.dataset.qrate === "agency" ? QT.rates.agency_rate : QT.rates.staff_rate); qtRenderFields(); qtCalc();
+});
+$("qtResult").addEventListener("change", e => { if (e.target.id === "qtCmp") { QT.d.cmp = e.target.value; qtEnsureBy(e.target.value).then(qtCalc); } });
+async function qtEnsureBy(pid) {   // 그 제품의 최근 3개월 1배합 실제 생산 개수
+  if (!pid || QT.by[pid] !== undefined) return;
+  const t = new Date(), f = new Date(t); f.setMonth(f.getMonth() - 3);
+  try { const d = await api(`/api/batchyield?frm=${fmtISO(f)}&to=${fmtISO(t)}`);
+    d.rows.forEach(r => { if (r.per_batch) QT.by[r.product_id] = r; });
+    if (QT.by[pid] === undefined) QT.by[pid] = null;
+  } catch (e) { QT.by[pid] = null; }
+}
+// 기존 제품 배합 불러오기 — 블록별 1배합 사용량(g)·1배합 생산 개수 + 부재료는 포장으로
+$("qtLoadBom").onclick = async () => {
+  const pid = +$("qtFromProd").value; if (!pid) return toast("불러올 제품을 고르세요");
+  await ensureBomAll();
+  const list = BOMALL[pid] || []; if (!list.length) return toast("이 제품은 배합비가 등록돼 있지 않습니다");
+  const hasInput = QT.d.blocks.some(b => b.rows.some(r => r.mid || r.name)) || QT.d.packs.length;
+  if (hasInput && !confirm("지금 입력한 레시피·포장을 지우고 이 제품의 배합으로 바꿀까요?")) return;
+  const p = productById(pid), py = Number(p?.batch_yield) || 0, blocks = {}, packs = [];
+  list.forEach(b => {
+    const m = materialById(b.material_id); if (!m) return;
+    if (m.kind === "sub") { packs.push({ mid: m.id, name: "", price: "", per: Number(m.pack_count) > 0 ? Number(m.pack_count) : 1 }); return; }
+    const bk = b.block || "반죽", y = Number(b.block_yield) || py;
+    const g = blocks[bk] = blocks[bk] || { name: bk, yield: y ? Math.round(y) : "", rows: [] };
+    const qty = Number(b.batch_qty) > 0 ? Number(b.batch_qty) : (Number(b.qty_per_unit) || 0) * (y || 0);
+    g.rows.push({ mid: m.id, name: "", qty: Math.round(qty * 100) / 100, price: "" });
+  });
+  QT.d.blocks = Object.values(blocks).length ? Object.values(blocks) : qtBlank().blocks;
+  QT.d.packs = packs; QT.d.srcPid = pid; QT.d.cmp = String(pid);
+  await qtEnsureBy(pid);
+  qtRenderAll();
+  toast(`'${p?.name || ""}' 배합을 불러왔습니다 — 신제품에 맞게 고치세요`);
+};
+// 저장·불러오기·삭제
+$("qtSave").onclick = async () => {
+  const name = $("qtName").value.trim(); if (!name) { $("qtName").focus(); return toast("견적 이름을 입력해주세요"); }
+  try { const r = await api("/api/quotes", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: QT.id, name, partner: $("qtPartner").value.trim(), data: QT.d }) });
+    QT.id = r.id; await qtLoadList(); toast("💾 견적을 저장했습니다"); } catch (e) { }
+};
+$("qtNew").onclick = () => qtNew(false);
+$("qtList").onchange = async () => {
+  const q = QT.list.find(x => String(x.id) === $("qtList").value); if (!q) return;
+  QT.d = Object.assign(qtBlank(), q.data || {}); QT.d.f = Object.assign(qtBlank().f, (q.data || {}).f || {});
+  QT.id = q.id; $("qtName").value = q.name; $("qtPartner").value = q.partner || "";
+  $("qtMeta").textContent = `저장 ${(q.updated_at || q.created_at || "").slice(0, 16)} · ${q.updated_by || q.created_by || ""}`;
+  if (QT.d.srcPid) await qtEnsureBy(QT.d.srcPid);
+  if (QT.d.cmp) await qtEnsureBy(QT.d.cmp);
+  qtRenderAll();
+};
+$("qtDel").onclick = async () => {
+  if (!QT.id) return toast("저장된 견적을 먼저 고르세요");
+  if (!confirm(`'${$("qtName").value}' 견적을 삭제할까요?`)) return;
+  try { await api("/api/quotes/" + QT.id, { method: "DELETE" }); qtNew(true); qtRenderAll(); await qtLoadList(); toast("삭제했습니다"); } catch (e) { }
+};
+$("qtTabs").addEventListener("click", e => {
+  const b = e.target.closest("[data-qt]"); if (!b) return;
+  document.querySelectorAll("#qtTabs button").forEach(x => x.classList.toggle("on", x === b));
+  const y = b.dataset.qt === "yield";
+  $("qtCalc").style.display = y ? "none" : ""; $("qtYield").style.display = y ? "" : "none"; $("qtCalcBar").style.display = y ? "none" : "flex";
+  if (y) loadBatchYield();
+});
+// ── 배합 실적 분석 ──
+const QY = { d: null, open: new Set() };
+function qySetRange(k) {
+  const t = new Date(), y = t.getFullYear(), m = t.getMonth();
+  const [a, b] = k === "month" ? [new Date(y, m, 1), t] : k === "prev" ? [new Date(y, m - 1, 1), new Date(y, m, 0)] : [new Date(y, m - 3, t.getDate()), t];
+  $("qyFrom").value = fmtISO(a); $("qyTo").value = fmtISO(b);
+}
+document.querySelectorAll("[data-qyr]").forEach(b => b.onclick = () => { qySetRange(b.dataset.qyr); loadBatchYield(); });
+["qyFrom", "qyTo"].forEach(k => $(k).addEventListener("change", loadBatchYield));
+$("qyFilter").addEventListener("input", renderBatchYield);
+async function loadBatchYield() {
+  try { QY.d = await api(`/api/batchyield?frm=${$("qyFrom").value}&to=${$("qyTo").value}`); } catch (e) { return; }
+  renderBatchYield();
+}
+function renderBatchYield() {
+  const d = QY.d; if (!d) return;
+  const q = $("qyFilter").value.trim().toLowerCase();
+  const rowsF = d.rows.filter(r => !q || r.name.toLowerCase().includes(q));
+  const pct = (v, good) => v == null ? "—" : `<span style="color:${v < good ? "var(--crit)" : "var(--ok)"}; font-weight:700;">${v}%</span>`;
+  $("qyBody").innerHTML = `<div class="tbl-wrap"><table style="font-size:12.5px;"><thead><tr><th>제품</th><th class="r">생산일</th><th class="r">배합</th><th class="r">계획</th><th class="r">생산</th><th class="r">달성률</th><th class="r">1배합 실제</th><th class="r">기준</th><th class="r">기준 대비</th><th class="r">불량</th></tr></thead><tbody class="num">${
+    rowsF.map(r => {
+      const o = QY.open.has(r.product_id);
+      const sub = o ? r.rows.map(x => `<tr style="background:var(--bg); font-size:12px;"><td style="padding-left:22px;">${esc(x.date)} (${dowOf(x.date)})${x.line ? ` · ${esc(x.line)}` : ""}</td><td></td>
+        <td class="r">${x.batches ? NF(x.batches) : '<span style="color:var(--crit)">미입력</span>'}</td><td class="r">${NF(x.plan)}</td><td class="r">${NF(x.qty)}</td>
+        <td class="r">${x.rate == null ? "—" : x.rate + "%"}</td><td class="r">${x.per_batch == null ? "—" : NF(Math.round(x.per_batch))}</td><td></td><td></td><td class="r">${x.defect ? NF(x.defect) : ""}</td></tr>`).join("") : "";
+      return `<tr data-qyp="${r.product_id}" style="cursor:pointer;"><td><b>${o ? "▾" : "▸"} ${esc(r.name)}</b>${r.nobatch_days ? ` <span class="chip warn" title="배합 수를 넣지 않은 생산일 — 배합당 계산에서 빠짐">배합 미입력 ${r.nobatch_days}일</span>` : ""}</td>
+        <td class="r">${r.days}</td><td class="r">${NF(r.batches)}</td><td class="r">${NF(r.plan)}</td><td class="r">${NF(r.qty)}</td>
+        <td class="r">${pct(r.rate, 90)}</td><td class="r"><b>${r.per_batch == null ? "—" : NF(Math.round(r.per_batch))}</b></td>
+        <td class="r">${r.std_yield ? NF(Math.round(r.std_yield)) : '<span class="auto">기준 없음</span>'}</td>
+        <td class="r">${r.vs_std == null ? "—" : `<span style="color:${r.vs_std < -5 ? "var(--crit)" : "inherit"}">${r.vs_std > 0 ? "+" : ""}${r.vs_std}%</span>`}</td>
+        <td class="r">${r.defect ? NF(r.defect) : ""}</td></tr>${sub}`;
+    }).join("") || `<tr><td colspan="10" class="auto">이 기간 생산 기록이 없습니다</td></tr>`}</tbody></table></div>`;
+}
+$("qyBody").addEventListener("click", e => {
+  const tr = e.target.closest("tr[data-qyp]"); if (!tr) return;
+  const id = +tr.dataset.qyp; QY.open.has(id) ? QY.open.delete(id) : QY.open.add(id); renderBatchYield();
+});
+
 /* ── 로그인 / 부팅 ───────────────────── */
 function showLogin(msg) {
   $("loginOverlay").style.display = "flex";
@@ -11159,7 +11483,8 @@ async function startApp(me) {
   { const sr = $("navSalesRep"); if (sr) sr.style.display = canM("ship_amt") ? "" : "none"; }   // 매출 통계 — 출고 금액 권한
   { const pc = $("navPCard"); if (pc) pc.style.display = canM("ship_amt") ? "" : "none"; }   // 거래처 원장 — 출고 금액 권한
   { const pr = $("navPurchRep"); if (pr) pr.style.display = canM("mat_amt") ? "" : "none"; }   // 매입 통계 — 자재 금액 권한
-  { const pl = $("navPnl"); if (pl) pl.style.display = canM("ship_amt") ? "" : "none"; }   // 손익 요약 — 출고 금액 권한
+  { const pl = $("navPnl"); if (pl) pl.style.display = canM("ship_amt") ? "" : "none"; }
+  { const qn = $("navQuote"); if (qn) qn.style.display = canM("cost") ? "" : "none"; }   // 견적 계산 — 원가 권한   // 손익 요약 — 출고 금액 권한
   api("/api/mysign").then(s => { MYSIGN.img = s.img || ""; }).catch(() => { });   // 내 사인 (발주서 서명란)
   $("dbStatus").innerHTML = `🟢 제품 ${M.product.length} · 자재 ${M.raw.length + M.sub.length}`;
   // 권한 실시간 반영: admin이 권한을 바꾸면(서버 세션은 즉시 교체됨) 화면도 20초 내 자동 새로고침

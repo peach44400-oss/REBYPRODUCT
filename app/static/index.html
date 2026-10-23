@@ -679,6 +679,12 @@
     border:0; border-radius:999px; padding:12px 22px; font-size:14px; font-weight:800;
     box-shadow:0 8px 22px rgba(0,0,0,.30); cursor:pointer; white-space:nowrap;}
   .save-fab:hover{filter:brightness(1.15);}
+  /* 견적 계산 — 왼쪽 입력, 오른쪽 결과(스크롤 따라옴) */
+  .qt-grid{display:grid; grid-template-columns:minmax(0,1.4fr) minmax(320px,1fr); gap:14px; align-items:start;}
+  .qt-sticky{position:sticky; top:70px;}
+  .qt-f{display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:8px 14px;}
+  .qt-f label{font-size:12px; color:var(--muted); display:flex; flex-direction:column; gap:3px;}
+  @media (max-width:1100px){ .qt-grid{grid-template-columns:minmax(0,1fr);} .qt-sticky{position:static;} }
   /* AI에게 묻기 — 오른쪽 아래 고정 버튼 (저장 버튼 아래) */
   .ai-fab{position:fixed; right:22px; bottom:22px; z-index:1140; background:linear-gradient(135deg,#1f5fd6,#7b3fe4); color:#fff;
     border:0; border-radius:999px; padding:10px 18px; font-size:13.5px; font-weight:800; cursor:pointer;
@@ -876,6 +882,10 @@
       <button data-scr="pnl" id="navPnl" title="손익 요약 — 매출 − 매입 − 노무 = 간이 이익(월별)">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2.5 2.5v11h11" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M5 10l2.5-3 2 1.5L13 4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
         <em>손익 요약</em>
+      </button>
+      <button data-scr="quote" id="navQuote" style="display:none;" title="견적 계산 — 신제품 계약 단가 산정 · 배합 실적(1배합 실제 생산 개수) 분석">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="3" y="2" width="10" height="12" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M5.5 5h5M5.5 8h1M8.5 8h1M5.5 10.5h1M8.5 10.5h2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        <em>견적 계산</em>
       </button>
       <button data-scr="ana">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2.5 12.5 6 8l3 2.5 4.5-6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="13.5" cy="4.5" r="1.3" fill="currentColor"/></svg>
@@ -1196,6 +1206,79 @@
     </section>
 
     <!-- 손익 요약 -->
+    <!-- 견적 계산 (신제품 계약 단가) · 배합 실적 분석 — 원가 권한 -->
+    <section class="screen" id="scr-quote">
+      <div class="card" style="padding-bottom:10px;">
+        <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+          <div class="tabs" id="qtTabs" style="border-bottom:0; margin-bottom:0;">
+            <button class="on" data-qt="calc">견적 계산</button>
+            <button data-qt="yield">배합 실적 분석</button>
+          </div>
+          <span class="spacer"></span>
+          <div id="qtCalcBar" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+            <select id="qtList" class="mini-input" style="min-width:200px; text-align:left;" title="저장된 견적 불러오기"></select>
+            <button class="btn sm" id="qtNew">＋ 새 견적</button>
+            <button class="btn sm primary" id="qtSave">💾 저장</button>
+            <button class="btn ghost sm" id="qtDel" style="color:var(--crit);">삭제</button>
+          </div>
+        </div>
+      </div>
+      <div id="qtCalc">
+        <div class="card" style="padding:10px 16px;">
+          <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; font-size:13px;">
+            <label>견적 이름 <input id="qtName" class="mini-input" style="width:220px; text-align:left;" placeholder="예: OO마트 · 크림치즈 도넛"></label>
+            <label>거래처 <input id="qtPartner" class="mini-input" list="qtPartnerDl" style="width:180px; text-align:left;" placeholder="거래처 (선택)"></label>
+            <datalist id="qtPartnerDl"></datalist>
+            <span class="auto" id="qtMeta"></span>
+          </div>
+        </div>
+        <div class="qt-grid">
+          <div>
+            <div class="card">
+              <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                <h2 style="margin:0;">① 레시피 (1배합 기준)</h2><span class="spacer"></span>
+                <select id="qtFromProd" class="mini-input" style="min-width:200px; text-align:left;"><option value="">기존 제품 배합 불러오기…</option></select>
+                <button class="btn sm" id="qtLoadBom">불러오기</button>
+                <button class="btn ghost sm" id="qtAddBlock">＋ 블록</button>
+              </div>
+              <p class="hint" style="margin:6px 0 8px;">반죽·토핑처럼 1배합 생산 개수가 다르면 블록을 나눕니다. 단가는 최근 입고 단가가 자동으로 들어가고, 고쳐 쓸 수 있습니다. 목록에 없는 재료는 이름만 쓰고 단가를 직접 넣으세요.</p>
+              <div id="qtBlocks"></div>
+              <div style="display:flex; align-items:center; gap:8px; margin-top:8px; font-size:13px;">
+                <label>로스율 (불량·폐기·반죽 손실) <input id="qtLoss" class="mini-input num" style="width:70px;" inputmode="decimal"> %</label>
+              </div>
+            </div>
+            <div class="card">
+              <div style="display:flex; align-items:center; gap:8px;"><h2 style="margin:0;">② 포장</h2><span class="spacer"></span><button class="btn ghost sm" id="qtAddPack">＋ 포장재</button></div>
+              <p class="hint" style="margin:6px 0 8px;">트레이·필름은 1개당 1, 박스는 입수(예: 30)를 넣으면 개당 금액이 계산됩니다.</p>
+              <div id="qtPacks"></div>
+            </div>
+            <div class="card">
+              <h2 style="margin:0 0 8px;">③ 생산 · ④ 물류 · 계약</h2>
+              <div class="qt-f" id="qtFields"></div>
+              <div id="qtRateHint" class="hint" style="margin-top:8px;"></div>
+            </div>
+          </div>
+          <div>
+            <div class="card qt-sticky" id="qtResult"></div>
+          </div>
+        </div>
+      </div>
+      <div id="qtYield" style="display:none;">
+        <div class="card">
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+            <input type="date" id="qyFrom" class="inp sm"> ~ <input type="date" id="qyTo" class="inp sm">
+            <button class="btn ghost sm" data-qyr="month">이번 달</button>
+            <button class="btn ghost sm" data-qyr="prev">전월</button>
+            <button class="btn ghost sm" data-qyr="3m">최근 3개월</button>
+            <span class="spacer"></span>
+            <input class="mini-input" id="qyFilter" placeholder="🔍 제품 검색" style="width:180px; text-align:left;">
+          </div>
+          <p class="hint" style="margin:0 0 8px;">생산실적의 배합 수·계획·생산량으로 계산합니다. <b>1배합 실제</b> = 배합 수를 넣은 날의 생산량 ÷ 배합 수, <b>기준</b> = 제품 기준정보의 1배합당 생산수량. 줄을 누르면 날짜별로 펼칩니다.</p>
+          <div id="qyBody"></div>
+        </div>
+      </div>
+    </section>
+
     <section class="screen" id="scr-pnl">
       <div class="card">
         <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">

@@ -385,6 +385,17 @@ CREATE TABLE IF NOT EXISTS ai_log (
   error TEXT DEFAULT '',
   model TEXT DEFAULT ''
 );
+-- 견적 계산 (신제품 계약 단가) — 화면 입력값 전체를 JSON으로 저장, 이름·거래처로 찾기
+CREATE TABLE IF NOT EXISTS quote (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  partner TEXT DEFAULT '',
+  data TEXT DEFAULT '{}',
+  created_at TEXT DEFAULT (datetime('now','localtime')),
+  created_by TEXT DEFAULT '',
+  updated_at TEXT DEFAULT '',
+  updated_by TEXT DEFAULT ''
+);
 -- AI 자주 쓰는 질문 (사용자별 ☆)
 CREATE TABLE IF NOT EXISTS ai_fav (
   id INTEGER PRIMARY KEY,
