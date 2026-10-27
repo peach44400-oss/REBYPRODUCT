@@ -100,7 +100,7 @@ async function reloadMaster(t) {
 }
 
 /* ── 네비게이션 ─────────────────────── */
-const TITLES = { dash: "대시보드", prod: "생산 현황", workorder: "작업지시서", ship: "출고 현황", invoice: "거래명세서", recv: "미수금", salesrep: "매출 통계", pcard: "거래처 원장", postat: "발주 현황", purchrep: "매입 통계", salesorder: "수주 관리", entry: "일일 입력", lot: "LOT 관리", matstat: "자재 현황", sched: "출고 스케줄", prodsched: "생산 스케줄", items: "기준정보 관리", ana: "분석", lookup: "기록 조회", memos: "특이사항", staff: "인원 관리", pnl: "손익 요약", quote: "견적 계산" };
+const TITLES = { dash: "대시보드", prod: "생산 현황", workorder: "작업지시서", ship: "출고 현황", invoice: "거래명세서", recv: "미수금", salesrep: "매출 통계", pcard: "거래처 원장", postat: "발주 현황", purchrep: "매입 통계", salesorder: "수주 관리", entry: "일일 입력", lot: "LOT 관리", matstat: "자재 현황", sched: "출고 스케줄", prodsched: "생산 스케줄", items: "기준정보 관리", ana: "분석", lookup: "기록 조회", memos: "특이사항", staff: "인원 관리", pnl: "손익 요약", quote: "견적 계산", pallet: "파렛트 관리" };
 /* 표 검색(필터)은 화면·탭을 옮기면 초기화한다.
    남아 있으면 다른 화면에서 '등록된 항목이 없습니다'만 보여 데이터가 없는 것처럼 오해하게 된다.
    ※ 행 추가용 검색(qaProd 등)은 필터가 아니라 입력칸이므로 대상 아님. */
@@ -143,7 +143,7 @@ $("nav").addEventListener("click", e => {
   $("scrTitle").textContent = TITLES[b.dataset.scr];
   resetSearches();
   const fn = { dash: loadDash, prod: loadProd, ship: loadShip, entry: openEntry, lot: loadLot, items: renderMasters, ana: loadAna, lookup: () => lkCal.render(),
-    postat: loadPoStat, memos: loadMemos, matstat: loadMatStatus, sched: () => { SCHED.kind = "ship"; _schedApplyKindUI(); loadSchedule(); }, prodsched: () => loadProdSched(), invoice: loadInvoice, recv: loadReceivables, salesorder: loadSalesOrders, pcard: loadPCard, pnl: loadPnl, quote: loadQuote, workorder: loadWorkorder, salesrep: loadSalesRep, purchrep: loadPurchRep,
+    postat: loadPoStat, memos: loadMemos, matstat: loadMatStatus, sched: () => { SCHED.kind = "ship"; _schedApplyKindUI(); loadSchedule(); }, prodsched: () => loadProdSched(), invoice: loadInvoice, recv: loadReceivables, salesorder: loadSalesOrders, pcard: loadPCard, pnl: loadPnl, quote: loadQuote, pallet: loadPallet, workorder: loadWorkorder, salesrep: loadSalesRep, purchrep: loadPurchRep,
     staff: () => { STAFF.mode = "d"; STAFF.date = todayISO();   // 진입 시 항상 일별·오늘로 초기화
       document.querySelectorAll("#staffTabs button").forEach(x => x.classList.toggle("on", x.dataset.sh === "d"));
       loadStaff(); } }[b.dataset.scr];
@@ -11437,6 +11437,107 @@ $("qyBody").addEventListener("click", e => {
   const tr = e.target.closest("tr[data-qyp]"); if (!tr) return;
   const id = +tr.dataset.qyp; QY.open.has(id) ? QY.open.delete(id) : QY.open.add(id); renderBatchYield();
 });
+
+/* ══ 파렛트 관리 — 완제품과 함께 나간 파렛트를 거래처별로 기록 (원부자재 재고와 분리) ══ */
+const PL = { d: null, editId: null };
+function plSetRange(k) {
+  const t = new Date(), y = t.getFullYear(), m = t.getMonth(), off = (t.getDay() + 6) % 7;
+  let a, b;
+  if (k === "month") { a = new Date(y, m, 1); b = new Date(y, m + 1, 0); }
+  else if (k === "prevmonth") { a = new Date(y, m - 1, 1); b = new Date(y, m, 0); }
+  else { a = new Date(t); a.setDate(t.getDate() - off - (k === "prevweek" ? 7 : 0)); b = new Date(a); b.setDate(a.getDate() + 6); }
+  $("plFrom").value = fmtISO(a); $("plTo").value = fmtISO(b);
+}
+async function loadPallet() {
+  if (!$("plFrom").value) plSetRange("month");
+  if (!$("plDate").value) $("plDate").value = todayISO();
+  $("plPartnerDl").innerHTML = (M.partner || []).filter(p => p.status !== "중지").map(p => `<option value="${esc(p.name)}">`).join("");
+  $("plFormCard").style.display = ROLE === "guest" ? "none" : "";
+  try { PL.d = await api(`/api/pallets?frm=${$("plFrom").value}&to=${$("plTo").value}`); } catch (e) { return; }
+  const cur = $("plType").value;
+  $("plType").innerHTML = PL.d.types.length
+    ? PL.d.types.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join("")
+    : `<option value="">파렛트 부재료가 없습니다 — 기준정보 > 부재료에 등록</option>`;
+  if (cur && PL.d.types.some(t => String(t.id) === cur)) $("plType").value = cur;
+  renderPallet();
+}
+function renderPallet() {
+  const d = PL.d; if (!d) return;
+  const types = d.types, byType = {}, byP = {};
+  let total = 0;
+  d.moves.forEach(mv => {
+    total += mv.qty;
+    byType[mv.type_name] = (byType[mv.type_name] || 0) + mv.qty;
+    const p = byP[mv.partner] = byP[mv.partner] || { partner: mv.partner, total: 0, t: {}, days: new Set() };
+    p.total += mv.qty; p.t[mv.material_id] = (p.t[mv.material_id] || 0) + mv.qty; p.days.add(mv.date);
+  });
+  $("plKpis").innerHTML = [["기간 출고", NF(total) + "개"], ...Object.entries(byType).map(([k, v]) => [k, NF(v) + "개"])]
+    .map(([t, v]) => `<span class="pchip num">${esc(t)} <b style="margin-left:4px">${v}</b></span>`).join("");
+  // 출고 거래처 칩 — 입력 날짜의 완제품 출고 거래처를 누르면 거래처 칸에 들어감
+  const dsel = $("plDate").value, shipDay = d.ship.filter(s => s.date === dsel && s.partner);
+  $("plShipChips").innerHTML = shipDay.length
+    ? `<span class="auto">${esc(dsel)} 완제품 출고 거래처:</span>` + shipDay.map(s => `<button class="chip" data-plpick="${esc(s.partner)}" style="cursor:pointer;">${esc(s.partner)} · ${NF(s.qty)}개</button>`).join("")
+    : `<span class="auto">${esc(dsel || "")} 완제품 출고 기록이 없습니다 (거래처를 직접 입력하세요)</span>`;
+  const usedTypes = types.filter(t => Object.values(byP).some(p => p.t[t.id]));
+  const prow = Object.values(byP).sort((a, b) => b.total - a.total);
+  $("plByPartner").innerHTML = prow.length ? `<div class="tbl-wrap"><table style="font-size:13px;"><thead><tr><th>거래처</th>${usedTypes.map(t => `<th class="r">${esc(t.name)}</th>`).join("")}<th class="r">합계</th><th class="r">출고일 수</th></tr></thead>
+    <tbody class="num">${prow.map(p => `<tr><td><b>${esc(p.partner)}</b></td>${usedTypes.map(t => `<td class="r">${p.t[t.id] ? NF(p.t[t.id]) : ""}</td>`).join("")}<td class="r"><b>${NF(p.total)}</b></td><td class="r">${p.days.size}</td></tr>`).join("")}
+    <tr style="background:var(--bg); font-weight:700;"><td>합계</td>${usedTypes.map(t => `<td class="r">${NF(prow.reduce((a, p) => a + (p.t[t.id] || 0), 0))}</td>`).join("")}<td class="r">${NF(total)}</td><td></td></tr></tbody></table></div>`
+    : `<div class="auto">이 기간 파렛트 출고 기록이 없습니다</div>`;
+  const canW = ROLE !== "guest";
+  $("plList").innerHTML = d.moves.length ? `<div class="tbl-wrap"><table style="font-size:12.5px;"><thead><tr><th>날짜</th><th>파렛트 종류</th><th>거래처</th><th class="r">수량</th><th>비고</th><th>입력</th><th></th></tr></thead>
+    <tbody class="num">${d.moves.map(mv => `<tr><td>${esc(mv.date)} (${dowOf(mv.date)})</td><td>${esc(mv.type_name)}</td><td><b>${esc(mv.partner)}</b></td><td class="r">${NF(mv.qty)}</td>
+      <td class="auto">${esc(mv.note || "")}</td><td class="auto">${esc(mv.created_by || "")}</td>
+      <td style="white-space:nowrap;">${canW ? `<button class="btn ghost sm" data-pledit="${mv.id}">수정</button> <button class="btn ghost sm" data-pldel="${mv.id}" style="color:var(--crit);">삭제</button>` : ""}</td></tr>`).join("")}</tbody></table></div>`
+    : `<div class="auto">기록이 없습니다</div>`;
+}
+document.querySelectorAll("[data-plr]").forEach(b => b.onclick = () => { plSetRange(b.dataset.plr); loadPallet(); });
+["plFrom", "plTo"].forEach(k => $(k).addEventListener("change", loadPallet));
+$("plDate").addEventListener("change", renderPallet);
+$("plShipChips").addEventListener("click", e => { const b = e.target.closest("[data-plpick]"); if (b) { $("plPartner").value = b.dataset.plpick; $("plQty").focus(); } });
+function plResetForm() {
+  PL.editId = null; $("plQty").value = ""; $("plNote").value = "";
+  $("plAdd").textContent = "＋ 추가"; $("plCancelEdit").style.display = "none";
+}
+$("plCancelEdit").onclick = plResetForm;
+$("plAdd").onclick = async () => {
+  const pname = $("plPartner").value.trim(), pa = (M.partner || []).find(p => p.name === pname);
+  const body = { id: PL.editId || undefined, date: $("plDate").value || todayISO(), material_id: +$("plType").value || null,
+    partner_id: pa ? pa.id : null, partner_name: pa ? "" : pname, qty: $("plQty").value, note: $("plNote").value };
+  try {
+    await api("/api/pallets", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    toast(PL.editId ? "수정했습니다" : `🪵 ${pname || "거래처"} 파렛트 ${$("plQty").value}개 출고 기록`);
+    plResetForm();
+    const dd = body.date;
+    if (dd < $("plFrom").value || dd > $("plTo").value) { $("plFrom").value = dd.slice(0, 8) + "01"; $("plTo").value = dd; }
+    loadPallet();
+  } catch (e) { }
+};
+$("plQty").addEventListener("keydown", e => { if (e.key === "Enter") $("plAdd").click(); });
+$("plList").addEventListener("click", async e => {
+  const ed = e.target.closest("[data-pledit]");
+  if (ed) {
+    const mv = PL.d.moves.find(x => x.id === +ed.dataset.pledit); if (!mv) return;
+    PL.editId = mv.id; $("plDate").value = mv.date; $("plType").value = mv.material_id; $("plPartner").value = mv.partner === "거래처 미지정" ? "" : mv.partner;
+    $("plQty").value = mv.qty; $("plNote").value = mv.note || "";
+    $("plAdd").textContent = "💾 수정 저장"; $("plCancelEdit").style.display = "";
+    $("plFormCard").scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
+  const del = e.target.closest("[data-pldel]");
+  if (del && confirm("이 파렛트 출고 기록을 삭제할까요?")) {
+    try { await api("/api/pallets/" + del.dataset.pldel, { method: "DELETE" }); loadPallet(); } catch (err) { }
+  }
+});
+$("plCsv").onclick = () => {
+  const d = PL.d; if (!d || !d.moves.length) return toast("내보낼 기록이 없습니다");
+  const cell = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const lines = [["날짜", "파렛트 종류", "거래처", "수량", "비고", "입력"].map(cell).join(",")]
+    .concat(d.moves.slice().reverse().map(mv => [mv.date, mv.type_name, mv.partner, mv.qty, mv.note || "", mv.created_by || ""].map(cell).join(",")));
+  const blob = new Blob(["﻿" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+  a.download = csvName("파렛트출고", d.from + "_" + d.to); a.click(); URL.revokeObjectURL(a.href);
+};
 
 /* ── 로그인 / 부팅 ───────────────────── */
 function showLogin(msg) {

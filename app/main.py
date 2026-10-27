@@ -42,7 +42,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.116.1"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.117.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -8560,6 +8560,87 @@ def batch_yield(request: Request, frm: str = "", to: str = ""):
             out.append(d)
         out.sort(key=lambda x: -x["qty"])
         return {"from": frm, "to": to, "rows": out}
+    finally:
+        con.close()
+
+
+# ── 파렛트 관리 — 완제품과 함께 나간 파렛트(AJ·KPP 등)를 거래처별로 기록 ─────────────
+# 원부자재 재고·수불부와는 분리된 별도 장부(pallet_move) — 기존 재고 계산에 영향 없음.
+# 지금은 '출고'만 기록(kind='out'). 렌탈 회수·교환 방식이 정해지면 kind='in'으로 회수를 추가할 수 있게 구조만 열어 둠.
+def _pallet_types(con):
+    """파렛트 종류 = 이름에 파렛트/파레트/팔레트/PLT가 들어간 부재료.
+    상태 '중단'도 포함 — 생산 사용 목록에서 숨기려고 중단으로 둔 파렛트가 있음(AJ·KPP)."""
+    return rows(con.execute("""SELECT id, name, COALESCE(code,'') code FROM material
+        WHERE kind='sub'
+          AND (name LIKE '%파렛트%' OR name LIKE '%파레트%' OR name LIKE '%팔레트%' OR UPPER(name) LIKE '%PLT%')
+        ORDER BY sort, name"""))
+
+
+@app.get("/api/pallets")
+def pallets_get(request: Request, frm: str = "", to: str = ""):
+    today = dt.date.today()
+    frm = frm or today.replace(day=1).isoformat()
+    to = to or today.isoformat()
+    con = connect()
+    try:
+        moves = rows(con.execute("""SELECT pm.*, COALESCE(m.name,'(삭제된 종류)') type_name,
+                COALESCE(pa.name, NULLIF(pm.partner_name,''), '거래처 미지정') partner
+            FROM pallet_move pm LEFT JOIN material m ON m.id=pm.material_id LEFT JOIN partner pa ON pa.id=pm.partner_id
+            WHERE pm.date BETWEEN ? AND ? ORDER BY pm.date DESC, pm.id DESC""", (frm, to)))
+        # 그 기간 완제품 출고 거래처 — 입력할 때 거래처를 빨리 고르게 (날짜별)
+        ship = rows(con.execute("""SELECT s.date, s.partner_id, COALESCE(pa.name,'') partner, SUM(s.qty) qty
+            FROM shipment s LEFT JOIN partner pa ON pa.id=s.partner_id
+            WHERE s.date BETWEEN ? AND ? AND s.qty>0 GROUP BY s.date, s.partner_id ORDER BY s.date DESC""", (frm, to)))
+        return {"from": frm, "to": to, "types": _pallet_types(con), "moves": moves, "ship": ship}
+    finally:
+        con.close()
+
+
+@app.post("/api/pallets")
+def pallets_add(request: Request, body: dict):
+    _require_writer(request)
+    try:
+        qty = float(str(body.get("qty") or 0).replace(",", ""))
+    except ValueError:
+        qty = 0
+    if qty <= 0:
+        raise HTTPException(400, "파렛트 수량을 입력해주세요")
+    mid = body.get("material_id")
+    pid = body.get("partner_id") or None
+    pname = (body.get("partner_name") or "").strip()[:100]
+    if not mid:
+        raise HTTPException(400, "파렛트 종류를 고르세요")
+    if not pid and not pname:
+        raise HTTPException(400, "거래처를 입력해주세요")
+    date = (body.get("date") or "").strip() or dt.date.today().isoformat()
+    con = connect()
+    try:
+        if not con.execute("SELECT 1 FROM material WHERE id=?", (mid,)).fetchone():
+            raise HTTPException(400, "파렛트 종류를 찾을 수 없습니다")
+        user = request.state.user.get("username", "")
+        if body.get("id"):
+            con.execute("""UPDATE pallet_move SET date=?, material_id=?, partner_id=?, partner_name=?, qty=?, note=?
+                WHERE id=?""", (date, mid, pid, pname, qty, (body.get("note") or "").strip()[:200], body["id"]))
+            new_id = body["id"]
+        else:
+            new_id = con.execute("""INSERT INTO pallet_move(date, kind, material_id, partner_id, partner_name, qty, note, created_by)
+                VALUES(?, 'out', ?, ?, ?, ?, ?, ?)""", (date, mid, pid, pname, qty, (body.get("note") or "").strip()[:200], user)).lastrowid
+        audit(con, "pallet", f"파렛트 출고 {date} · {qty:g}개 (기록 #{new_id})")
+        con.commit()
+        return {"ok": True, "id": new_id}
+    finally:
+        con.close()
+
+
+@app.delete("/api/pallets/{mid}")
+def pallets_del(request: Request, mid: int):
+    _require_writer(request)
+    con = connect()
+    try:
+        con.execute("DELETE FROM pallet_move WHERE id=?", (mid,))
+        audit(con, "pallet", f"파렛트 출고 기록 #{mid} 삭제")
+        con.commit()
+        return {"ok": True}
     finally:
         con.close()
 

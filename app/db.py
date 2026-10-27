@@ -396,6 +396,20 @@ CREATE TABLE IF NOT EXISTS quote (
   updated_at TEXT DEFAULT '',
   updated_by TEXT DEFAULT ''
 );
+-- 파렛트 관리 — 완제품과 함께 나간 파렛트를 거래처별로 기록 (원부자재 재고와 분리된 장부)
+CREATE TABLE IF NOT EXISTS pallet_move (
+  id INTEGER PRIMARY KEY,
+  date TEXT NOT NULL,
+  kind TEXT DEFAULT 'out',             -- out=출고 (회수 in은 운용 방식 확정 후 추가)
+  material_id INTEGER,                 -- 파렛트 종류 = 부재료 (이름에 '파렛트' 포함)
+  partner_id INTEGER,
+  partner_name TEXT DEFAULT '',
+  qty REAL DEFAULT 0,
+  note TEXT DEFAULT '',
+  created_at TEXT DEFAULT (datetime('now','localtime')),
+  created_by TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_pallet_date ON pallet_move(date);
 -- AI 자주 쓰는 질문 (사용자별 ☆)
 CREATE TABLE IF NOT EXISTS ai_fav (
   id INTEGER PRIMARY KEY,
