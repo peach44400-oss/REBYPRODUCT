@@ -1104,7 +1104,7 @@
       </div>
       <div class="card" id="plFormCard">
         <h2 style="margin:0 0 4px;">🪵 파렛트 출고 입력</h2>
-        <p class="hint" style="margin:0 0 10px;">완제품과 함께 나간 파렛트를 거래처별로 적습니다. 저장하면 그 파렛트(부재료) 재고에서 빠지고, 삭제하면 되돌아갑니다. 파렛트 입고는 일일 입력 > 원부자재 입고에서 하세요. 파렛트 종류는 기준정보 부재료 중 이름에 '파렛트'가 들어간 것이 나옵니다.</p>
+        <p class="hint" style="margin:0 0 10px;">완제품과 함께 나간 파렛트를 거래처별로 적습니다. 저장하면 그 파렛트(부재료) 재고에서 빠지고, 삭제하면 되돌아갑니다. 파렛트 입고는 일일 입력 > 원부자재 입고에서 하세요. 일일 입력 > 완제품 출고 행의 '파렛트' 칸에 넣어도 여기에 자동으로 기록됩니다. 파렛트 종류는 기준정보 부재료 중 이름에 '파렛트'가 들어간 것이 나옵니다.</p>
         <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; font-size:13px;">
           <label style="display:flex; flex-direction:column; gap:3px;">날짜 <input type="date" id="plDate" class="inp sm"></label>
           <label style="display:flex; flex-direction:column; gap:3px;">파렛트 종류 <select id="plType" class="mini-input" style="min-width:200px; text-align:left;"></select></label>
@@ -1508,7 +1508,7 @@
           <div class="card" data-esec="prod">
             <h2>완제품 출고</h2>
             <div class="tbl-wrap"><table>
-              <thead><tr><th>제품명</th><th>생산일자 (재고 LOT)</th><th>거래처</th><th class="r">출고량</th><th></th></tr></thead>
+              <thead><tr><th>제품명</th><th>생산일자 (재고 LOT)</th><th>거래처</th><th title="이 출고와 함께 나간 파렛트 — 저장하면 파렛트 관리에 기록되고 파렛트 재고에서 빠집니다">파렛트</th><th class="r">출고량</th><th></th></tr></thead>
               <tbody class="num" id="eShip"></tbody>
             </table></div>
             <div class="draft-foot"><button class="btn sm" id="addShip">+ 출고 행 추가</button>

@@ -407,7 +407,8 @@ CREATE TABLE IF NOT EXISTS pallet_move (
   qty REAL DEFAULT 0,
   note TEXT DEFAULT '',
   created_at TEXT DEFAULT (datetime('now','localtime')),
-  created_by TEXT DEFAULT ''
+  created_by TEXT DEFAULT '',
+  src TEXT DEFAULT ''                  -- ''=파렛트 관리에서 입력 / 'ship'=일일 입력 완제품 출고 행에서 자동 (그 화면에서만 수정)
 );
 CREATE INDEX IF NOT EXISTS idx_pallet_date ON pallet_move(date);
 -- AI 자주 쓰는 질문 (사용자별 ☆)
@@ -890,6 +891,14 @@ def init_db() -> None:
     # (0이면 스냅샷 없음 = 기존 행 → 계산 시 현재 제품 단가로 폴백)
     if "unit_price" not in [r[1] for r in con.execute("PRAGMA table_info(shipment)")]:
         con.execute("ALTER TABLE shipment ADD COLUMN unit_price REAL DEFAULT 0")
+    # 출고 행의 파렛트 (종류=부재료 id, 수량) — 저장 시 pallet_move(src='ship')로 기록돼 파렛트 재고 차감
+    scols = [r[1] for r in con.execute("PRAGMA table_info(shipment)")]
+    if "pallet_qty" not in scols:
+        con.execute("ALTER TABLE shipment ADD COLUMN pallet_qty REAL DEFAULT 0")
+    if "pallet_mid" not in scols:
+        con.execute("ALTER TABLE shipment ADD COLUMN pallet_mid INTEGER")
+    if "src" not in [r[1] for r in con.execute("PRAGMA table_info(pallet_move)")]:
+        con.execute("ALTER TABLE pallet_move ADD COLUMN src TEXT DEFAULT ''")
     # 입고 없는 재고의 제조일자 수동 입력 — material_expiry에 made 컬럼 보강
     if "made" not in [r[1] for r in con.execute("PRAGMA table_info(material_expiry)")]:
         con.execute("ALTER TABLE material_expiry ADD COLUMN made TEXT DEFAULT ''")

@@ -42,7 +42,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.118.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.119.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -6575,20 +6575,42 @@ def day_save(request: Request, date: str, body: dict):
                     raise HTTPException(400, f"'{nm['name'] if nm else pid_}' 출고량 {qsum:,.0f}개가 "
                                         f"가용 재고 {float(avail):,.0f}개를 초과합니다")
             con.execute("DELETE FROM shipment WHERE date=?", (date,))
+            # 출고 행에서 넣은 파렛트(src='ship')는 출고 저장 때마다 다시 만든다 — 옛 기록은 지우고 재고 되돌림
+            old_pl = [(r["id"], r["material_id"], r["date"]) for r in con.execute(
+                "SELECT id, material_id, date FROM pallet_move WHERE date=? AND src='ship'", (date,))]
+            con.execute("DELETE FROM pallet_move WHERE date=? AND src='ship'", (date,))
+            new_pl = []
             for r in body.get("shipment", []):
                 if not r.get("product_id") or not r.get("qty"):
                     continue
+                try:
+                    pq = float(str(r.get("pallet_qty") or 0).replace(",", ""))
+                except ValueError:
+                    pq = 0
+                if pq < 0:
+                    raise HTTPException(400, "파렛트 수량에 음수는 저장할 수 없습니다")
+                pmid = r.get("pallet_mid") or None
+                if pq > 0 and not pmid:
+                    raise HTTPException(400, "출고 행의 파렛트 종류를 골라주세요")
+                if pq > 0:
+                    new_pl.append(con.execute("""INSERT INTO pallet_move(date, kind, material_id, partner_id, qty, note, created_by, src)
+                        VALUES(?, 'out', ?, ?, ?, '', ?, 'ship')""",
+                        (date, pmid, r.get("partner_id"), pq, request.state.user.get("username", ""))).lastrowid)
                 # 판매 단가 스냅샷: 거래처별 단가 > 제품 기본 단가.
                 # 저장 시점 값을 박아두어 나중에 단가를 바꿔도 과거 출고 금액이 변하지 않는다.
                 price = con.execute("""SELECT COALESCE(
                     (SELECT price FROM product_price WHERE product_id=? AND partner_id=? AND price>0),
                     (SELECT unit_price FROM product WHERE id=?), 0)""",
                     (r["product_id"], r.get("partner_id"), r["product_id"])).fetchone()[0]
-                con.execute("INSERT INTO shipment(date,product_id,partner_id,qty,prod_date,expiry,lot_no,unit_price)"
-                            " VALUES(?,?,?,?,?,?,?,?)",
+                con.execute("INSERT INTO shipment(date,product_id,partner_id,qty,prod_date,expiry,lot_no,unit_price,pallet_qty,pallet_mid)"
+                            " VALUES(?,?,?,?,?,?,?,?,?,?)",
                             (date, r["product_id"], r.get("partner_id"), float(r["qty"]),
                              r.get("prod_date") or "", r.get("expiry") or "", int(r.get("lot_no") or 0),
-                             float(price or 0)))
+                             float(price or 0), pq, pmid if pq > 0 else None))
+            for pl_id, pl_mid, pl_date in old_pl:
+                _pallet_sync_usage(con, pl_id, (pl_mid, pl_date))
+            for pl_id in new_pl:
+                _pallet_sync_usage(con, pl_id)
         # ── 자재 (입고/실사/사용 — 셋 중 하나라도 오면 재고 자동 반영 재계산) ──
         touch_mat = ("materials" in body) or ("mat_in" in body) or ("usage" in body) or ("semi_mat_prod" in body)
         mid_q = ("SELECT material_id FROM material_daily WHERE date=?"
@@ -8660,7 +8682,9 @@ def pallets_add(request: Request, body: dict):
         user = request.state.user.get("username", "")
         old = None
         if body.get("id"):
-            o = con.execute("SELECT material_id, date FROM pallet_move WHERE id=?", (body["id"],)).fetchone()
+            o = con.execute("SELECT material_id, date, src FROM pallet_move WHERE id=?", (body["id"],)).fetchone()
+            if o and o["src"] == "ship":
+                raise HTTPException(400, "일일 입력 > 완제품 출고에서 넣은 파렛트입니다 — 그 화면에서 수정해주세요")
             old = (o["material_id"], o["date"]) if o else None
             con.execute("""UPDATE pallet_move SET date=?, material_id=?, partner_id=?, partner_name=?, qty=?, note=?
                 WHERE id=?""", (date, mid, pid, pname, qty, (body.get("note") or "").strip()[:200], body["id"]))
@@ -8682,7 +8706,9 @@ def pallets_del(request: Request, mid: int):
     _require_writer(request)
     con = connect()
     try:
-        o = con.execute("SELECT material_id, date FROM pallet_move WHERE id=?", (mid,)).fetchone()
+        o = con.execute("SELECT material_id, date, src FROM pallet_move WHERE id=?", (mid,)).fetchone()
+        if o and o["src"] == "ship":
+            raise HTTPException(400, "일일 입력 > 완제품 출고에서 넣은 파렛트입니다 — 그 화면에서 수정해주세요")
         con.execute("DELETE FROM pallet_move WHERE id=?", (mid,))
         _pallet_sync_usage(con, mid, (o["material_id"], o["date"]) if o else None)   # 차감했던 재고 되돌림
         audit(con, "pallet", f"파렛트 출고 기록 #{mid} 삭제")

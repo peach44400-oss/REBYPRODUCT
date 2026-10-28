@@ -1378,7 +1378,7 @@ async function loadDay(date) {
     prodSplits: JSON.parse(r.prod_splits || "[]").filter(s => Number(s.qty) > 0)
       .map(s => ({ partner_id: s.partner_id, qty: s.qty })),
     expiry: r.expiry || "" }));
-  E.ship = d.shipment.map(r => ({ product_id: r.product_id, partner_id: r.partner_id, qty: r.qty, prod_date: r.prod_date || "", lotExpiry: r.expiry || "", lotNo: r.lot_no || 0 }));
+  E.ship = d.shipment.map(r => ({ product_id: r.product_id, partner_id: r.partner_id, qty: r.qty, prod_date: r.prod_date || "", lotExpiry: r.expiry || "", lotNo: r.lot_no || 0, pallet_qty: r.pallet_qty || "", pallet_mid: r.pallet_mid || null }));
   E.shipBase = {};   // 이 날짜에 이미 저장돼 있던 출고 합 (제품별) — 가용재고 계산에 되더함
   d.shipment.forEach(r => { E.shipBase[r.product_id] = (E.shipBase[r.product_id] || 0) + Number(r.qty || 0); });
   E.shipLots = {};   // 날짜별 출고 가능 LOT 캐시 (제품 선택 시 lazy 로드)
@@ -2535,6 +2535,7 @@ function renderShip() {
     <td>${selHtml(shipProducts(r), r.product_id, "product_id", "name", "", "nm")}</td>
     <td>${shipLotSel(r)}</td>
     <td><select class="mini-sel" data-f="partner_id"><option value="">— 선택 —</option>${partnerOptGroups(r.partner_id)}</select></td>
+    <td style="white-space:nowrap;">${shipPalletCell(r)}</td>
     <td class="r"><input class="mini-input num${over ? " ship-over" : ""}" data-f="qty" value="${r.qty || ""}"
       title="${r.product_id ? "이날 가용 재고 " + NF(avail) + "개" : ""}"></td>
     <td style="white-space:nowrap;">${r.product_id ? `<span class="ship-warn num" style="color:${over ? "var(--crit)" : "#B45309"}; font-size:11px; ${warnTxt ? "" : "display:none"}">${warnTxt}</span> `
@@ -2543,8 +2544,25 @@ function renderShip() {
           ? `<button class="btn ghost sm" data-shipsplit="${i}" title="이 제품의 생산일자(LOT)별 재고를 각각 전량으로 한 번에 추가 — 여러 LOT를 두 번 나눠 넣을 필요 없이 한 번에">LOT별 전량</button> ` : "")
       : ""}<button class="btn ghost sm" data-del>삭제</button></td></tr>`;
   }).join("")
-    || `<tr><td colspan="5" class="auto">+ 출고 행 추가를 누르세요</td></tr>`;
+    || `<tr><td colspan="6" class="auto">+ 출고 행 추가를 누르세요</td></tr>`;
 }
+// 출고 행 파렛트 — 종류(이름에 파렛트가 들어간 부재료, 중단 포함) + 수량. 저장하면 파렛트 관리에 기록·파렛트 재고 차감
+const palletTypes = () => (M.sub || []).filter(m => /파렛트|파레트|팔레트|PLT/i.test(m.name || ""));
+const palletShort = n => (String(n).match(/\(([^)]+)\)/) || [])[1] || n;   // "파렛트(AJ) NA 연두색" → "AJ"
+function shipPalletCell(r) {
+  const pts = palletTypes(); if (!pts.length) return "";
+  if (!pts.some(t => t.id === r.pallet_mid)) {   // 기본 종류 = 마지막에 고른 것 (없으면 첫 번째)
+    let last = null; try { last = +localStorage.getItem("shipPalletMid") || null; } catch (e) { }
+    r.pallet_mid = pts.some(t => t.id === last) ? last : pts[0].id;
+  }
+  return `<select class="mini-sel" data-f="pallet_mid" style="width:70px;" title="파렛트 종류">${pts.map(t =>
+    `<option value="${t.id}"${t.id === r.pallet_mid ? " selected" : ""}>${esc(palletShort(t.name))}</option>`).join("")}</select>
+    <input class="mini-input num" data-f="pallet_qty" value="${r.pallet_qty || ""}" placeholder="개" style="width:52px;"
+      title="이 출고와 함께 나간 파렛트 수 — 저장하면 파렛트 관리에 기록되고 파렛트 재고에서 빠집니다">`;
+}
+$("eShip").addEventListener("input", e => {   // (wireEntryTable보다 먼저 등록 — 그쪽이 표를 다시 그려도 기억되게)
+  if (e.target.dataset.f === "pallet_mid") try { localStorage.setItem("shipPalletMid", e.target.value); } catch (err) { }
+});
 // 출고량 타이핑 시 재고 초과 표시만 제자리 갱신 (표 재렌더 X → 포커스 유지)
 function updateShipWarn() {
   const sum = shipSumByProduct();
@@ -2591,6 +2609,7 @@ $("eShip").addEventListener("click", e => {
   const rows = lots.map(l => ({ product_id: r.product_id, partner_id: partner,
     prod_date: l.made || "", lotExpiry: l.expiry || "", lotNo: l.no || 0,
     qty: Math.round((Number(l.qty) || 0) * 1000) / 1000 }));
+  rows[0].pallet_qty = r.pallet_qty || ""; rows[0].pallet_mid = r.pallet_mid || null;   // 파렛트는 첫 행에 유지 (중복 기록 방지)
   E.ship.splice(idx, 1, ...rows);   // 현재 행을 LOT별 행들로 교체
   renderShip();
   toast(`${lots.length}개 LOT 전량(${NF(lots.reduce((s, l) => s + (Number(l.qty) || 0), 0))}개) 추가됨`);
@@ -3670,14 +3689,14 @@ function _showMatWarnings(list) {
 function buildProdBody() {
   if (!mustDate()) return null;
   const bad = badNumIn(E.prod, ["batches", "plan_qty", "prod_qty", "defect_qty"], "생산실적")
-    || badNumIn(E.ship, ["qty"], "완제품 출고")
+    || badNumIn(E.ship, ["qty", "pallet_qty"], "완제품 출고")
     || badNumIn(E.usage, ["qty"], "자재 사용")
     || badNumIn(E.staff, ["agency_wage", "target_hours", "work_hours"], "인원·가동")
     || badNumIn(E.staff.flatMap(r => (r.members || []).concat(r.agency || [])), ["h"], "인원 투입시간")
     || badNumIn(E.staff.flatMap(r => r.agency || []), ["w"], "용역 시급")
     || negNumIn(E.staff.flatMap(r => r.agency || []), ["h", "w"], "용역 시간·시급")
     || negNumIn(E.prod, ["batches", "plan_qty", "prod_qty", "defect_qty"], "생산실적")
-    || negNumIn(E.ship, ["qty"], "완제품 출고")
+    || negNumIn(E.ship, ["qty", "pallet_qty"], "완제품 출고")
     || negNumIn(E.usage, ["qty"], "자재 사용");
   if (bad) { toast("⚠ " + bad + " — 고친 뒤 저장하세요"); return null; }
   // 불량 > 생산 차단 (양품이 음수가 됨)
@@ -3969,7 +3988,8 @@ function showSaveSum(body, label) {
   const memo = (body.memo || "").trim();
   const rowsHtml = [
     ["🏭 생산실적", `${prod.length}종 · ${NF(prodQty)}개`],
-    ["🚚 완제품 출고", `${ship.length}건 · ${NF(shipQty)}개`],
+    ["🚚 완제품 출고", `${ship.length}건 · ${NF(shipQty)}개`
+      + (ship.some(r => Number(r.pallet_qty) > 0) ? ` · 파렛트 ${NF(ship.reduce((s, r) => s + (Number(r.pallet_qty) || 0), 0))}개` : "")],
     ["🧾 자재 사용", `${usage.length}건`],
     ["👷 인원·가동", `${staff.length}라인`],
     ["📝 특이사항", memo ? "입력됨" : "없음"],
@@ -11490,7 +11510,8 @@ function renderPallet() {
   $("plList").innerHTML = d.moves.length ? `<div class="tbl-wrap"><table style="font-size:12.5px;"><thead><tr><th>날짜</th><th>파렛트 종류</th><th>거래처</th><th class="r">수량</th><th>비고</th><th>입력</th><th></th></tr></thead>
     <tbody class="num">${d.moves.map(mv => `<tr><td>${esc(mv.date)} (${dowOf(mv.date)})</td><td>${esc(mv.type_name)}</td><td><b>${esc(mv.partner)}</b></td><td class="r">${NF(mv.qty)}</td>
       <td class="auto">${esc(mv.note || "")}</td><td class="auto">${esc(mv.created_by || "")}</td>
-      <td style="white-space:nowrap;">${canW ? `<button class="btn ghost sm" data-pledit="${mv.id}">수정</button> <button class="btn ghost sm" data-pldel="${mv.id}" style="color:var(--crit);">삭제</button>` : ""}</td></tr>`).join("")}</tbody></table></div>`
+      <td style="white-space:nowrap;">${mv.src === "ship" ? `<span class="auto" title="일일 입력 > 완제품 출고 행에서 넣은 파렛트 — 그 화면에서 수정">일일 입력 출고</span>`
+        : canW ? `<button class="btn ghost sm" data-pledit="${mv.id}">수정</button> <button class="btn ghost sm" data-pldel="${mv.id}" style="color:var(--crit);">삭제</button>` : ""}</td></tr>`).join("")}</tbody></table></div>`
     : `<div class="auto">기록이 없습니다</div>`;
 }
 document.querySelectorAll("[data-plr]").forEach(b => b.onclick = () => { plSetRange(b.dataset.plr); loadPallet(); });
