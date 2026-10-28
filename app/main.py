@@ -42,7 +42,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.117.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.118.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -3149,12 +3149,14 @@ def _recalc_mat_day(con, mid, rdate, drop_empty=False):
                            (rdate, mid)).fetchone()["q"]
     used = con.execute("SELECT COALESCE(SUM(qty),0) q FROM material_usage WHERE date=? AND material_id=?",
                        (rdate, mid)).fetchone()["q"]
+    disp = con.execute("SELECT COALESCE(SUM(qty),0) q FROM material_disposal WHERE date=? AND material_id=?",
+                       (rdate, mid)).fetchone()["q"]
     manual = con.execute("SELECT 1 FROM material_daily WHERE date=? AND material_id=? AND src!='auto'",
                          (rdate, mid)).fetchone()
     if manual:   # 실사 행 = 실재고(측정값) 유지, 입고·사용량만 재계산
         con.execute("""UPDATE material_daily SET in_qty=?, used_qty=prev_qty+?-real_qty
             WHERE date=? AND material_id=? AND src!='auto'""", (in_total, in_total, rdate, mid))
-    elif drop_empty and in_total == 0 and used == 0:   # 입고 취소로 빈 자동 행 — 통째로 제거
+    elif drop_empty and in_total == 0 and used == 0 and disp == 0:   # 입고 취소로 빈 자동 행 — 통째로 제거
         con.execute("DELETE FROM material_daily WHERE date=? AND material_id=? AND src='auto'", (rdate, mid))
     else:
         prev_row = con.execute("""SELECT real_qty FROM material_daily
@@ -3162,7 +3164,7 @@ def _recalc_mat_day(con, mid, rdate, drop_empty=False):
         prev = float(prev_row["real_qty"]) if prev_row else 0.0
         con.execute("""INSERT OR REPLACE INTO material_daily
             (date, material_id, prev_qty, in_qty, real_qty, used_qty, src)
-            VALUES(?,?,?,?,?,?,'auto')""", (rdate, mid, prev, in_total, prev + in_total - used, used))
+            VALUES(?,?,?,?,?,?,'auto')""", (rdate, mid, prev, in_total, prev + in_total - used - disp, used))
     ripple_material(con, mid, rdate)   # 이후 날짜 전일재고 체인 재계산
 
 
@@ -6633,13 +6635,15 @@ def day_save(request: Request, date: str, body: dict):
             con.execute("DELETE FROM material_daily WHERE date=? AND src='auto'", (date,))
         if "usage" in body:
             # 반제품 원재료 사용(block 'semi:<id>')은 아래 반제품 생산 블록이 레시피대로 다시 만든다 → 여기선 지우지도 넣지도 않는다
-            con.execute("DELETE FROM material_usage WHERE date=? AND NOT (product_id IS NULL AND COALESCE(block,'') LIKE 'semi:%')", (date,))
+            # 파렛트 출고(block 'pallet:<id>')도 파렛트 관리 화면이 관리 → 유지
+            con.execute("DELETE FROM material_usage WHERE date=? AND NOT (product_id IS NULL AND"
+                        " (COALESCE(block,'') LIKE 'semi:%' OR COALESCE(block,'') LIKE 'pallet:%'))", (date,))
             for r in body.get("usage", []):
                 # 자재를 고른 행은 사용량 미입력도 0으로 저장(행 유지). 자재 미선택 행만 건너뛴다.
                 # (실측 추정은 estimate에서 qty>0만 집계하므로 0 저장이 추정을 왜곡하지 않는다)
                 if not r.get("material_id"):
                     continue
-                if str(r.get("block") or "").startswith("semi:"):   # 화면이 되돌려 보낸 반제품 소비 행 — 서버 계산분과 중복되므로 무시
+                if str(r.get("block") or "").startswith(("semi:", "pallet:")):   # 화면이 되돌려 보낸 반제품 소비·파렛트 출고 행 — 서버 보관분과 중복되므로 무시
                     continue
                 q = float(r.get("qty") or 0)
                 if q < 0:
@@ -6689,7 +6693,7 @@ def day_save(request: Request, date: str, body: dict):
             if "usage" in body:
                 sums = {}
                 for r in body.get("usage", []):
-                    if str(r.get("block") or "").startswith("semi:"):   # 되돌려 받은 반제품 소비 행은 제외 → 이중 차감 방지
+                    if str(r.get("block") or "").startswith(("semi:", "pallet:")):   # 되돌려 받은 반제품 소비·파렛트 행은 제외 → 이중 차감 방지
                         continue
                     if r.get("material_id") and r.get("qty"):   # 기타 사용(제품 없음)도 재고 차감에 포함
                         sums[r["material_id"]] = sums.get(r["material_id"], 0.0) + float(r["qty"])
@@ -6699,6 +6703,9 @@ def day_save(request: Request, date: str, body: dict):
                 else:   # 반제품 생산 정보가 없는 저장 — 테이블에 남아 있는 반제품 소비분 유지
                     for r in con.execute("SELECT material_id, SUM(qty) q FROM material_usage WHERE date=? AND product_id IS NULL AND COALESCE(block,'') LIKE 'semi:%' GROUP BY material_id", (date,)):
                         sums[r["material_id"]] = sums.get(r["material_id"], 0.0) + float(r["q"] or 0)
+                # 파렛트 출고분 (테이블에 남아 있는 것) — 재고 차감 유지
+                for r in con.execute("SELECT material_id, SUM(qty) q FROM material_usage WHERE date=? AND product_id IS NULL AND block LIKE 'pallet:%' GROUP BY material_id", (date,)):
+                    sums[r["material_id"]] = sums.get(r["material_id"], 0.0) + float(r["q"] or 0)
             else:   # 이 저장에 사용 기록이 없으면 기존 저장분 사용 (반제품 원재료 사용도 이미 테이블에 있음 → 중복 합산 안 함)
                 sums = {r["material_id"]: float(r["q"] or 0) for r in con.execute(
                     "SELECT material_id, SUM(qty) q FROM material_usage WHERE date=? GROUP BY material_id",
@@ -8565,15 +8572,48 @@ def batch_yield(request: Request, frm: str = "", to: str = ""):
 
 
 # ── 파렛트 관리 — 완제품과 함께 나간 파렛트(AJ·KPP 등)를 거래처별로 기록 ─────────────
-# 원부자재 재고·수불부와는 분리된 별도 장부(pallet_move) — 기존 재고 계산에 영향 없음.
+# 출고 1건마다 material_usage(block 'pallet:<id>', 제품 없음) 한 줄 → 그 파렛트(부재료) 재고에서 차감 (v1.118).
+# 파렛트 입고는 기존 원부자재 입고(material_in)로 한다.
 # 지금은 '출고'만 기록(kind='out'). 렌탈 회수·교환 방식이 정해지면 kind='in'으로 회수를 추가할 수 있게 구조만 열어 둠.
 def _pallet_types(con):
     """파렛트 종류 = 이름에 파렛트/파레트/팔레트/PLT가 들어간 부재료.
-    상태 '중단'도 포함 — 생산 사용 목록에서 숨기려고 중단으로 둔 파렛트가 있음(AJ·KPP)."""
-    return rows(con.execute("""SELECT id, name, COALESCE(code,'') code FROM material
+    상태 '중단'도 포함 — 생산 사용 목록에서 숨기려고 중단으로 둔 파렛트가 있음(AJ·KPP). onhand = 최신 실재고."""
+    return rows(con.execute("""SELECT id, name, COALESCE(code,'') code, unit, COALESCE(status,'사용중') status,
+            COALESCE((SELECT real_qty FROM material_daily md WHERE md.material_id=material.id
+                      ORDER BY date DESC LIMIT 1), 0) onhand FROM material
         WHERE kind='sub'
           AND (name LIKE '%파렛트%' OR name LIKE '%파레트%' OR name LIKE '%팔레트%' OR UPPER(name) LIKE '%PLT%')
         ORDER BY sort, name"""))
+
+
+def _pallet_sync_usage(con, move_id, old=None):
+    """파렛트 출고 1건을 자재 사용(block 'pallet:<id>')으로 맞추고 재고 재계산.
+    old=(material_id, date): 수정·삭제 전 위치 — 날짜·종류가 바뀌면 옛 날짜도 다시 계산."""
+    tag = f"pallet:{move_id}"
+    con.execute("DELETE FROM material_usage WHERE product_id IS NULL AND block=?", (tag,))
+    mv = con.execute("SELECT date, material_id, qty FROM pallet_move WHERE id=?", (move_id,)).fetchone()
+    spots = {old} if old else set()
+    if mv and mv["material_id"] and float(mv["qty"] or 0) > 0:
+        con.execute("INSERT INTO material_usage(date, material_id, product_id, qty, block) VALUES(?,?,NULL,?,?)",
+                    (mv["date"], mv["material_id"], float(mv["qty"]), tag))
+        spots.add((mv["material_id"], mv["date"]))
+    for mid, d in sorted(spots, key=lambda x: x[1]):
+        if mid and d:
+            _recalc_mat_day(con, mid, d, drop_empty=True)
+
+
+def _backfill_pallet_usage():
+    """v1.118 이전 파렛트 출고 기록(재고 미반영)을 자재 사용으로 1회 반영."""
+    con = connect()
+    try:
+        ids = [r["id"] for r in con.execute("""SELECT pm.id FROM pallet_move pm WHERE pm.qty>0 AND NOT EXISTS
+            (SELECT 1 FROM material_usage mu WHERE mu.product_id IS NULL AND mu.block='pallet:'||pm.id)""")]
+        for i in ids:
+            _pallet_sync_usage(con, i)
+        if ids:
+            con.commit()
+    finally:
+        con.close()
 
 
 @app.get("/api/pallets")
@@ -8618,14 +8658,19 @@ def pallets_add(request: Request, body: dict):
         if not con.execute("SELECT 1 FROM material WHERE id=?", (mid,)).fetchone():
             raise HTTPException(400, "파렛트 종류를 찾을 수 없습니다")
         user = request.state.user.get("username", "")
+        old = None
         if body.get("id"):
+            o = con.execute("SELECT material_id, date FROM pallet_move WHERE id=?", (body["id"],)).fetchone()
+            old = (o["material_id"], o["date"]) if o else None
             con.execute("""UPDATE pallet_move SET date=?, material_id=?, partner_id=?, partner_name=?, qty=?, note=?
                 WHERE id=?""", (date, mid, pid, pname, qty, (body.get("note") or "").strip()[:200], body["id"]))
             new_id = body["id"]
         else:
             new_id = con.execute("""INSERT INTO pallet_move(date, kind, material_id, partner_id, partner_name, qty, note, created_by)
                 VALUES(?, 'out', ?, ?, ?, ?, ?, ?)""", (date, mid, pid, pname, qty, (body.get("note") or "").strip()[:200], user)).lastrowid
+        _pallet_sync_usage(con, new_id, old)   # 파렛트 재고 차감
         audit(con, "pallet", f"파렛트 출고 {date} · {qty:g}개 (기록 #{new_id})")
+        bump_masters()
         con.commit()
         return {"ok": True, "id": new_id}
     finally:
@@ -8637,8 +8682,11 @@ def pallets_del(request: Request, mid: int):
     _require_writer(request)
     con = connect()
     try:
+        o = con.execute("SELECT material_id, date FROM pallet_move WHERE id=?", (mid,)).fetchone()
         con.execute("DELETE FROM pallet_move WHERE id=?", (mid,))
+        _pallet_sync_usage(con, mid, (o["material_id"], o["date"]) if o else None)   # 차감했던 재고 되돌림
         audit(con, "pallet", f"파렛트 출고 기록 #{mid} 삭제")
+        bump_masters()
         con.commit()
         return {"ok": True}
     finally:
@@ -8711,6 +8759,7 @@ if __name__ == "__main__":
     ensure_admin()
     _backfill_matin_po()          # v1.24 이전 발주 입고분에 거래처·단가 소급 (빈 행만)
     _backfill_matprice()          # 단가 이력 없는 자재에 최초 등록일 기준 초기 단가 1회 백필
+    _backfill_pallet_usage()      # v1.118 이전 파렛트 출고 기록을 파렛트 재고에 반영
     port = int(os.environ.get("PORT", "8600"))
     SERVE_PORT["v"] = port
     url = f"http://127.0.0.1:{port}"

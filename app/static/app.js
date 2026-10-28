@@ -1395,7 +1395,7 @@ async function loadDay(date) {
   E.lots = d.lots || [];
   E.semiProd = (d.semi_mat_prod || []).map(r => ({ material_id: r.material_id, batches: r.batches || "" }));
   for (const r of E.semiProd) await ensureSemiBom(r.material_id);   // 미리보기용 레시피 캐시
-  E.usage = (d.usage || []).filter(u => !String(u.block || "").startsWith("semi:"))   // 반제품 원재료 소비(서버 계산)는 화면 사용 목록에 안 넣음 → 저장 때 되돌아가 이중 차감되지 않게
+  E.usage = (d.usage || []).filter(u => !/^(semi|pallet):/.test(String(u.block || "")))   // 반제품 원재료 소비·파렛트 출고(서버 보관)는 화면 사용 목록에 안 넣음 → 저장 때 되돌아가 이중 차감되지 않게
     .map(u => ({ product_id: u.product_id, material_id: u.material_id, qty: u.qty, block: u.block || "" }));
   E.uratio = {};   // 이 날짜에서 '배합 선택'으로 적용한 배율 (표시 유지용)
   E.uSrc = {};     // "pid|block" → {srcPid, srcBlock} — 다른 제품 배합을 가져와 쓰는 블록
@@ -11472,7 +11472,9 @@ function renderPallet() {
     p.total += mv.qty; p.t[mv.material_id] = (p.t[mv.material_id] || 0) + mv.qty; p.days.add(mv.date);
   });
   $("plKpis").innerHTML = [["기간 출고", NF(total) + "개"], ...Object.entries(byType).map(([k, v]) => [k, NF(v) + "개"])]
-    .map(([t, v]) => `<span class="pchip num">${esc(t)} <b style="margin-left:4px">${v}</b></span>`).join("");
+    .map(([t, v]) => `<span class="pchip num">${esc(t)} <b style="margin-left:4px">${v}</b></span>`).join("")
+    // 파렛트 현재고 — 출고는 차감, 입고는 일일 입력 > 원부자재 입고
+    + `<span style="flex-basis:100%;"></span>` + types.map(t => `<span class="pchip num" title="${t.status === "중단" ? "상태가 '중단'이라 입고 목록에 안 나옵니다 — 기준정보 > 부재료에서 '사용중'으로 바꾸세요" : ""}">현재고 · ${esc(t.name)} <b style="margin-left:4px;${t.onhand < 0 ? "color:var(--crit);" : ""}">${NF(t.onhand)}${esc(t.unit || "")}</b>${t.status === "중단" ? ` <span class="auto">(중단)</span>` : ""}</span>`).join("");
   // 출고 거래처 칩 — 입력 날짜의 완제품 출고 거래처를 누르면 거래처 칸에 들어감
   const dsel = $("plDate").value, shipDay = d.ship.filter(s => s.date === dsel && s.partner);
   $("plShipChips").innerHTML = shipDay.length
