@@ -2546,17 +2546,16 @@ function renderShip() {
   }).join("")
     || `<tr><td colspan="6" class="auto">+ 출고 행 추가를 누르세요</td></tr>`;
 }
-// 출고 행 파렛트 — 종류(이름에 파렛트가 들어간 부재료, 중단 포함) + 수량. 저장하면 파렛트 관리에 기록·파렛트 재고 차감
+// 출고 행 파렛트 — 종류('파렛트' 체크한 부재료, 중단 포함 · 전체 이름 표시) + 수량. 저장하면 파렛트 관리에 기록·파렛트 재고 차감
 const palletTypes = () => (M.sub || []).filter(m => +m.is_pallet === 1);   // 기준정보 부재료의 '파렛트' 체크 기준 (이름 오타와 무관)
-const palletShort = n => (String(n).match(/\(([^)]+)\)/) || [])[1] || n;   // "파렛트(AJ) NA 연두색" → "AJ"
 function shipPalletCell(r) {
   const pts = palletTypes(); if (!pts.length) return "";
   if (!pts.some(t => t.id === r.pallet_mid)) {   // 기본 종류 = 마지막에 고른 것 (없으면 첫 번째)
     let last = null; try { last = +localStorage.getItem("shipPalletMid") || null; } catch (e) { }
     r.pallet_mid = pts.some(t => t.id === last) ? last : pts[0].id;
   }
-  return `<select class="mini-sel" data-f="pallet_mid" style="width:70px;" title="파렛트 종류">${pts.map(t =>
-    `<option value="${t.id}"${t.id === r.pallet_mid ? " selected" : ""}>${esc(palletShort(t.name))}</option>`).join("")}</select>
+  return `<select class="mini-sel" data-f="pallet_mid" style="width:auto; min-width:150px;" title="파렛트 종류">${pts.map(t =>
+    `<option value="${t.id}"${t.id === r.pallet_mid ? " selected" : ""}>${esc(t.name)}</option>`).join("")}</select>
     <input class="mini-input num" data-f="pallet_qty" value="${r.pallet_qty || ""}" placeholder="개" style="width:52px;"
       title="이 출고와 함께 나간 파렛트 수 — 저장하면 파렛트 관리에 기록되고 파렛트 재고에서 빠집니다">`;
 }
@@ -6350,7 +6349,7 @@ const MFORMS = {
     ["status", "상태", "sel", ["사용중", "중단"]], ["note", "비고", "full"]],
   sub: [["name", "자재명 *"], ["code", "품목코드 (비우면 자동 부여 · 부자재 SM####)"], ["kind", "구분", "sel", [["sub", "부재료"], ["raw", "원재료"]]],
     ["spec", "규격 (예: 500ea/롤)"], ["unit", "단위", "sel", ["개", "ea", "롤", "박스", "묶음", "매"]],
-    ["is_pallet", "🪵 파렛트 — 체크하면 파렛트 관리·일일 입력 출고 행의 '파렛트' 칸에 나옵니다 (괄호 안 글자가 짧은 이름, 예: 파렛트(AJ) → AJ)", "chk"],
+    ["is_pallet", "🪵 파렛트 — 체크하면 파렛트 관리·일일 입력 출고 행의 '파렛트' 칸에 나옵니다", "chk"],
     ["pack_count", "개입수 (개수 단위일 때만 · 예: 16개입=16 → 소모=생산수량÷개입수)", "num"],
     ["pack_set", "포장 세트 (읽기 전용 — 부재료 탭의 [📦 포장 세트]에서 관리 · 여러 세트 동시 소속 가능)", "ro"],
     ["unit_price", "단가 (원)", "num"], ["price_from", "단가 적용 시작일 (비우면 오늘 · 이 날짜부터 새 단가로 원가 계산)", "date"],
