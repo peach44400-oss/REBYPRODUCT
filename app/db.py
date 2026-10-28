@@ -401,7 +401,7 @@ CREATE TABLE IF NOT EXISTS pallet_move (
   id INTEGER PRIMARY KEY,
   date TEXT NOT NULL,
   kind TEXT DEFAULT 'out',             -- out=출고 (회수 in은 운용 방식 확정 후 추가)
-  material_id INTEGER,                 -- 파렛트 종류 = 부재료 (이름에 '파렛트' 포함)
+  material_id INTEGER,                 -- 파렛트 종류 = 부재료 ('파렛트' 체크 is_pallet=1)
   partner_id INTEGER,
   partner_name TEXT DEFAULT '',
   qty REAL DEFAULT 0,
@@ -1052,10 +1052,17 @@ def init_db() -> None:
     if "code" not in [r[1] for r in con.execute("PRAGMA table_info(material)")]:
         con.execute("ALTER TABLE material ADD COLUMN code TEXT DEFAULT ''")
     _backfill_item_codes(con)
+    # 파렛트 여부 — 기준정보 부재료의 '파렛트' 체크 (이름 오타와 무관하게 파렛트 관리·출고 행 파렛트 칸에 나옴)
+    if "is_pallet" not in [r[1] for r in con.execute("PRAGMA table_info(material)")]:
+        con.execute("ALTER TABLE material ADD COLUMN is_pallet INTEGER DEFAULT 0")
+    if not con.execute("SELECT 1 FROM app_setting WHERE key='pallet_flag_init'").fetchone():
+        # 1회: 이름에 파렛트가 들어간 기존 부재료를 체크해 둔다 (이후엔 체크만 기준 — 사용자가 해제하면 그대로)
+        con.execute("""UPDATE material SET is_pallet=1 WHERE kind='sub'
+            AND (name LIKE '%파렛트%' OR name LIKE '%파레트%' OR name LIKE '%팔레트%' OR UPPER(name) LIKE '%PLT%')""")
+        con.execute("INSERT OR REPLACE INTO app_setting(key, value) VALUES('pallet_flag_init','1')")
     # 파렛트 부재료 단위 kg → ea (다른 개수형 부재료와 같은 표기 · 파렛트 관리·출고 행은 개수로 기록) — 플래그로 딱 한 번만, 이후 사용자가 바꾼 단위는 보존
     if not con.execute("SELECT 1 FROM app_setting WHERE key='pallet_unit_ea'").fetchone():
-        con.execute("""UPDATE material SET unit='ea' WHERE kind='sub' AND LOWER(COALESCE(unit,'')) IN ('kg','g')
-            AND (name LIKE '%파렛트%' OR name LIKE '%파레트%' OR name LIKE '%팔레트%' OR UPPER(name) LIKE '%PLT%')""")
+        con.execute("""UPDATE material SET unit='ea' WHERE COALESCE(is_pallet,0)=1 AND LOWER(COALESCE(unit,'')) IN ('kg','g')""")
         con.execute("INSERT OR REPLACE INTO app_setting(key, value) VALUES('pallet_unit_ea','1')")
     con.commit()
     con.close()

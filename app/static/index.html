@@ -213,7 +213,7 @@
   .topacct #dbStatus{font-size:11px; color:var(--muted); line-height:1.2; white-space:nowrap;}
   .topacct #userLbl{font-size:12px; color:var(--ink); font-weight:700; cursor:pointer;
     text-decoration:underline dotted; text-underline-offset:3px; white-space:nowrap;}
-  .main{flex:1; min-width:0; padding:22px 28px 40px;}
+  .main{flex:1; min-width:0; padding:22px 28px 140px;}   /* 아래 여백 = 오른쪽 아래 고정 버튼(저장·AI)에 마지막 줄이 가리지 않게 */
   .topbar{display:flex; align-items:center; gap:12px; margin-bottom:18px;
     position:sticky; top:0; z-index:40; background:var(--bg); padding:8px 0;}
   #menuBtn{display:none; border:1px solid var(--line); background:var(--surface); border-radius:8px;
@@ -226,7 +226,7 @@
       overflow-y:auto; box-shadow:none;}
     .side.open{left:0; box-shadow:0 0 40px rgba(0,0,0,.4);}
     #sideDim.on{display:block; position:fixed; inset:0; z-index:1490; background:rgba(12,12,12,.45);}
-    .main{padding:14px 12px 90px;}
+    .main{padding:14px 12px 140px;}
     .topbar{flex-wrap:wrap; gap:8px; margin-bottom:12px;}
     .topbar h1{font-size:19px;}
     .kpis{grid-template-columns:repeat(2,1fr) !important; gap:8px;}
@@ -1104,7 +1104,7 @@
       </div>
       <div class="card" id="plFormCard">
         <h2 style="margin:0 0 4px;">🪵 파렛트 출고 입력</h2>
-        <p class="hint" style="margin:0 0 10px;">완제품과 함께 나간 파렛트를 거래처별로 적습니다. 저장하면 그 파렛트(부재료) 재고에서 빠지고, 삭제하면 되돌아갑니다. 파렛트 입고는 일일 입력 > 원부자재 입고에서 하세요. 일일 입력 > 완제품 출고 행의 '파렛트' 칸에 넣어도 여기에 자동으로 기록됩니다. 파렛트 종류는 기준정보 부재료 중 이름에 '파렛트'가 들어간 것이 나옵니다.</p>
+        <p class="hint" style="margin:0 0 10px;">완제품과 함께 나간 파렛트를 거래처별로 적습니다. 저장하면 그 파렛트(부재료) 재고에서 빠지고, 삭제하면 되돌아갑니다. 파렛트 입고는 일일 입력 > 원부자재 입고에서 하세요. 일일 입력 > 완제품 출고 행의 '파렛트' 칸에 넣어도 여기에 자동으로 기록됩니다. 파렛트 종류는 기준정보 > 부재료에서 '🪵 파렛트'를 체크한 것이 나옵니다.</p>
         <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; font-size:13px;">
           <label style="display:flex; flex-direction:column; gap:3px;">날짜 <input type="date" id="plDate" class="inp sm"></label>
           <label style="display:flex; flex-direction:column; gap:3px;">파렛트 종류 <select id="plType" class="mini-input" style="min-width:200px; text-align:left;"></select></label>
@@ -2986,7 +2986,7 @@
   <img id="imgLightboxImg" alt="사진 크게 보기" style="max-width:94vw; max-height:92vh; border-radius:8px; box-shadow:0 12px 44px rgba(0,0,0,.55);">
 </div>
 <!-- 전역 저장 FAB — 열린 모달/화면의 저장 버튼을 스크롤 없이 우측 하단에서 실행 -->
-<button class="save-fab" id="globalSaveFab" style="display:none; bottom:22px; z-index:1180;">💾 저장</button>
+<button class="save-fab" id="globalSaveFab" style="display:none; z-index:1180;">💾 저장</button><!-- bottom은 .save-fab(84px) — AI 버튼(22px) 위에 쌓이게 -->
 <div id="numPad">
   <div id="padInfo"></div>
   <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button><button data-k="⌫" class="pfn">⌫</button><button data-k="/" class="pop">÷</button>

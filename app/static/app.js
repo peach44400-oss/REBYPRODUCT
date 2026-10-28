@@ -2547,7 +2547,7 @@ function renderShip() {
     || `<tr><td colspan="6" class="auto">+ 출고 행 추가를 누르세요</td></tr>`;
 }
 // 출고 행 파렛트 — 종류(이름에 파렛트가 들어간 부재료, 중단 포함) + 수량. 저장하면 파렛트 관리에 기록·파렛트 재고 차감
-const palletTypes = () => (M.sub || []).filter(m => /파렛트|파레트|팔레트|PLT/i.test(m.name || ""));
+const palletTypes = () => (M.sub || []).filter(m => +m.is_pallet === 1);   // 기준정보 부재료의 '파렛트' 체크 기준 (이름 오타와 무관)
 const palletShort = n => (String(n).match(/\(([^)]+)\)/) || [])[1] || n;   // "파렛트(AJ) NA 연두색" → "AJ"
 function shipPalletCell(r) {
   const pts = palletTypes(); if (!pts.length) return "";
@@ -4049,7 +4049,7 @@ const MCOLS = {
     row: r => {
       const canQty = r.prod_mult && r.stock != null ? r.stock * r.prod_mult : null;
       const canCnt = canQty != null && r.prod_per ? canQty / r.prod_per : null;
-      return [codeCell(r), `<button class="uselink" data-mhist="${r.id}">${esc(r.name)}</button>`, esc(r.unit), r.pack_count ? NF(r.pack_count) : "—", NF(r.unit_price), NF(r.safety_stock), r.shelf_days || "—", stockCell(r), stockDaysCell(r),
+      return [codeCell(r), `<button class="uselink" data-mhist="${r.id}">${esc(r.name)}</button>${+r.is_pallet === 1 ? ' <span class="chip cat" title="파렛트 — 파렛트 관리·출고 행 파렛트 칸에 나옴">🪵 파렛트</span>' : ""}`, esc(r.unit), r.pack_count ? NF(r.pack_count) : "—", NF(r.unit_price), NF(r.safety_stock), r.shelf_days || "—", stockCell(r), stockDaysCell(r),
         canQty != null ? NF(Math.round(canQty)) : '<span class="auto">환산 미설정</span>',
         canCnt != null ? `<span style="${canCnt < 3 ? "color:var(--warn); font-weight:700" : ""}">${NF(Math.round(canCnt * 10) / 10)}회</span>` : "—",
         esc(r.stock_date || "—"), chip(r.status)];
@@ -6350,6 +6350,7 @@ const MFORMS = {
     ["status", "상태", "sel", ["사용중", "중단"]], ["note", "비고", "full"]],
   sub: [["name", "자재명 *"], ["code", "품목코드 (비우면 자동 부여 · 부자재 SM####)"], ["kind", "구분", "sel", [["sub", "부재료"], ["raw", "원재료"]]],
     ["spec", "규격 (예: 500ea/롤)"], ["unit", "단위", "sel", ["개", "ea", "롤", "박스", "묶음", "매"]],
+    ["is_pallet", "🪵 파렛트 — 체크하면 파렛트 관리·일일 입력 출고 행의 '파렛트' 칸에 나옵니다 (괄호 안 글자가 짧은 이름, 예: 파렛트(AJ) → AJ)", "chk"],
     ["pack_count", "개입수 (개수 단위일 때만 · 예: 16개입=16 → 소모=생산수량÷개입수)", "num"],
     ["pack_set", "포장 세트 (읽기 전용 — 부재료 탭의 [📦 포장 세트]에서 관리 · 여러 세트 동시 소속 가능)", "ro"],
     ["unit_price", "단가 (원)", "num"], ["price_from", "단가 적용 시작일 (비우면 오늘 · 이 날짜부터 새 단가로 원가 계산)", "date"],
@@ -6517,6 +6518,9 @@ function openMaster(type, row) {
       return `<div class="${cls}"><label>${label}</label>
         <input data-mf="${f}" value="${esc(v)}" list="mstdl_${f}" placeholder="선택 또는 직접 입력">
         <datalist id="mstdl_${f}">${opts.map(o => `<option value="${esc(o)}">`).join("")}</datalist></div>`;
+    if (kind === "chk")     // 예/아니오 체크 — 저장 시 1/0
+      return `<div class="fld full"><label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-weight:600;">
+        <input type="checkbox" data-mf="${f}" ${+v === 1 ? "checked" : ""} style="width:auto;"> ${label}</label></div>`;
     if (kind === "sel")
       return `<div class="${cls}"><label>${label}</label><select data-mf="${f}">${opts.map(o => {
         const val = Array.isArray(o) ? o[0] : o, txt = Array.isArray(o) ? o[1] : o;
@@ -6642,6 +6646,7 @@ $("mstSave").onclick = async () => {
   }
   const body = {};
   document.querySelectorAll("#mstForm [data-mf]").forEach(el => {
+    if (el.type === "checkbox") { body[el.dataset.mf] = el.checked ? 1 : 0; return; }
     let v = el.value.trim();
     body[el.dataset.mf] = v === "" ? null : (el.matches('[inputmode="decimal"]') ? Number(v.replace(/,/g, "")) : v);
   });
@@ -11477,7 +11482,7 @@ async function loadPallet() {
   const cur = $("plType").value;
   $("plType").innerHTML = PL.d.types.length
     ? PL.d.types.map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join("")
-    : `<option value="">파렛트 부재료가 없습니다 — 기준정보 > 부재료에 등록</option>`;
+    : `<option value="">파렛트가 없습니다 — 기준정보 > 부재료에서 '파렛트' 체크</option>`;
   if (cur && PL.d.types.some(t => String(t.id) === cur)) $("plType").value = cur;
   renderPallet();
 }

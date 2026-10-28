@@ -42,7 +42,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.119.1"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.120.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -139,7 +139,7 @@ MASTER_TABLES = {
                             "shelf_days", "safety_stock", "batch_yield", "status", "note", "is_semi", "fin_split"]),
     "material": ("material", ["code", "kind", "name", "spec", "unit", "pack_count", "pack_set", "unit_price", "partner_id",
                               "safety_stock", "prod_mult", "prod_per", "shelf_days", "status", "note",
-                              "is_semi", "batch_yield"]),
+                              "is_semi", "batch_yield", "is_pallet"]),
     "partner": ("partner", ["name", "type", "phone", "contact", "note", "status", "biz_no", "ceo", "mobile", "email", "address"]),
     "staff": ("staff", ["name", "kind", "position", "process", "wage", "join_date", "leave_date", "phone", "status", "note"]),
     "line": ("line", ["name", "process", "std_hours", "parent_id", "note", "status"]),
@@ -8598,13 +8598,12 @@ def batch_yield(request: Request, frm: str = "", to: str = ""):
 # 파렛트 입고는 기존 원부자재 입고(material_in)로 한다.
 # 지금은 '출고'만 기록(kind='out'). 렌탈 회수·교환 방식이 정해지면 kind='in'으로 회수를 추가할 수 있게 구조만 열어 둠.
 def _pallet_types(con):
-    """파렛트 종류 = 이름에 파렛트/파레트/팔레트/PLT가 들어간 부재료.
+    """파렛트 종류 = 기준정보 부재료에서 '파렛트' 체크(is_pallet=1)한 것 — 이름 오타와 무관.
     상태 '중단'도 포함 — 생산 사용 목록에서 숨기려고 중단으로 둔 파렛트가 있음(AJ·KPP). onhand = 최신 실재고."""
     return rows(con.execute("""SELECT id, name, COALESCE(code,'') code, unit, COALESCE(status,'사용중') status,
             COALESCE((SELECT real_qty FROM material_daily md WHERE md.material_id=material.id
                       ORDER BY date DESC LIMIT 1), 0) onhand FROM material
-        WHERE kind='sub'
-          AND (name LIKE '%파렛트%' OR name LIKE '%파레트%' OR name LIKE '%팔레트%' OR UPPER(name) LIKE '%PLT%')
+        WHERE kind='sub' AND COALESCE(is_pallet,0)=1
         ORDER BY sort, name"""))
 
 
