@@ -11494,7 +11494,7 @@ function renderPallet() {
   $("plKpis").innerHTML = [["기간 출고", NF(total) + "개"], ...Object.entries(byType).map(([k, v]) => [k, NF(v) + "개"])]
     .map(([t, v]) => `<span class="pchip num">${esc(t)} <b style="margin-left:4px">${v}</b></span>`).join("")
     // 파렛트 현재고 — 출고는 차감, 입고는 일일 입력 > 원부자재 입고
-    + `<span style="flex-basis:100%;"></span>` + types.map(t => `<span class="pchip num" title="${t.status === "중단" ? "상태가 '중단'이라 입고 목록에 안 나옵니다 — 기준정보 > 부재료에서 '사용중'으로 바꾸세요" : ""}">현재고 · ${esc(t.name)} <b style="margin-left:4px;${t.onhand < 0 ? "color:var(--crit);" : ""}">${NF(t.onhand)}${esc(t.unit || "")}</b>${t.status === "중단" ? ` <span class="auto">(중단)</span>` : ""}</span>`).join("");
+    + `<span style="flex-basis:100%;"></span>` + types.map(t => `<span class="pchip num" title="${t.onhand < 0 ? "입고보다 출고가 많습니다 — 일일 입력 > 원부자재 입고에 보유 수량을 넣어주세요" : ""}">현재고 · ${esc(t.name)} <b style="margin-left:4px;${t.onhand < 0 ? "color:var(--crit);" : ""}">${NF(t.onhand)}${esc(t.unit || "")}</b></span>`).join("");
   // 출고 거래처 칩 — 입력 날짜의 완제품 출고 거래처를 누르면 거래처 칸에 들어감
   const dsel = $("plDate").value, shipDay = d.ship.filter(s => s.date === dsel && s.partner);
   $("plShipChips").innerHTML = shipDay.length

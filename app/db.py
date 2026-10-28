@@ -1052,6 +1052,11 @@ def init_db() -> None:
     if "code" not in [r[1] for r in con.execute("PRAGMA table_info(material)")]:
         con.execute("ALTER TABLE material ADD COLUMN code TEXT DEFAULT ''")
     _backfill_item_codes(con)
+    # 파렛트 부재료 단위 kg → ea (다른 개수형 부재료와 같은 표기 · 파렛트 관리·출고 행은 개수로 기록) — 플래그로 딱 한 번만, 이후 사용자가 바꾼 단위는 보존
+    if not con.execute("SELECT 1 FROM app_setting WHERE key='pallet_unit_ea'").fetchone():
+        con.execute("""UPDATE material SET unit='ea' WHERE kind='sub' AND LOWER(COALESCE(unit,'')) IN ('kg','g')
+            AND (name LIKE '%파렛트%' OR name LIKE '%파레트%' OR name LIKE '%팔레트%' OR UPPER(name) LIKE '%PLT%')""")
+        con.execute("INSERT OR REPLACE INTO app_setting(key, value) VALUES('pallet_unit_ea','1')")
     con.commit()
     con.close()
 
