@@ -1382,6 +1382,10 @@ async function loadDay(date) {
   E.shipBase = {};   // 이 날짜에 이미 저장돼 있던 출고 합 (제품별) — 가용재고 계산에 되더함
   d.shipment.forEach(r => { E.shipBase[r.product_id] = (E.shipBase[r.product_id] || 0) + Number(r.qty || 0); });
   E.shipLots = {};   // 날짜별 출고 가능 LOT 캐시 (제품 선택 시 lazy 로드)
+  E.freight = (d.freight || []).map(r => ({ kind: r.kind || "", origin: r.origin || "", dest: r.dest || "",
+    dest_partner_id: r.dest_partner_id || null, carrier_id: r.carrier_id || null, courier: r.courier || "",
+    vehicle: r.vehicle || "", waybill: r.waybill || "", cost: r.cost || "", pay: r.pay || "", note: r.note || "" }));
+  E.freightMonth = d.freight_month || { n: 0, cost: 0 }; E.freightPlaces = d.freight_places || [];
   E.mat = d.materials.filter(r => r.src !== "auto")
     .map(r => ({ material_id: r.material_id, prev_qty: r.prev_qty, in_qty: r.in_qty || "", real_qty: r.real_qty, order_date: r.order_date || "", order_qty: r.order_qty || "" }));
   E.autoMat = d.materials.filter(r => r.src === "auto");
@@ -1518,7 +1522,7 @@ function matOptGroups(val) {
 function matSel(val, dataAttr, extra = "", cls = "nm") {
   return `<select class="mini-sel ${cls}" ${dataAttr}><option value="">— 자재 —</option>${extra}${matOptGroups(val)}</select>`;
 }
-function renderAll() { renderProd(); renderSemiProd(); renderShip(); renderMatIn(); renderMat(); renderStaff(); renderUsage(); renderNeed(); renderPhotos(); }
+function renderAll() { renderProd(); renderSemiProd(); renderShip(); renderFreight(); renderMatIn(); renderMat(); renderStaff(); renderUsage(); renderNeed(); renderPhotos(); }
 
 /* 제품별 자재 사용 (material_usage) — 금액(단가×사용량)은 admin 전용 표시.
    원재료/부재료 섹션으로 분리 — 각 섹션에서 바로 추가 가능. block 값은 데이터에만 보존. */
@@ -2485,7 +2489,7 @@ function isSeller(p) {
   if (p.status === "중지") return false;
   const ts = pTypes(p);
   if (!ts.length) return true;   // 유형 미지정은 판매처로 간주 (기존 동작)
-  return ts.some(t => t !== "자재 공급처" && t !== "용역업체");
+  return ts.some(t => t !== "자재 공급처" && t !== "용역업체" && t !== "운송사");
 }
 // 제품의 이날 가용 재고 = 현재고 + 이날 이미 저장된 출고분 (이날 편집 중 출고는 이 안에서만 가능)
 function shipAvail(pid) {
@@ -2562,6 +2566,132 @@ function shipPalletCell(r) {
 $("eShip").addEventListener("input", e => {   // (wireEntryTable보다 먼저 등록 — 그쪽이 표를 다시 그려도 기억되게)
   if (e.target.dataset.f === "pallet_mid") try { localStorage.setItem("shipPalletMid", e.target.value); } catch (err) { }
 });
+/* ── 운송비 — 1행 = 운송 1건. 운송회사 = 거래처(유형 '운송사') 또는 택배사.
+   택배사 + 운송장 번호 → 🔍가 그 택배사 공식 배송조회 페이지를 연다 (API 키·요금 없음) ── */
+const COURIERS = [   // [코드, 이름, 조회 주소(뒤에 운송장 번호)]
+  ["cj", "CJ대한통운", "https://trace.cjlogistics.com/next/tracking.html?wblNo="],
+  ["hanjin", "한진택배", "https://www.hanjin.com/kor/CMS/DeliveryMgr/WaybillResult.do?mCode=MN038&schLang=KR&wblnumText2="],
+  ["lotte", "롯데택배", "https://www.lotteglogis.com/home/reservation/tracking/linkView?InvNo="],
+  ["logen", "로젠택배", "https://www.ilogen.com/web/personal/trace/"],
+  ["epost", "우체국택배", "https://service.epost.go.kr/trace.RetrieveDomRigiTraceList.comm?sid1="],
+  ["kdexp", "경동택배", "https://kdexp.com/service/delivery/etc/delivery.do?barcode="],
+  ["daesin", "대신택배", "https://www.ds3211.co.kr/freight/internalFreightSearch.ht?billno="],
+  ["hdexp", "합동택배", "https://hdexp.co.kr/basic_delivery.hd?barcode="],
+  ["chunil", "천일택배", "https://www.chunil.co.kr/HTrace/HTrace.jsp?transNo="],
+  ["ilyang", "일양로지스", "https://www.ilyanglogis.com/functionality/tracking_result.asp?hawb_no="],
+];
+const FREIGHT_KINDS = ["화물", "용차", "택배", "퀵", "직배송"];
+const FREIGHT_PAYS = ["월정산", "선불", "착불", "현금"];
+let pendingFreight = null;   // '➕ 운송사 등록'으로 연 거래처 폼 — 저장되면 이 행에 자동 선택
+function freightTrackUrl(r) {
+  const c = COURIERS.find(x => x[0] === r.courier);
+  const no = String(r.waybill || "").replace(/[^0-9A-Za-z]/g, "");   // 하이픈·공백 제거
+  return c && no ? c[2] + encodeURIComponent(no) : "";
+}
+/** 새 행 기본값 = 마지막에 쓴 구분·출발지·운송회사·결제 */
+function newFreightRow() {
+  let last = {}; try { last = JSON.parse(localStorage.getItem("freightLast") || "{}") || {}; } catch (e) { }
+  return { kind: last.kind || "", origin: last.origin || "", dest: "", dest_partner_id: null,
+    carrier_id: last.carrier_id || null, courier: last.courier || "", vehicle: last.vehicle || "",
+    waybill: "", cost: "", pay: last.pay || "", note: "" };
+}
+function rememberFreight(r) {
+  try { localStorage.setItem("freightLast", JSON.stringify({ kind: r.kind, origin: r.origin, carrier_id: r.carrier_id,
+    courier: r.courier, vehicle: r.vehicle, pay: r.pay })); } catch (e) { }
+}
+function freightCarrierSel(r) {
+  const cur = r.carrier_id ? "p:" + r.carrier_id : (r.courier ? "c:" + r.courier : "");
+  const cs = (M.partner || []).filter(p => pTypes(p).includes("운송사") && (p.status !== "중지" || p.id === r.carrier_id));
+  return `<select class="mini-sel" data-ff="carrier" style="width:124px;" title="운송회사 — 화물·용차 업체는 거래처에 유형 '운송사'로 등록">
+    <option value="">— 선택 —</option>
+    <optgroup label="운송사 (거래처)">${cs.map(p => `<option value="p:${p.id}"${cur === "p:" + p.id ? " selected" : ""}>${esc(p.name)}</option>`).join("")}
+      <option value="__new__">➕ 운송사 등록…</option></optgroup>
+    <optgroup label="택배사 (운송장 조회)">${COURIERS.map(c => `<option value="c:${c[0]}"${cur === "c:" + c[0] ? " selected" : ""}>${c[1]}</option>`).join("")}</optgroup></select>`;
+}
+function renderFreight() {
+  if (!$("eFreight")) return;
+  const opt = (list, v) => `<option value="">—</option>` + list.map(x => `<option${x === v ? " selected" : ""}>${x}</option>`).join("");
+  const inp = (r, f, w, ph, extra = "") => `<input class="mini-input" data-ff="${f}" value="${esc(r[f] || "")}" placeholder="${ph}" style="width:${w}px; text-align:left;"${extra}>`;
+  $("eFreight").innerHTML = E.freight.map((r, i) => {
+    const url = freightTrackUrl(r);
+    return `<tr data-i="${i}">
+    <td><select class="mini-sel" data-ff="kind" style="width:68px;">${opt(FREIGHT_KINDS, r.kind)}</select></td>
+    <td>${inp(r, "origin", 92, "출발지", ' list="freightPlaces"')}</td>
+    <td>${inp(r, "dest", 108, "도착지", ' list="freightPlaces"')}</td>
+    <td>${freightCarrierSel(r)}</td>
+    <td>${inp(r, "vehicle", 80, "예: 1톤 냉동", ' list="freightVehicles"')}</td>
+    <td style="white-space:nowrap;">${inp(r, "waybill", 100, "운송장 번호", ' inputmode="numeric"')}
+      <button class="btn ghost sm" data-ftrack ${url ? "" : "disabled"} title="택배사 공식 배송조회 페이지를 새 창으로 엽니다 (운송회사를 택배사로 고르고 운송장 번호를 넣으면 켜짐)">🔍</button></td>
+    <td class="r"><input class="mini-input num" data-ff="cost" value="${r.cost || ""}" placeholder="원" style="width:80px;" inputmode="decimal"></td>
+    <td><select class="mini-sel" data-ff="pay" style="width:72px;">${opt(FREIGHT_PAYS, r.pay)}</select></td>
+    <td>${inp(r, "note", 92, "")}</td>
+    <td><button class="btn ghost sm" data-fdel>삭제</button></td></tr>`;
+  }).join("") || `<tr><td colspan="10" class="auto">+ 운송 행 추가 또는 📥 오늘 출고에서 불러오기</td></tr>`;
+  // 출발지·도착지 목록 = 예전에 쓴 장소 + 출고 거래처
+  $("freightPlaces").innerHTML = [...new Set((E.freightPlaces || []).concat((M.partner || []).filter(isSeller).map(p => p.name)))]
+    .map(p => `<option value="${esc(p)}">`).join("");
+  renderFreightSum();
+}
+function renderFreightSum() {
+  const num = v => Number(String(v ?? "").replace(/,/g, "")) || 0;
+  const day = E.freight.reduce((s, r) => s + num(r.cost), 0);
+  const fm = E.freightMonth || { n: 0, cost: 0 };
+  $("freightSum").innerHTML = `오늘 ${E.freight.length}건 · <b>${NF(day)}원</b> &nbsp;·&nbsp; `
+    + `<span class="auto">${(E.date || "").slice(0, 7)} 누계(저장된 것) ${NF(fm.n)}건 · ${NF(fm.cost)}원</span>`;
+}
+$("eFreight").addEventListener("input", e => {
+  const tr = e.target.closest("tr[data-i]"), f = e.target.dataset.ff; if (!tr || !f) return;
+  const i = +tr.dataset.i, r = E.freight[i]; if (!r) return;
+  if (f === "carrier") {
+    const v = e.target.value;
+    if (v === "__new__") {
+      renderFreight();
+      openMaster("partner", null);
+      pendingFreight = i;
+      const cb = document.querySelector('#mstForm [data-ptype][value="운송사"]'); if (cb) cb.checked = true;
+      return;
+    }
+    r.carrier_id = v.startsWith("p:") ? +v.slice(2) : null;
+    r.courier = v.startsWith("c:") ? v.slice(2) : "";
+    if (r.courier && !r.kind) r.kind = "택배";
+    rememberFreight(r); renderFreight(); return;
+  }
+  r[f] = e.target.value;
+  if (f === "dest") {   // 도착지가 거래처 이름과 같으면 그 거래처로 연결 (거래처별 운송비 집계용)
+    const p = (M.partner || []).find(x => x.name === r.dest.trim()); r.dest_partner_id = p ? p.id : null;
+  }
+  if (f === "kind" || f === "pay" || f === "origin" || f === "vehicle") rememberFreight(r);
+  if (f === "waybill") { const b = tr.querySelector("[data-ftrack]"); if (b) b.disabled = !freightTrackUrl(r); }
+  if (f === "cost") renderFreightSum();
+});
+$("eFreight").addEventListener("click", e => {
+  const tr = e.target.closest("tr[data-i]"); if (!tr) return;
+  const i = +tr.dataset.i;
+  if (e.target.closest("[data-fdel]")) { E.freight.splice(i, 1); E.dirty = true; renderFreight(); return; }
+  if (e.target.closest("[data-ftrack]")) {
+    const url = freightTrackUrl(E.freight[i] || {});
+    if (url) window.open(url, "_blank", "noopener");
+  }
+});
+$("addFreight").onclick = () => { E.freight.push(newFreightRow()); E.dirty = true; renderFreight(); };
+// 완제품 출고의 거래처마다 운송 행 1개 (이미 그 거래처로 가는 행이 있으면 건너뜀)
+$("freightFromShip").onclick = () => {
+  const pids = [...new Set(E.ship.filter(r => r.product_id && r.partner_id).map(r => r.partner_id))];
+  if (!pids.length) return toast("완제품 출고에 거래처를 고른 행이 없습니다");
+  let added = 0;
+  pids.forEach(pid => {
+    if (E.freight.some(f => f.dest_partner_id === pid)) return;
+    const p = (M.partner || []).find(x => x.id === pid);
+    const rows = E.ship.filter(r => r.product_id && r.partner_id === pid);
+    const pl = rows.reduce((s, r) => s + (Number(r.pallet_qty) || 0), 0);
+    E.freight.push({ ...newFreightRow(), dest: p ? p.name : "", dest_partner_id: pid,
+      note: `출고 ${rows.length}건` + (pl ? ` · 파렛트 ${NF(pl)}개` : "") });
+    added++;
+  });
+  if (added) E.dirty = true;
+  renderFreight();
+  toast(added ? `출고 거래처 ${added}곳을 운송 행으로 추가했습니다 — 운송회사·비용을 채워 주세요` : "출고 거래처가 이미 모두 운송 행에 있습니다");
+};
 // 출고량 타이핑 시 재고 초과 표시만 제자리 갱신 (표 재렌더 X → 포커스 유지)
 function updateShipWarn() {
   const sum = shipSumByProduct();
@@ -3605,7 +3735,7 @@ function negNumIn(rows, fields, label) {
 // 동시 편집 충돌: 내가 연 이후 다른 사용자가 저장했으면 409 → 덮어쓸지 확인
 // 일일 입력 body 섹션 → 필요한 담당 (서버 DUTY_SECTION과 동일)
 const DUTY_SECTION = { production: "production", shipment: "shipment", usage: "usage",
-  staffing: "staffing", materials: "stock", mat_in: "stock" };
+  staffing: "staffing", materials: "stock", mat_in: "stock", freight: "shipment" };
 const PROD_DUTIES = ["production", "shipment", "usage", "staffing"];   // '생산 입력' 탭이 저장하는 섹션들
 let SAVING = false;   // 내 저장 중에는 '다른 사용자가 저장함' 알림을 띄우지 않는다
 async function saveDayBody(body, label, force) {
@@ -3696,7 +3826,9 @@ function buildProdBody() {
     || negNumIn(E.staff.flatMap(r => r.agency || []), ["h", "w"], "용역 시간·시급")
     || negNumIn(E.prod, ["batches", "plan_qty", "prod_qty", "defect_qty"], "생산실적")
     || negNumIn(E.ship, ["qty", "pallet_qty"], "완제품 출고")
-    || negNumIn(E.usage, ["qty"], "자재 사용");
+    || negNumIn(E.usage, ["qty"], "자재 사용")
+    || badNumIn(E.freight, ["cost"], "운송비")
+    || negNumIn(E.freight, ["cost"], "운송비");
   if (bad) { toast("⚠ " + bad + " — 고친 뒤 저장하세요"); return null; }
   // 불량 > 생산 차단 (양품이 음수가 됨)
   for (const r of E.prod) {
@@ -3722,6 +3854,7 @@ function buildProdBody() {
     production: E.prod.filter(r => r.product_id).map(r => ({ ...r,
       lot_splits: r.lotSplits || [], prod_splits: r.prodSplits || [] })),
     shipment: E.ship.filter(r => r.product_id && r.qty).map(r => ({ ...r, expiry: r.lotExpiry || "", lot_no: r.lotNo || 0 })),
+    freight: E.freight.map(r => ({ ...r, cost: Number(String(r.cost ?? "").replace(/,/g, "")) || 0 })),
     staffing: E.staff.filter(r => r.line_id).map(r => ({ ...r,
       headcount: (r.members || []).length,
       // 용역 = 개인별 [시간, 시급, 성별, 업체] — 서버가 상세 저장 + 집계(가중평균 시급) 계산
@@ -3989,6 +4122,7 @@ function showSaveSum(body, label) {
     ["🏭 생산실적", `${prod.length}종 · ${NF(prodQty)}개`],
     ["🚚 완제품 출고", `${ship.length}건 · ${NF(shipQty)}개`
       + (ship.some(r => Number(r.pallet_qty) > 0) ? ` · 파렛트 ${NF(ship.reduce((s, r) => s + (Number(r.pallet_qty) || 0), 0))}개` : "")],
+    ["🚛 운송비", (body.freight || []).length ? `${body.freight.length}건 · ${NF(body.freight.reduce((s, r) => s + (Number(r.cost) || 0), 0))}원` : "없음"],
     ["🧾 자재 사용", `${usage.length}건`],
     ["👷 인원·가동", `${staff.length}라인`],
     ["📝 특이사항", memo ? "입력됨" : "없음"],
@@ -5214,7 +5348,7 @@ function renderMasters() {
     if (mQuick && qeMap) {
       for (const [idx, f] of Object.entries(qeMap)) {
         if (f === "type") {   // 거래처 유형 — 선택형 (기존 유형 + 기본 유형 목록)
-          const types = [...new Set(["판매처", "자재 공급처", "용역업체"]
+          const types = [...new Set(["판매처", "자재 공급처", "용역업체", "운송사"]
             .concat((M.partner || []).map(p => p.type).filter(Boolean)))];
           cells[idx] = `<select class="qe-input" data-qe="type" data-qid="${r.id}" style="min-width:110px">`
             + types.map(t => `<option value="${esc(t)}" ${t === r.type ? "selected" : ""}>${esc(t)}</option>`).join("")
@@ -6364,7 +6498,7 @@ const MFORMS = {
     ["initial_stock", "초기재고 (신규만)", "num"],
     ["stock_set", "현재고 (아래 기준일에 실사 기록)", "num"], ["stock_date", "기준일 (이 날짜에 기록)", "date"],
     ["status", "상태", "sel", ["사용중", "중단"]], ["note", "비고", "full"]],
-  partner: [["name", "거래처명 *"], ["type", "유형 — 선택 또는 직접 입력 (예: 기부)", "combo", ["판매처", "자재 공급처", "용역업체"]],
+  partner: [["name", "거래처명 *"], ["type", "유형 — 선택 또는 직접 입력 (예: 기부)", "combo", ["판매처", "자재 공급처", "용역업체", "운송사"]],
     ["biz_no", "사업자등록번호"], ["ceo", "대표자명"],
     ["phone", "전화"], ["mobile", "모바일"],
     ["email", "이메일 (발주서 메일 발송)"],
@@ -6466,6 +6600,7 @@ $("srSave").onclick = async () => {
 
 let mstEdit = null;
 function openMaster(type, row) {
+  pendingFreight = null;
   mstEdit = { type, id: row ? row.id : null };
   $("mstTitle").textContent = row ? MCOLS[type].label + " 정보 수정" : "새 " + MCOLS[type].label + " 등록";
   $("mstHint").textContent = row
@@ -6487,7 +6622,7 @@ function openMaster(type, row) {
     // 거래처 '유형' — 복수 선택(판매처+자재공급처 등). 표준 3종 체크박스 + 기타 직접 입력.
     if (type === "partner" && f === "type") {
       const cur = new Set(String((row && row.type) || "").split(",").map(s => s.trim()).filter(Boolean));
-      const std = ["판매처", "자재 공급처", "용역업체"];
+      const std = ["판매처", "자재 공급처", "용역업체", "운송사"];
       const etc = [...cur].filter(t => !std.includes(t)).join(", ");
       return `<div class="fld full"><label>유형 <span class="auto" style="font-weight:400">(여러 개 선택 가능)</span></label>
         <div style="display:flex; gap:16px; flex-wrap:wrap; padding:3px 0;">
@@ -6504,7 +6639,7 @@ function openMaster(type, row) {
           .map(l => [l.id, l.name + (l.process ? " / " + l.process : "")]));
     // 거래처 '유형' 콤보 옵션 = 기본 유형 + 이미 등록된 유형 (직접 입력한 새 유형도 다음부터 목록에 나타남)
     if (type === "partner" && f === "type")
-      opts = [...new Set(["판매처", "자재 공급처", "용역업체"]
+      opts = [...new Set(["판매처", "자재 공급처", "용역업체", "운송사"]
         .concat((M.partner || []).map(p => p.type).filter(Boolean)))];
     // 인원 '직책' 콤보 옵션 = 기본 직책 + 이미 등록된 직책 (직접 입력도 가능)
     if (type === "staff" && f === "position")
@@ -6744,6 +6879,12 @@ $("mstSave").onclick = async () => {
     toast("새 자재가 등록되어 해당 행에 선택되었습니다");
   }
   pendingNewMat = null;
+  if (pendingFreight != null && t === "partner" && res && res.id && E.freight[pendingFreight]) {
+    Object.assign(E.freight[pendingFreight], { carrier_id: res.id, courier: "" });
+    rememberFreight(E.freight[pendingFreight]); renderFreight();
+    toast("운송사가 등록되어 해당 운송 행에 선택되었습니다");
+  }
+  pendingFreight = null;
 };
 
 /* ══ 기록 조회 ═════════════════════════ */

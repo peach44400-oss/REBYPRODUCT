@@ -411,6 +411,25 @@ CREATE TABLE IF NOT EXISTS pallet_move (
   src TEXT DEFAULT ''                  -- ''=파렛트 관리에서 입력 / 'ship'=일일 입력 완제품 출고 행에서 자동 (그 화면에서만 수정)
 );
 CREATE INDEX IF NOT EXISTS idx_pallet_date ON pallet_move(date);
+
+-- 운송비 (일일 입력 > 운송비) — 1행 = 운송 1건. 운송회사는 거래처(유형 '운송사') 또는 택배사(courier 코드 → 배송조회 링크)
+CREATE TABLE IF NOT EXISTS freight (
+  id INTEGER PRIMARY KEY,
+  date TEXT NOT NULL,
+  kind TEXT DEFAULT '',                -- 화물/용차/택배/퀵/직배송
+  origin TEXT DEFAULT '',              -- 출발지
+  dest TEXT DEFAULT '',                -- 도착지
+  dest_partner_id INTEGER,             -- 도착지 거래처 (출고에서 불러온 경우)
+  carrier_id INTEGER,                  -- 운송회사 = 거래처(유형 '운송사')
+  courier TEXT DEFAULT '',             -- 택배사 코드 (cj·hanjin·lotte …) — carrier_id 대신
+  vehicle TEXT DEFAULT '',             -- 차량·톤수 (예: 1톤 냉동탑차)
+  waybill TEXT DEFAULT '',             -- 운송장 번호
+  cost REAL DEFAULT 0,                 -- 비용(원)
+  pay TEXT DEFAULT '',                 -- 결제: 월정산/선불/착불/현금
+  note TEXT DEFAULT '',
+  created_by TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_freight_date ON freight(date);
 -- AI 자주 쓰는 질문 (사용자별 ☆)
 CREATE TABLE IF NOT EXISTS ai_fav (
   id INTEGER PRIMARY KEY,

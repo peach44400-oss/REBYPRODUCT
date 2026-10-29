@@ -361,6 +361,7 @@
   .mini-input.w{width:120px;}
   .bad-num{border-color:var(--crit) !important; background:#FEF2F2 !important; color:var(--crit);}
   .ship-over{border-color:var(--crit) !important; background:#FEF2F2 !important; color:var(--crit); font-weight:700;}
+  #freightTbl th, #freightTbl td { padding-left: 4px; padding-right: 4px; }   /* 운송비 — 칸이 많아 좌우 여백만 줄여 한 화면에 */
   /* 자재 사용 원/부 구분 칩 — 원재료(초록) · 부재료(주황) */
   .kchip{font-size:10px; font-weight:800; padding:2px 7px; border-radius:99px; margin-right:6px;
     flex:none; line-height:1.3; border:1px solid transparent;}
@@ -1514,6 +1515,18 @@
             <div class="draft-foot"><button class="btn sm" id="addShip">+ 출고 행 추가</button>
               <input class="mini-input" id="qaShip" list="qaProducts" placeholder="🔍 제품 검색 후 Enter = 행 추가" style="text-align:left; width:220px;">
               <button class="btn sm" id="shipFromSO" title="수주 관리에 접수된 주문을 골라 출고 행으로 채웁니다">📥 수주 불러오기</button></div>
+          </div>
+          <div class="card" data-esec="prod">
+            <h2>🚛 운송비 <span class="sub">운송 1건 = 1행 · 운송회사는 거래처(유형 '운송사') 또는 택배사 — 택배사 + 운송장 번호를 넣으면 🔍로 배송조회</span></h2>
+            <div class="tbl-wrap"><table id="freightTbl">
+              <thead><tr><th>구분</th><th>출발지</th><th>도착지</th><th>운송회사</th><th>차량·톤수</th><th>운송장</th><th class="r">비용(원)</th><th>결제</th><th>비고</th><th></th></tr></thead>
+              <tbody class="num" id="eFreight"></tbody>
+            </table></div>
+            <div class="draft-foot"><button class="btn sm" id="addFreight">+ 운송 행 추가</button>
+              <button class="btn sm" id="freightFromShip" title="위 완제품 출고의 거래처마다 운송 행을 하나씩 만듭니다 (도착지 = 거래처, 파렛트 수는 비고에)">📥 오늘 출고에서 불러오기</button>
+              <span class="sum" id="freightSum" style="font-size:12px;"></span></div>
+            <datalist id="freightPlaces"></datalist>
+            <datalist id="freightVehicles"><option value="다마스"><option value="1톤 탑차"><option value="1톤 냉동탑차"><option value="2.5톤 냉동탑차"><option value="5톤 냉동탑차"><option value="5톤 윙바디"><option value="11톤 윙바디"></datalist>
           </div>
           <div class="card" data-esec="prod">
             <h2>자재 사용 <span class="sub">어떤 자재를 얼마나 썼는지 — 제품별 그룹 + 기타 사용(생산 외), 사용처 분석의 원천</span></h2>
