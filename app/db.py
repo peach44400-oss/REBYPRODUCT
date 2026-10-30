@@ -826,6 +826,7 @@ ITEM_CODE = {
     "semi":    ("material", "COALESCE(is_semi,0)=1", "SF"),
     "raw":     ("material", "kind='raw' AND COALESCE(is_semi,0)=0", "RM"),
     "sub":     ("material", "kind='sub' AND COALESCE(is_semi,0)=0", "SM"),
+    "cons":    ("material", "kind='cons' AND COALESCE(is_semi,0)=0", "CS"),   # 소모품 (보루·스크래퍼·세제 등)
 }
 
 
@@ -1072,6 +1073,8 @@ def init_db() -> None:
         con.execute("ALTER TABLE material ADD COLUMN code TEXT DEFAULT ''")
     _backfill_item_codes(con)
     # 파렛트 여부 — 기준정보 부재료의 '파렛트' 체크 (이름 오타와 무관하게 파렛트 관리·출고 행 파렛트 칸에 나옴)
+    if "category" not in [r[1] for r in con.execute("PRAGMA table_info(material)")]:   # 소모품 용도(청소·위생 …)
+        con.execute("ALTER TABLE material ADD COLUMN category TEXT DEFAULT ''")
     if "is_pallet" not in [r[1] for r in con.execute("PRAGMA table_info(material)")]:
         con.execute("ALTER TABLE material ADD COLUMN is_pallet INTEGER DEFAULT 0")
     if not con.execute("SELECT 1 FROM app_setting WHERE key='pallet_flag_init'").fetchone():

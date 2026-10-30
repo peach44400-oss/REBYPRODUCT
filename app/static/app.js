@@ -69,7 +69,7 @@ function toast(msg) {
 function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
 
 /* ── 마스터 캐시 ─────────────────────── */
-const M = { product: [], raw: [], sub: [], semi: [], partner: [], staff: [], line: [] };
+const M = { product: [], raw: [], sub: [], cons: [], semi: [], partner: [], staff: [], line: [] };
 // 포장 세트 (다대다) — [{name, members:[{id,name,pack_count}]}]. 한 자재가 여러 세트에 속할 수 있다.
 let PACKSETS = [];
 async function loadPackSets() {
@@ -88,7 +88,9 @@ async function loadMasters() {
   loadSchedToday();          // 오늘 수정된 스케줄 배지
 }
 const productById = (id) => M.product.find(p => p.id === id);   // 완제품만 (반제품은 자재)
-const materialById = (id) => M.raw.concat(M.sub, M.semi || []).find(m => m.id === id);   // 반제품(is_semi 자재)도 자재로 취급
+const materialById = (id) => M.raw.concat(M.sub, M.cons || [], M.semi || []).find(m => m.id === id);   // 반제품(is_semi 자재)·소모품도 자재로 취급
+const KIND_KO = { raw: "원재료", sub: "부재료", cons: "소모품" };
+const kindKo = k => KIND_KO[k] || "원재료";
 async function reloadMaster(t) {
   M[t] = await api("/api/masters/" + t);
   if (t === "line")
@@ -96,7 +98,7 @@ async function reloadMaster(t) {
   if (t === "product") { try { ANA.raw = null; } catch (e) {} }   // 분석 캐시 무효화
   if (t === "product" || t === "raw" || t === "sub") { try { COSTS = null; } catch (e) {} }   // 원가 캐시 무효화
   // 안전재고·재고를 바꾸면 사이드바 '발주 필요' 알림도 따라 갱신
-  if (t === "raw" || t === "sub") { try { loadLowStock(); } catch (e) {} }
+  if (t === "raw" || t === "sub" || t === "cons") { try { loadLowStock(); } catch (e) {} }
 }
 
 /* ── 네비게이션 ─────────────────────── */
@@ -609,7 +611,7 @@ async function loadDash() {
 
   $("lowBody").innerHTML = d.low.length ? d.low.map(r => `
     <tr><td><b>${esc(r.name)}</b></td>
-      <td><span class="chip cat">${r.kind === "raw" ? "원재료" : "부재료"}</span></td>
+      <td><span class="chip cat">${kindKo(r.kind)}</span></td>
       <td class="r" style="color:var(--crit); font-weight:700">${NF(r.stock)} ${esc(r.unit)}</td>
       <td class="r">${r.safety_stock > 0 ? NF(r.safety_stock) : '<span class="auto">미설정</span>'}</td>
       <td>${esc(r.order_date) || "—"}</td><td class="auto">${r.date}</td></tr>`).join("")
@@ -1513,14 +1515,16 @@ function partnerOptGroups(selId, list, firstType = "판매처") {
     + `</optgroup>`).join("");
 }
 /* 자재 select — 원재료/부재료를 optgroup으로 분리해 찾기 쉽게 (data-f / data-uf 는 호출부 지정) */
-function matOptGroups(val) {
+function matOptGroups(val, noCons) {
   const grp = (label, arr) => arr.length
     ? `<optgroup label="${label}">${arr.map(o => `<option value="${o.id}" ${o.id === val ? "selected" : ""}>${esc(o.name)}</option>`).join("")}</optgroup>` : "";
   const semis = (M.semi || []).filter(s => s.status !== "단종" && s.status !== "중단");
-  return grp("원재료", M.raw) + grp("부재료", M.sub) + grp("🧫 반제품", semis);
+  // 소모품: 사용중인 것 + 이미 고른 것만 (생산 자재 사용·배합비 select에는 넣지 않음)
+  const cons = noCons ? [] : (M.cons || []).filter(c => c.status !== "중단" || c.id === val);
+  return grp("원재료", M.raw) + grp("부재료", M.sub) + grp("🧫 반제품", semis) + grp("🧽 소모품", cons);
 }
-function matSel(val, dataAttr, extra = "", cls = "nm") {
-  return `<select class="mini-sel ${cls}" ${dataAttr}><option value="">— 자재 —</option>${extra}${matOptGroups(val)}</select>`;
+function matSel(val, dataAttr, extra = "", cls = "nm", noCons = false) {
+  return `<select class="mini-sel ${cls}" ${dataAttr}><option value="">— 자재 —</option>${extra}${matOptGroups(val, noCons)}</select>`;
 }
 function renderAll() { renderProd(); renderSemiProd(); renderShip(); renderFreight(); renderMatIn(); renderMat(); renderStaff(); renderUsage(); renderNeed(); renderPhotos(); }
 
@@ -1597,13 +1601,13 @@ function usageGroupHtml(pid, title, sub, buttons, addBar) {
   const nCols = admin ? 5 : 4;
   let gAmt = 0, gMiss = 0;
   const items = E.usage.map((u, ui) => ({ u, ui })).filter(x => x.u.product_id === pid);
-  const kindOf = u => { const m = materialById(u.material_id); return m ? m.kind : (u.sec || "raw"); };
+  const kindOf = u => { const m = materialById(u.material_id); return m ? (m.kind === "cons" ? "sub" : m.kind) : (u.sec || "raw"); };   // 소모품은 부재료 칸에 표시
   const rowHtml = ({ u, ui }) => {
       const m = materialById(u.material_id) || {};
       const amt = Number(u.qty) > 0 && m.unit_price > 0 ? Number(u.qty) * m.unit_price : null;
       if (amt != null) gAmt += amt;
       else if (Number(u.qty) > 0 && u.material_id) gMiss++;
-      const kc = m.kind ? `<span class="kchip kchip-${m.kind}" title="${m.kind === "raw" ? "원재료" : "부재료"}">${m.kind === "raw" ? "원재료" : "부재료"}</span>` : "";
+      const kc = m.kind ? `<span class="kchip kchip-${m.kind}" title="${kindKo(m.kind)}">${kindKo(m.kind)}</span>` : "";
       // 납품처 지정 자재 표시 (배합비에 거래처가 지정된 자재 — 복수 가능)
       const bomP = pid != null ? (BOMALL?.[pid] || []).find(x =>
         x.material_id === u.material_id && (x.block || "") === (u.block || "") && bomPartnerIds(x).length) : null;
@@ -1615,7 +1619,7 @@ function usageGroupHtml(pid, title, sub, buttons, addBar) {
       const qtyTip = isCountMat(m) && prodRow
         ? `개수 자재 자동 계산: 생산(분배) 수량 ÷ 개입수 ${NF(m.pack_count)} (올림)` : "";
       return `<tr data-ui="${ui}">
-        <td style="display:flex; align-items:center; gap:4px;">${kc}${matSel(u.material_id, 'data-uf="material_id"', NEWMAT_OPTS)}${pchip}</td>
+        <td style="display:flex; align-items:center; gap:4px;">${kc}${matSel(u.material_id, 'data-uf="material_id"', NEWMAT_OPTS, "nm", true)}${pchip}</td>
         <td class="r"><input class="mini-input num" data-uf="qty" value="${u.qty ?? ""}" ${qtyTip ? `title="${qtyTip}"` : ""}></td>
         <td class="auto">${esc(m.unit || "")}</td>
         ${admin ? `<td class="r auto" ${amt != null ? `title="사용량 ${NF(u.qty)} × 단가 ${NF(m.unit_price)}원"` : ""}>${amt != null ? NF(Math.round(amt)) : (Number(u.qty) > 0 ? '<span class="auto">단가 미입력</span>' : "—")}</td>` : ""}
@@ -3087,7 +3091,7 @@ async function loadMatStatus() {
   const nb = $("navMatCnt"); if (nb) { nb.textContent = cnt; nb.style.display = cnt > 0 ? "" : "none"; }
   renderMatStatus();
 }
-function msKind(it) { return it.is_semi ? "반제품" : (it.kind === "sub" ? "부재료" : "원재료"); }
+function msKind(it) { return it.is_semi ? "반제품" : kindKo(it.kind); }
 function renderMatStatus() {
   const d = MATSTAT.data; if (!d) return;
   const canStock = typeof MYDUTY !== "undefined" && MYDUTY.has && MYDUTY.has("stock");
@@ -3116,7 +3120,7 @@ function renderMatStatus() {
   // 부족 자재 앞에 붙는 일괄 발주 선택 체크박스 — 부족 행마다(발주 버튼이 있는 곳마다) 표시. 같은 자재는 material_id로 1종만 담긴다.
   const selChk = (mid, nm, un, q) => (canStock && q > 0) ? `<input type="checkbox" data-mssel="${mid}" data-q="${q}" data-nm="${esc(nm || "")}" data-un="${esc(un || "")}" ${MATSTAT.sel.has(mid) ? "checked" : ""} title="일괄 발주 선택" style="width:15px; height:15px; margin-right:6px; vertical-align:middle; cursor:pointer;">` : "";
   const q = MATSTAT.q ? MATSTAT.q.toLowerCase() : "";
-  const kindTxt = k => k === "sub" ? "부재료" : "원재료";
+  const kindTxt = kindKo;
   // ── 폐기 내역 뷰 — 자동/수동 폐기를 폐기일과 함께, [취소]로 되돌림 ──
   if (MATSTAT.filter === "disp") {
     $("msHead").innerHTML = ["폐기일", "자재명", "구분", "폐기수량", "유통기한", "사유", "처리"].map((h, i) =>
@@ -3557,12 +3561,13 @@ wireQuickAdd("qaShip", "qaProducts", () => M.product.filter(p => p.status !== "�
   E.ship.push({ product_id: hit.id, partner_id: null, qty: "", prod_date: "", lotExpiry: "", lotNo: 0 });
   renderShip();
 }, "addShip", () => { E.ship.push({ product_id: null, partner_id: null, qty: "", prod_date: "", lotExpiry: "", lotNo: 0 }); renderShip(); });
-wireQuickAdd("qaMat", "qaMaterials", () => M.raw.concat(M.sub), hit => {
+// 입고·실사 검색 = 원·부재료 + 소모품 (배합비 검색 목록 qaMaterials와 분리 — 그쪽엔 소모품 없음)
+wireQuickAdd("qaMat", "qaMatStock", () => M.raw.concat(M.sub, (M.cons || []).filter(c => c.status !== "중단")), hit => {
   if (E.mat.some(r => r.material_id === hit.id)) return toast(`'${hit.name}'은 이미 실사 목록에 있습니다`);
   E.mat.push({ material_id: hit.id, prev_qty: E.prevStock[hit.id] ?? 0, in_qty: "", real_qty: "", order_date: "", order_qty: "" });
   renderMat();
 }, "addMat", () => { E.mat.push({ material_id: null, prev_qty: "", in_qty: "", real_qty: "", order_date: "", order_qty: "" }); renderMat(); });
-wireQuickAdd("qaMatIn", "qaMaterials", () => M.raw.concat(M.sub), hit => {
+wireQuickAdd("qaMatIn", "qaMatStock", () => M.raw.concat(M.sub, (M.cons || []).filter(c => c.status !== "중단")), hit => {
   E.matIn.push({ material_id: hit.id, qty: "", made: "", expiry: "", note: "", partner: "", price: "" });
   renderMatIn(); renderMat();
 }, "addMatIn", () => { E.matIn.push({ material_id: null, qty: "", made: "", expiry: "", note: "", partner: "", price: "" }); renderMatIn(); });
@@ -4188,6 +4193,11 @@ const MCOLS = {
         esc(r.stock_date || "—"), chip(r.status)];
     },
     hint: "재고일수 = 현재고 ÷ 최근 30일 일평균 사용량 · 생산가능수량 = 현재고 × 단위당 수량 · 횟수 = 수량 ÷ 1회 소요량 (환산계수는 7/7 실사 엑셀에서 갱신됨)" },
+  cons: { label: "소모품", cols: ["품목코드", "소모품명", "용도", "규격", "단위", "단가(원)", "안전재고", "현재고", "재고일수", "최종 기록일", "상태"],
+    row: r => [codeCell(r), `<button class="uselink" data-mhist="${r.id}">${esc(r.name)}</button>`,
+      r.category ? `<span class="chip cat">${esc(r.category)}</span>` : "—", esc(r.spec || "—"), esc(r.unit || "—"),
+      r.unit_price == null ? "—" : NF(r.unit_price), NF(r.safety_stock), stockCell(r), stockDaysCell(r), esc(r.stock_date || "—"), chip(r.status)],
+    hint: "소모품 = 보루·스크래퍼·세제·장갑 등 · 입고는 일일 입력 > 원부자재 입고, 남은 수량은 재고 실사로 (사용량 자동 계산) · 안전재고를 넣으면 부족할 때 '발주 필요'에 뜨고 발주서도 쓸 수 있습니다 · 원료수불부·배합비·원가에는 들어가지 않습니다" },
   semi: { label: "반제품", cols: ["품목코드", "반제품명", "규격", "단위", "1배합당 생산량", "안전재고", "현재고", "레시피", "상태"],
     row: r => [codeCell(r), `<button class="uselink" data-mhist="${r.id}">${esc(r.name)}</button>`, esc(r.spec || "—"), esc(r.unit || "—"),
       r.batch_yield ? NF(r.batch_yield) + (r.unit || "") : "미등록", NF(r.safety_stock), NF(r.stock),
@@ -5155,6 +5165,64 @@ $("itemTabs").addEventListener("click", e => {
   BOM.q = ""; $("bomProdSearch").value = "";
   renderMasters();
 });
+/* ── 자주 쓰는 소모품 — 체크해서 한 번에 등록 (이미 있는 이름은 건너뜀) ── */
+const CONS_PRESETS = [   // [용도, [[이름, 단위], …]]
+  ["청소", [["보루(걸레)", "장"], ["행주", "장"], ["수세미", "개"], ["철수세미", "개"], ["주방세제(퐁퐁)", "통"], ["락스", "통"],
+    ["다목적 세정제", "통"], ["오븐 클리너", "통"], ["대걸레", "개"], ["물밀대(스퀴지)", "개"], ["빗자루·쓰레받기", "개"],
+    ["종량제 쓰레기봉투", "장"], ["음식물 쓰레기봉투", "장"], ["대형 비닐봉투", "장"]]],
+  ["위생", [["니트릴 장갑", "박스"], ["위생 비닐장갑", "박스"], ["면장갑", "켤레"], ["코팅 장갑", "켤레"], ["위생모", "개"], ["마스크", "개"],
+    ["위생복", "개"], ["앞치마", "개"], ["팔토시", "켤레"], ["위생화(장화)", "켤레"], ["소독용 알코올", "통"],
+    ["손 세정제", "통"], ["페이퍼타월", "묶음"], ["키친타월", "롤"], ["물티슈", "개"]]],
+  ["주방도구", [["스크래퍼", "개"], ["스패출러", "개"], ["짤주머니", "장"], ["실리콘 붓", "개"], ["거품기", "개"],
+    ["계량컵", "개"], ["오븐 장갑", "켤레"], ["테프론 시트", "장"], ["유산지", "장"], ["빵칼", "개"], ["온도계", "개"]]],
+  ["포장·사무", [["박스 테이프", "롤"], ["라벨지", "장"], ["유성매직", "개"], ["볼펜", "개"], ["비닐랩", "롤"], ["쿠킹호일", "롤"],
+    ["지퍼백", "장"], ["고무줄", "묶음"], ["케이블타이", "묶음"], ["A4 용지", "박스"]]],
+  ["안전", [["구급함 소모품", "개"], ["화상 연고", "개"], ["밴드(반창고)", "박스"], ["안전화", "켤레"], ["귀마개", "개"]]],
+];
+function openConsPreset() {
+  const have = new Set((M.cons || []).concat(M.sub, M.raw).map(m => m.name.replace(/\s/g, "")));
+  $("consPresetBody").innerHTML = CONS_PRESETS.map(([cat, items]) => `
+    <div style="font-weight:800; font-size:12.5px; margin:6px 0 2px;">${esc(cat)}</div>
+    <div class="cp-grid">${items.map(([n, u]) => {
+      const has = have.has(n.replace(/\s/g, ""));
+      return `<label class="${has ? "has" : ""}" title="${has ? "이미 등록됨" : "단위: " + esc(u)}"><input type="checkbox" data-cp="${esc(n)}" data-cpu="${esc(u)}" data-cpc="${esc(cat)}"
+        ${has ? "disabled checked" : ""} style="width:15px; height:15px;">${esc(n)}${has ? " ✓" : ""}</label>`;
+    }).join("")}</div>`).join("");
+  $("consPresetExtra").value = "";
+  updConsPresetCnt();
+  $("consPresetOverlay").classList.add("on");
+}
+function consPresetPicks() {
+  const picks = [...document.querySelectorAll("#consPresetBody [data-cp]:checked:not(:disabled)")]
+    .map(el => ({ name: el.dataset.cp, unit: el.dataset.cpu, category: el.dataset.cpc }));
+  const have = new Set((M.cons || []).map(m => m.name.replace(/\s/g, "")).concat(picks.map(p => p.name.replace(/\s/g, ""))));
+  $("consPresetExtra").value.split(",").map(s => s.trim()).filter(Boolean).forEach(n => {
+    if (!have.has(n.replace(/\s/g, ""))) { picks.push({ name: n, unit: "개", category: "기타" }); have.add(n.replace(/\s/g, "")); }
+  });
+  return picks;
+}
+function updConsPresetCnt() { $("consPresetCnt").textContent = `${consPresetPicks().length}개 선택`; }
+window.closeConsPreset = () => $("consPresetOverlay").classList.remove("on");
+$("consPresetBody").addEventListener("change", updConsPresetCnt);
+$("consPresetExtra").addEventListener("input", updConsPresetCnt);
+$("mConsPreset").onclick = openConsPreset;
+$("consPresetOk").onclick = async () => {
+  const picks = consPresetPicks();
+  if (!picks.length) return toast("등록할 소모품을 체크하거나 직접 입력하세요");
+  $("consPresetOk").disabled = true;
+  let ok = 0; const fail = [];
+  try {
+    for (const p of picks) {
+      const r = await fetch("/api/masters/cons", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...p, status: "사용중" }) });
+      if (r.ok) ok++; else fail.push(p.name);
+    }
+  } finally { $("consPresetOk").disabled = false; }
+  closeConsPreset();
+  await reloadMaster("cons"); renderMasters();
+  toast(`소모품 ${ok}개를 등록했습니다` + (fail.length ? ` · 실패 ${fail.length}개(${fail.slice(0, 3).join(", ")}${fail.length > 3 ? " …" : ""})` : "")
+    + (ok ? " — 단가·안전재고는 [⚡ 빠른 편집]으로" : ""));
+};
 let mFilter = "";
 $("mFilter").addEventListener("input", e => { mFilter = e.target.value.trim().toLowerCase(); renderMasters(); });
 
@@ -5177,6 +5245,10 @@ const MHEALTH = {
     ["unit_price", "단가", "미등록 시 자재 사용금액 집계에서 빠짐"],
     ["safety_stock", "안전재고", "미등록 시 재고 0 이하가 돼야만 부족 경보"],
   ],
+  cons: [
+    ["safety_stock", "안전재고", "미등록 시 다 떨어져야만 '발주 필요'에 뜸"],
+    ["unit_price", "단가", "미등록 시 매입·사용 금액 집계에서 빠짐"],
+  ],
   staff: [["wage", "시급", "미등록 시 노무비 계산이 0으로 나옴"]],
 };
 const QE_COLS = {
@@ -5184,12 +5256,13 @@ const QE_COLS = {
   product: { 4: "unit_price", 5: "shelf_days", 6: "safety_stock" },
   raw: { 5: "unit_price", 6: "safety_stock", 7: "shelf_days" },
   sub: { 3: "pack_count", 4: "unit_price", 5: "safety_stock", 6: "shelf_days" },
+  cons: { 5: "unit_price", 6: "safety_stock" },
   partner: { 1: "type" },   // 유형 — 숫자가 아닌 선택형 (renderMasters에서 select로 렌더)
   staff: { 3: "wage" },
 };
 let mQuick = false;      // 빠른 편집 모드
 let mMissing = "";       // 완성도 배너에서 선택한 '미등록만 보기' 필드
-const ACTIVE_OK = { product: "단종", raw: "중단", sub: "중단", staff: "퇴사", partner: "중지", line: "중지" };   // 제외할 상태
+const ACTIVE_OK = { product: "단종", raw: "중단", sub: "중단", cons: "중단", staff: "퇴사", partner: "중지", line: "중지" };   // 제외할 상태
 function mActive(r) { return r.status !== ACTIVE_OK[mTab]; }
 function mIsMissing(r, f) {
   if (f === "bom") return !(BOMALL && (BOMALL[r.id] || []).length);
@@ -5330,8 +5403,9 @@ function renderMasters() {
   const qeMap = QE_COLS[mTab];
   $("mQuickEdit").style.display = (qeMap && ROLE !== "guest") ? "" : "none";
   $("mImport").style.display = (qeMap && ROLE === "admin" && mTab !== "partner") ? "" : "none";   // 거래처는 [엑셀 받기] 전용
-  { const bc = $("mBarcode"); if (bc) { bc.style.display = ["product", "raw", "sub", "semi"].includes(mTab) ? "" : "none"; bc.onclick = printBarcodeLabels; } }   // 품목 탭에서 바코드 라벨
+  { const bc = $("mBarcode"); if (bc) { bc.style.display = ["product", "raw", "sub", "cons", "semi"].includes(mTab) ? "" : "none"; bc.onclick = printBarcodeLabels; } }   // 품목 탭에서 바코드 라벨
   $("mPackSet").style.display = (mTab === "sub" && ROLE === "admin") ? "" : "none";
+  $("mConsPreset").style.display = (mTab === "cons" && ROLE !== "guest") ? "" : "none";
   $("mErpImport").style.display = (mTab === "partner" && ROLE === "admin") ? "" : "none";
   $("mQuickEdit").classList.toggle("on", mQuick);
   $("mQuickEdit").textContent = mQuick ? "⚡ 빠른 편집 종료" : "⚡ 빠른 편집";
@@ -6073,9 +6147,9 @@ function renderBomRows() {
     const extraCells = `<td><button class="note-cell ${pNames.length ? "" : "auto"}" data-bpartner="${i}" style="max-width:110px"
       title="이 자재를 쓰는 납품처 지정 (여러 곳 선택 가능) — 일일입력 계획 거래처 분배와 연동">${pNames.length ? esc(pNames.join(", ")) : "공통"}</button></td>`;
     return `<tr data-bi="${i}">
-      <td>${matSel(r.material_id, 'data-bf="material_id"')}</td>
+      <td>${matSel(r.material_id, 'data-bf="material_id"', "", "nm", true)}</td>
       <td>${Number(m.is_semi) ? '<span class="chip cat" style="background:#efe7fb; color:#6b3fa0;">🧫 반제품</span>'
-        : (m.kind ? `<span class="chip cat">${m.kind === "raw" ? "원재료" : "부재료"}</span>` : "—")}</td>
+        : (m.kind ? `<span class="chip cat">${kindKo(m.kind)}</span>` : "—")}</td>
       ${qtyCells}${extraCells}
       <td>${r.note ? `<button class="note-cell" data-bnote="${i}" title="클릭하면 전체 보기/편집">${esc(r.note)}</button>`
         : `<button class="note-cell auto" data-bnote="${i}">＋ 비고</button>`}</td>
@@ -6466,6 +6540,8 @@ $("mBody").addEventListener("keydown", e => {
 });
 
 /* 기준정보 등록/수정 모달 (탭별 폼) */
+const CONS_CATS = ["기타", "청소", "위생", "주방도구", "포장·사무", "안전"];   // 신규 기본값 = 첫 항목
+const CONS_UNITS = ["개", "장", "롤", "통", "켤레", "박스", "묶음", "L", "kg"];
 const MFORMS = {
   product: [["name", "제품명 *"], ["code", "품목코드 (비우면 자동 부여 · 완제품 FG####)"], ["category", "카테고리"], ["spec", "규격 (예: 60g/EA)"],
     ["unit_price", "단가 (원)", "num"], ["shelf_days", "소비일 (일)", "num"], ["safety_stock", "안전재고", "num"],
@@ -6473,7 +6549,7 @@ const MFORMS = {
     ["fin_split", "완제품 수불부 거래처 분리 표시", "sel", [["0", "분리 안 함 (기본) — 합쳐서 한 행"], ["1", "분리 표시 — 거래처별 '거래처명 제품명' 행"]]],
     ["initial_stock", "초기재고 (신규만)", "num"], ["stock_set", "현재고 (수정 시 기초재고 자동 조정)", "num"],
     ["status", "상태", "sel", ["판매중", "단종"]], ["note", "비고", "full"]],
-  raw: [["name", "자재명 *"], ["code", "품목코드 (비우면 자동 부여 · 원자재 RM####)"], ["kind", "구분", "sel", [["raw", "원재료"], ["sub", "부재료"]]],
+  raw: [["name", "자재명 *"], ["code", "품목코드 (비우면 자동 부여 · 원자재 RM####)"], ["kind", "구분", "sel", [["raw", "원재료"], ["sub", "부재료"], ["cons", "소모품"]]],
     ["spec", "규격 (예: 20kg 포대)"], ["unit", "단위", "sel", ["kg", "g", "L", "개", "ea"]],
     ["pack_count", "개입수 (개수 단위일 때만 · 예: 16개입=16 → 소모=생산수량÷개입수)", "num"],
     ["pack_set", "포장 세트 (읽기 전용 — 부재료 탭의 [📦 포장 세트]에서 관리 · 여러 세트 동시 소속 가능)", "ro"],
@@ -6481,7 +6557,7 @@ const MFORMS = {
     ["safety_stock", "안전재고", "num"], ["shelf_days", "소비기한 (보관일수, 일)", "num"], ["initial_stock", "초기재고 (신규만)", "num"],
     ["stock_set", "현재고 (아래 기준일의 실사 기록으로 저장됩니다)", "num"], ["stock_date", "기준일 (이 날짜에 기록)", "date"],
     ["status", "상태", "sel", ["사용중", "중단"]], ["note", "비고", "full"]],
-  sub: [["name", "자재명 *"], ["code", "품목코드 (비우면 자동 부여 · 부자재 SM####)"], ["kind", "구분", "sel", [["sub", "부재료"], ["raw", "원재료"]]],
+  sub: [["name", "자재명 *"], ["code", "품목코드 (비우면 자동 부여 · 부자재 SM####)"], ["kind", "구분", "sel", [["sub", "부재료"], ["raw", "원재료"], ["cons", "소모품"]]],
     ["spec", "규격 (예: 500ea/롤)"], ["unit", "단위", "sel", ["개", "ea", "롤", "박스", "묶음", "매"]],
     ["is_pallet", "🪵 파렛트 — 체크하면 파렛트 관리·일일 입력 출고 행의 '파렛트' 칸에 나옵니다", "chk"],
     ["pack_count", "개입수 (개수 단위일 때만 · 예: 16개입=16 → 소모=생산수량÷개입수)", "num"],
@@ -6491,6 +6567,14 @@ const MFORMS = {
     ["stock_set", "현재고 (아래 기준일의 실사 기록으로 저장됩니다)", "num"], ["stock_date", "기준일 (이 날짜에 기록)", "date"],
     ["prod_mult", "단위당 수량 (생산가능 환산)", "num"], ["prod_per", "1회 생산 소요량", "num"],
     ["status", "상태", "sel", ["사용중", "중단"]], ["note", "비고", "full"]],
+  cons: [["name", "소모품명 * (예: 보루, 스크래퍼, 주방세제)"], ["code", "품목코드 (비우면 자동 부여 · 소모품 CS####)"],
+    ["category", "용도 — 선택 또는 직접 입력", "combo", CONS_CATS],
+    ["kind", "구분", "sel", [["cons", "소모품"], ["sub", "부재료"], ["raw", "원재료"]]],
+    ["spec", "규격 (예: 2L, 100매, 30cm)"], ["unit", "단위", "combo", CONS_UNITS],
+    ["unit_price", "단가 (원)", "num"], ["price_from", "단가 적용 시작일 (비우면 오늘)", "date"],
+    ["safety_stock", "안전재고 (이 아래로 떨어지면 '발주 필요')", "num"], ["initial_stock", "초기재고 (신규만)", "num"],
+    ["stock_set", "현재고 (아래 기준일의 실사 기록으로 저장됩니다)", "num"], ["stock_date", "기준일 (이 날짜에 기록)", "date"],
+    ["status", "상태", "sel", ["사용중", "중단"]], ["note", "비고 (보관 위치·구매처 등)", "full"]],
   semi: [["name", "반제품명 * (예: 발효종)"], ["code", "품목코드 (비우면 자동 부여 · 반제품 SF####)"], ["spec", "규격 (예: 발효반죽)"],
     ["unit", "단위 (재고 단위)", "sel", ["g", "kg", "개", "ea"]],
     ["batch_yield", "1배합당 생산량 (위 단위 기준 · 예: 16800)", "num"],
@@ -6610,7 +6694,7 @@ function openMaster(type, row) {
     if (row && f === "initial_stock") return "";
     if (!row && (f === "stock_set" || f === "stock_date" || f === "price_from")) return "";   // 단가 적용일은 수정 시에만
     // 자재의 구분(원↔부)은 수정 시에만 — 신규는 탭이 곧 구분. 인원 등 다른 탭의 kind는 항상 표시
-    if (!row && f === "kind" && (type === "raw" || type === "sub")) return "";
+    if (!row && f === "kind" && (type === "raw" || type === "sub" || type === "cons")) return "";
     if (f === "wage" && !canM("wage")) return "";     // 시급 — 노무비 권한
     if (f === "unit_price" && !canM(type === "product" ? "prod_price" : "mat_price")) return "";   // 단가 — 금액 권한
     const v = row
@@ -6854,7 +6938,7 @@ $("mstSave").onclick = async () => {
   // 과거 날짜로 실사를 기록하면 목록의 '현재고/최종 기록일'은 더 최신 기록을 계속 보여준다 —
   // 저장이 안 된 걸로 오해하기 쉬워 그 사실을 알려준다
   const savedDate = body.stock_date;
-  if ((t === "raw" || t === "sub") && body.stock_set != null && savedDate) {
+  if ((t === "raw" || t === "sub" || t === "cons") && body.stock_set != null && savedDate) {
     const m2 = (M[t] || []).find(x => x.id === mstEdit.id);
     if (m2 && m2.stock_date && m2.stock_date > savedDate) {
       toast(`${savedDate} 실사로 저장했습니다 — 목록의 현재고는 더 최신 기록(${m2.stock_date}) 기준이라 그대로입니다`);
@@ -7088,8 +7172,8 @@ async function openPo(prefillLow) {
   $("poDate").value = todayISO();
   $("poDue").value = ""; $("poNote").value = "";
   // 자재 검색 자동완성 목록 (원재료/부재료 전체)
-  $("poMatDl").innerHTML = M.raw.concat(M.sub)
-    .map(m => `<option value="${esc(m.name)}">${m.kind === "raw" ? "원재료" : "부재료"}</option>`).join("");
+  $("poMatDl").innerHTML = M.raw.concat(M.sub, (M.cons || []).filter(c => c.status !== "중단"))
+    .map(m => `<option value="${esc(m.name)}">${kindKo(m.kind)}</option>`).join("");
   document.querySelectorAll("#poOverlay .po-money").forEach(el => el.style.display = poMoney() ? "" : "none");
   $("poShowAmt").checked = poShowAmtPref();
   if (poMoney()) { try { Object.assign(PO_LASTP, await api("/api/matlastprice")); } catch (e) { } }
@@ -7156,7 +7240,7 @@ $("poItems").addEventListener("change", e => {
   const q = e.target.value.trim();
   it.matq = q;
   if (!q) { it.material_id = null; renderPoItems(); return; }
-  const all = M.raw.concat(M.sub);
+  const all = M.raw.concat(M.sub, M.cons || []);
   let m = all.find(x => x.name === q);
   if (!m) {
     const cands = all.filter(x => x.name.toLowerCase().includes(q.toLowerCase()));
@@ -9565,7 +9649,7 @@ async function openMatHistory(mid) {
   }
   $("anaPTitle").textContent = d.name;
   $("anaPHint").textContent =
-    `${d.is_semi ? "🧫 반제품" : d.kind === "raw" ? "원재료" : "부재료"} · 최근 ${d.rows.length}일` +
+    `${d.is_semi ? "🧫 반제품" : kindKo(d.kind)} · 최근 ${d.rows.length}일` +
     ` · 마지막 ${d.is_semi ? "생산" : "입고"} ${d.last_in ? d.last_in.date + " (+" + NF(d.last_in.in_qty) + d.unit + ")" : "기록 없음"}` +
     ` · 마지막 ${d.is_semi ? "소비" : "사용"} ${d.last_use ? d.last_use.date + " (" + NF(d.last_use.used_qty) + d.unit + ")" : "기록 없음"}`;
   // 그 날짜에 직접 적힌 소비기한·제조일자 (입고분 우선, 없으면 입고 없는 재고 수동입력분)
