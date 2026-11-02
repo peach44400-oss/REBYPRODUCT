@@ -1496,6 +1496,10 @@ function selHtml(list, val, field, nameKey = "name", extra = "", cls = "") {
     list.map(o => `<option value="${o.id}" ${o.id === val ? "selected" : ""}>${esc(o[nameKey])}</option>`).join("") + "</select>";
 }
 /* 거래처 유형 — 콤마로 구분한 복수 유형(예: "판매처, 자재 공급처")을 배열/포함 판정으로 다룬다. */
+const P_TYPES = ["판매처", "자재 공급처", "용역업체", "운송사", "물류창고"];   // 표준 유형 (체크박스·선택 목록)
+// 자재 부가세 — 단가는 공급가(부가세 별도), 면세면 발주서·매입 통계에서 부가세 0원
+const TAX_OPTS = [["0", "과세 — 단가 + 부가세 10%"], ["1", "면세 — 부가세 없음"]];
+const tfChip = r => +r.taxfree === 1 ? ' <span class="chip cat" title="면세 — 발주서·매입 통계에 부가세 0원">면세</span>' : "";
 function pTypes(p) { return String((p && p.type) || "").split(",").map(s => s.trim()).filter(Boolean); }
 function pHasType(p, t) { return pTypes(p).includes(t); }
 /* 거래처 select 옵션 — 유형별 optgroup으로 구분 표시.
@@ -2487,7 +2491,7 @@ $("lotSplitSave").onclick = () => {
   updatePackUsage(pr.product_id);   // 포장 선택에 따라 부재료(BOX) 사용량 재계산
   toast(valid.length ? `소비기한 ${valid.length}구간 설정됨 — 저장 시 반영` : "소비기한 분할 해제됨");
 };
-// 출고·분배 대상 거래처 = 판매 성격이 있는 곳 (자재 공급처·용역업체'만'인 곳은 제외).
+// 출고·분배 대상 거래처 = 판매 성격이 있는 곳 (자재 공급처·용역업체·운송사'만'인 곳은 제외 — 물류창고는 출고 대상).
 //  복수 유형이면 판매처 등 다른 유형이 하나라도 있으면 대상 (예: "자재 공급처, 판매처").
 function isSeller(p) {
   if (p.status === "중지") return false;
@@ -2631,9 +2635,13 @@ function renderFreight() {
     <td>${inp(r, "note", 92, "")}</td>
     <td><button class="btn ghost sm" data-fdel>삭제</button></td></tr>`;
   }).join("") || `<tr><td colspan="10" class="auto">+ 운송 행 추가 또는 📥 오늘 출고에서 불러오기</td></tr>`;
-  // 출발지·도착지 목록 = 예전에 쓴 장소 + 출고 거래처
-  $("freightPlaces").innerHTML = [...new Set((E.freightPlaces || []).concat((M.partner || []).filter(isSeller).map(p => p.name)))]
-    .map(p => `<option value="${esc(p)}">`).join("");
+  // 출발지·도착지 목록 = 예전에 쓴 장소 + 물류창고 + 출고 거래처 (거래처는 유형을 옆에 표시)
+  const ps = (M.partner || []).filter(p => p.status !== "중지");
+  const wh = ps.filter(p => pTypes(p).includes("물류창고")), sel = ps.filter(isSeller);
+  const lbl = {};
+  sel.forEach(p => lbl[p.name] = "판매처"); wh.forEach(p => lbl[p.name] = "🏭 물류창고");
+  $("freightPlaces").innerHTML = [...new Set((E.freightPlaces || []).concat(wh.map(p => p.name), sel.map(p => p.name)))]
+    .map(p => `<option value="${esc(p)}"${lbl[p] ? ` label="${lbl[p]}"` : ""}>`).join("");
   renderFreightSum();
 }
 function renderFreightSum() {
@@ -4181,20 +4189,20 @@ const MCOLS = {
     row: r => [codeCell(r), `<button class="uselink" data-phist="${r.id}" style="display:inline-flex; align-items:center; gap:8px">${r.image ? `<img src="/image/${encodeURIComponent(r.image)}" style="width:30px; height:30px; object-fit:cover; border-radius:5px; border:1px solid var(--line)">` : ""}<b>${esc(r.name)}</b></button>`, esc(r.category || "—"), esc(r.spec || "—"), r.unit_price == null ? "—" : NF(r.unit_price), r.shelf_days || "—", NF(r.safety_stock), NF(r.stock), chip(r.status)],
     hint: "제품명 클릭 = 생산일자별 재고(LOT)·생산/출고 이력 · 현재고 = 기초재고 + 생산 − 출고 − 폐기 (자동 계산)" },
   raw: { label: "원재료", cols: ["품목코드", "자재명", "규격", "단위", "개입수", "단가(원)", "안전재고", "소비일", "현재고", "재고일수", "최종 기록일", "상태"],
-    row: r => [codeCell(r), `<button class="uselink" data-mhist="${r.id}">${esc(r.name)}</button>`, esc(r.spec || "—"), esc(r.unit), r.pack_count ? NF(r.pack_count) : "—", r.unit_price == null ? "—" : NF(r.unit_price), NF(r.safety_stock), r.shelf_days || "—", stockCell(r), stockDaysCell(r), esc(r.stock_date || "—"), chip(r.status)],
+    row: r => [codeCell(r), `<button class="uselink" data-mhist="${r.id}">${esc(r.name)}</button>${tfChip(r)}`, esc(r.spec || "—"), esc(r.unit), r.pack_count ? NF(r.pack_count) : "—", r.unit_price == null ? "—" : NF(r.unit_price), NF(r.safety_stock), r.shelf_days || "—", stockCell(r), stockDaysCell(r), esc(r.stock_date || "—"), chip(r.status)],
     hint: "자재명 클릭 = 입·출고 이력 · 현재고 = 마지막 기록일의 실재고 · 재고일수 = 현재고 ÷ 최근 30일 일평균 사용량 · 개입수 = 개수 자재의 1개당 포장수(소모 = 생산수량 ÷ 개입수)" },
   sub: { label: "부재료", cols: ["품목코드", "자재명", "단위", "개입수", "단가(원)", "안전재고", "소비일", "현재고", "재고일수", "생산가능수량", "생산가능횟수", "최종 기록일", "상태"],
     row: r => {
       const canQty = r.prod_mult && r.stock != null ? r.stock * r.prod_mult : null;
       const canCnt = canQty != null && r.prod_per ? canQty / r.prod_per : null;
-      return [codeCell(r), `<button class="uselink" data-mhist="${r.id}">${esc(r.name)}</button>${+r.is_pallet === 1 ? ' <span class="chip cat" title="파렛트 — 파렛트 관리·출고 행 파렛트 칸에 나옴">🪵 파렛트</span>' : ""}`, esc(r.unit), r.pack_count ? NF(r.pack_count) : "—", NF(r.unit_price), NF(r.safety_stock), r.shelf_days || "—", stockCell(r), stockDaysCell(r),
+      return [codeCell(r), `<button class="uselink" data-mhist="${r.id}">${esc(r.name)}</button>${tfChip(r)}${+r.is_pallet === 1 ? ' <span class="chip cat" title="파렛트 — 파렛트 관리·출고 행 파렛트 칸에 나옴">🪵 파렛트</span>' : ""}`, esc(r.unit), r.pack_count ? NF(r.pack_count) : "—", NF(r.unit_price), NF(r.safety_stock), r.shelf_days || "—", stockCell(r), stockDaysCell(r),
         canQty != null ? NF(Math.round(canQty)) : '<span class="auto">환산 미설정</span>',
         canCnt != null ? `<span style="${canCnt < 3 ? "color:var(--warn); font-weight:700" : ""}">${NF(Math.round(canCnt * 10) / 10)}회</span>` : "—",
         esc(r.stock_date || "—"), chip(r.status)];
     },
     hint: "재고일수 = 현재고 ÷ 최근 30일 일평균 사용량 · 생산가능수량 = 현재고 × 단위당 수량 · 횟수 = 수량 ÷ 1회 소요량 (환산계수는 7/7 실사 엑셀에서 갱신됨)" },
   cons: { label: "소모품", cols: ["품목코드", "소모품명", "용도", "규격", "단위", "단가(원)", "안전재고", "현재고", "재고일수", "최종 기록일", "상태"],
-    row: r => [codeCell(r), `<button class="uselink" data-mhist="${r.id}">${esc(r.name)}</button>`,
+    row: r => [codeCell(r), `<button class="uselink" data-mhist="${r.id}">${esc(r.name)}</button>${tfChip(r)}`,
       r.category ? `<span class="chip cat">${esc(r.category)}</span>` : "—", esc(r.spec || "—"), esc(r.unit || "—"),
       r.unit_price == null ? "—" : NF(r.unit_price), NF(r.safety_stock), stockCell(r), stockDaysCell(r), esc(r.stock_date || "—"), chip(r.status)],
     hint: "소모품 = 보루·스크래퍼·세제·장갑 등 · 입고는 일일 입력 > 원부자재 입고, 남은 수량은 재고 실사로 (사용량 자동 계산) · 안전재고를 넣으면 부족할 때 '발주 필요'에 뜨고 발주서도 쓸 수 있습니다 · 원료수불부·배합비·원가에는 들어가지 않습니다" },
@@ -5452,7 +5460,7 @@ function renderMasters() {
     if (mQuick && qeMap) {
       for (const [idx, f] of Object.entries(qeMap)) {
         if (f === "type") {   // 거래처 유형 — 선택형 (기존 유형 + 기본 유형 목록)
-          const types = [...new Set(["판매처", "자재 공급처", "용역업체", "운송사"]
+          const types = [...new Set(P_TYPES
             .concat((M.partner || []).map(p => p.type).filter(Boolean)))];
           cells[idx] = `<select class="qe-input" data-qe="type" data-qid="${r.id}" style="min-width:110px">`
             + types.map(t => `<option value="${esc(t)}" ${t === r.type ? "selected" : ""}>${esc(t)}</option>`).join("")
@@ -6583,7 +6591,8 @@ const MFORMS = {
     ["spec", "규격 (예: 20kg 포대)"], ["unit", "단위", "sel", ["kg", "g", "L", "개", "ea"]],
     ["pack_count", "개입수 (개수 단위일 때만 · 예: 16개입=16 → 소모=생산수량÷개입수)", "num"],
     ["pack_set", "포장 세트 (읽기 전용 — 부재료 탭의 [📦 포장 세트]에서 관리 · 여러 세트 동시 소속 가능)", "ro"],
-    ["unit_price", "단가 (원)", "num"], ["price_from", "단가 적용 시작일 (비우면 오늘 · 이 날짜부터 새 단가로 원가 계산)", "date"],
+    ["unit_price", "단가 (원 · 부가세 별도 공급가)", "num"], ["taxfree", "부가세", "sel", TAX_OPTS],
+    ["price_from", "단가 적용 시작일 (비우면 오늘 · 이 날짜부터 새 단가로 원가 계산)", "date"],
     ["safety_stock", "안전재고", "num"], ["shelf_days", "소비기한 (보관일수, 일)", "num"], ["initial_stock", "초기재고 (신규만)", "num"],
     ["stock_set", "현재고 (아래 기준일의 실사 기록으로 저장됩니다)", "num"], ["stock_date", "기준일 (이 날짜에 기록)", "date"],
     ["status", "상태", "sel", ["사용중", "중단"]], ["note", "비고", "full"]],
@@ -6592,7 +6601,8 @@ const MFORMS = {
     ["is_pallet", "🪵 파렛트 — 체크하면 파렛트 관리·일일 입력 출고 행의 '파렛트' 칸에 나옵니다", "chk"],
     ["pack_count", "개입수 (개수 단위일 때만 · 예: 16개입=16 → 소모=생산수량÷개입수)", "num"],
     ["pack_set", "포장 세트 (읽기 전용 — 부재료 탭의 [📦 포장 세트]에서 관리 · 여러 세트 동시 소속 가능)", "ro"],
-    ["unit_price", "단가 (원)", "num"], ["price_from", "단가 적용 시작일 (비우면 오늘 · 이 날짜부터 새 단가로 원가 계산)", "date"],
+    ["unit_price", "단가 (원 · 부가세 별도 공급가)", "num"], ["taxfree", "부가세", "sel", TAX_OPTS],
+    ["price_from", "단가 적용 시작일 (비우면 오늘 · 이 날짜부터 새 단가로 원가 계산)", "date"],
     ["safety_stock", "안전재고", "num"], ["shelf_days", "소비기한 (보관일수, 일)", "num"], ["initial_stock", "초기재고 (신규만)", "num"],
     ["stock_set", "현재고 (아래 기준일의 실사 기록으로 저장됩니다)", "num"], ["stock_date", "기준일 (이 날짜에 기록)", "date"],
     ["prod_mult", "단위당 수량 (생산가능 환산)", "num"], ["prod_per", "1회 생산 소요량", "num"],
@@ -6601,7 +6611,8 @@ const MFORMS = {
     ["category", "용도 — 선택 또는 직접 입력", "combo", CONS_CATS],
     ["kind", "구분", "sel", [["cons", "소모품"], ["sub", "부재료"], ["raw", "원재료"]]],
     ["spec", "규격 (예: 2L, 100매, 30cm)"], ["unit", "단위", "combo", CONS_UNITS],
-    ["unit_price", "단가 (원)", "num"], ["price_from", "단가 적용 시작일 (비우면 오늘)", "date"],
+    ["unit_price", "단가 (원 · 부가세 별도 공급가)", "num"], ["taxfree", "부가세", "sel", TAX_OPTS],
+    ["price_from", "단가 적용 시작일 (비우면 오늘)", "date"],
     ["safety_stock", "안전재고 (이 아래로 떨어지면 '발주 필요')", "num"], ["initial_stock", "초기재고 (신규만)", "num"],
     ["stock_set", "현재고 (아래 기준일의 실사 기록으로 저장됩니다)", "num"], ["stock_date", "기준일 (이 날짜에 기록)", "date"],
     ["status", "상태", "sel", ["사용중", "중단"]], ["note", "비고 (보관 위치·구매처 등)", "full"]],
@@ -6612,7 +6623,7 @@ const MFORMS = {
     ["initial_stock", "초기재고 (신규만)", "num"],
     ["stock_set", "현재고 (아래 기준일에 실사 기록)", "num"], ["stock_date", "기준일 (이 날짜에 기록)", "date"],
     ["status", "상태", "sel", ["사용중", "중단"]], ["note", "비고", "full"]],
-  partner: [["name", "거래처명 *"], ["type", "유형 — 선택 또는 직접 입력 (예: 기부)", "combo", ["판매처", "자재 공급처", "용역업체", "운송사"]],
+  partner: [["name", "거래처명 *"], ["type", "유형 — 선택 또는 직접 입력 (예: 기부)", "combo", P_TYPES],
     ["biz_no", "사업자등록번호"], ["ceo", "대표자명"],
     ["phone", "전화"], ["mobile", "모바일"],
     ["email", "이메일 (발주서 메일 발송)"],
@@ -6736,7 +6747,7 @@ function openMaster(type, row) {
     // 거래처 '유형' — 복수 선택(판매처+자재공급처 등). 표준 3종 체크박스 + 기타 직접 입력.
     if (type === "partner" && f === "type") {
       const cur = new Set(String((row && row.type) || "").split(",").map(s => s.trim()).filter(Boolean));
-      const std = ["판매처", "자재 공급처", "용역업체", "운송사"];
+      const std = P_TYPES;
       const etc = [...cur].filter(t => !std.includes(t)).join(", ");
       return `<div class="fld full"><label>유형 <span class="auto" style="font-weight:400">(여러 개 선택 가능)</span></label>
         <div style="display:flex; gap:16px; flex-wrap:wrap; padding:3px 0;">
@@ -6753,7 +6764,7 @@ function openMaster(type, row) {
           .map(l => [l.id, l.name + (l.process ? " / " + l.process : "")]));
     // 거래처 '유형' 콤보 옵션 = 기본 유형 + 이미 등록된 유형 (직접 입력한 새 유형도 다음부터 목록에 나타남)
     if (type === "partner" && f === "type")
-      opts = [...new Set(["판매처", "자재 공급처", "용역업체", "운송사"]
+      opts = [...new Set(P_TYPES
         .concat((M.partner || []).map(p => p.type).filter(Boolean)))];
     // 인원 '직책' 콤보 옵션 = 기본 직책 + 이미 등록된 직책 (직접 입력도 가능)
     if (type === "staff" && f === "position")
@@ -7192,6 +7203,7 @@ const poMoney = () => canM("mat_amt") || canM("mat_price");   // 단가·금액 
 let COINFO = null;   // 우리 회사 정보(발주서 우측 상자) — 열 때마다 새로 읽어 도장 교체도 바로 반영
 async function loadCo() { try { COINFO = await api("/api/company"); } catch (e) { COINFO = COINFO || {}; } return COINFO; }
 const PO_LASTP = {};   // 자재별 최근 입고 단가 (단가 칸 기본값)
+const poVat = it => it.taxfree ? 0 : Math.round(Math.round(poItemPrice(it) * _num(it.qty)) * 0.1);   // 품목 부가세 (면세면 0)
 async function openPo(prefillLow) {
   PO.items = []; PO.id = null; PO.seq = null; PO.locked = false; PO.created_by = "";
   // 거래처: 검색 입력(datalist) — 자재 공급처를 먼저, 미등록 이름 직접 입력도 허용
@@ -7222,7 +7234,7 @@ async function poFillFromLow() {
     if (!items.length) { toast("안전재고 미달(미발주) 자재가 없습니다"); return; }
     items.forEach(x => {
       if (!PO.items.some(it => it.material_id === x.id))
-        PO.items.push({ material_id: x.id, qty: Math.ceil(x.shortfall * 100) / 100, price: "" });
+        PO.items.push({ material_id: x.id, qty: Math.ceil(x.shortfall * 100) / 100, price: "", taxfree: +(materialById(x.id) || {}).taxfree === 1 });
     });
   } catch (e) { /* api가 토스트 */ }
 }
@@ -7239,16 +7251,21 @@ function renderPoItems() {
       <td class="r"><input class="mini-input num" data-pf="qty" value="${it.qty ?? ""}" style="width:90px" inputmode="decimal"></td>
       <td class="auto">${esc(m.unit || "")}</td>
       ${money ? `<td class="r"><input class="mini-input num" data-pf="price" value="${it.price ?? ""}" placeholder="${pr ? NF(pr) : "단가"}" style="width:90px" inputmode="decimal" title="비워 두면 최근 입고 단가(${pr ? NF(pr) : "없음"})로 저장"></td>
-      <td class="r" data-pfsup>${pr && _num(it.qty) ? NF(Math.round(pr * _num(it.qty))) : "—"}</td>` : ""}
+      <td class="r" data-pfsup>${pr && _num(it.qty) ? NF(Math.round(pr * _num(it.qty))) : "—"}</td>
+      <td style="text-align:center; white-space:nowrap;"><label style="display:inline-flex; align-items:center; gap:4px; cursor:pointer; font-size:12px;" title="체크 해제 = 면세 (부가세 0원)">
+        <input type="checkbox" data-pf="vat" ${it.taxfree ? "" : "checked"} style="width:15px; height:15px;"><span data-pfvat class="${it.taxfree ? "auto" : ""}">${it.taxfree ? "면세" : (pr && _num(it.qty) ? NF(poVat(it)) : "10%")}</span></label></td>` : ""}
       <td><button class="btn ghost sm" data-podel>삭제</button></td></tr>`;
-  }).join("") || `<tr><td colspan="${money ? 6 : 4}" class="auto">[⚠ 부족 자재 채우기] 또는 [+ 품목 추가]로 품목을 넣으세요</td></tr>`;
+  }).join("") || `<tr><td colspan="${money ? 7 : 4}" class="auto">[⚠ 부족 자재 채우기] 또는 [+ 품목 추가]로 품목을 넣으세요</td></tr>`;
   poUpdateSum();
 }
 function poUpdateSum() {
   if (!poMoney()) return;
   let sup = 0;
-  PO.items.forEach(it => { if (it.material_id) sup += Math.round(poItemPrice(it) * _num(it.qty)); });
-  const vat = Math.round(sup * 0.1);
+  let vat = 0;
+  PO.items.forEach(it => { if (it.material_id) { sup += Math.round(poItemPrice(it) * _num(it.qty)); vat += poVat(it); } });
+  const all = PO.items.filter(it => it.material_id);
+  if ($("poVatAll")) { const n = all.filter(it => !it.taxfree).length;
+    $("poVatAll").checked = all.length > 0 && n === all.length; $("poVatAll").indeterminate = n > 0 && n < all.length; }
   $("poSum").innerHTML = sup ? `공급가액 <b class="num">${NF(sup)}</b> · 부가세 <b class="num">${NF(vat)}</b> · 합계 <b class="num" style="font-size:14px;">${NF(sup + vat)}</b>원` : "";
 }
 $("poItems").addEventListener("input", e => {
@@ -7259,8 +7276,15 @@ $("poItems").addEventListener("input", e => {
     it[f] = e.target.value;
     const pr = poItemPrice(it), c = tr.querySelector("[data-pfsup]");
     if (c) c.textContent = pr && _num(it.qty) ? NF(Math.round(pr * _num(it.qty))) : "—";
+    const v = tr.querySelector("[data-pfvat]");
+    if (v && !it.taxfree) v.textContent = pr && _num(it.qty) ? NF(poVat(it)) : "10%";
     poUpdateSum();
   }
+  if (f === "vat") { it.taxfree = !e.target.checked; renderPoItems(); }
+});
+$("poVatAll").addEventListener("change", e => {   // 머리 체크 = 전체 과세/면세
+  PO.items.forEach(it => { it.taxfree = !e.target.checked; });
+  renderPoItems();
 });
 // 자재 이름 입력 확정(선택/포커스 이탈) 시 해석: 정확 일치 → 부분 일치 1건 → 안내
 $("poItems").addEventListener("change", e => {
@@ -7280,6 +7304,7 @@ $("poItems").addEventListener("change", e => {
   if (!m) { toast(`'${q}' — 등록된 자재가 아닙니다`); it.material_id = null; return; }
   it.material_id = m.id;
   it.matq = "";
+  it.taxfree = +m.taxfree === 1;   // 자재 기준정보의 과세/면세를 기본값으로
   renderPoItems();   // 단위·단가 표시 갱신
 });
 $("poItems").addEventListener("click", e => {
@@ -7287,7 +7312,7 @@ $("poItems").addEventListener("click", e => {
   PO.items.splice(+d.closest("tr[data-poi]").dataset.poi, 1);
   renderPoItems();
 });
-$("poAddItem").onclick = () => { PO.items.push({ material_id: null, qty: "", price: "" }); renderPoItems(); };
+$("poAddItem").onclick = () => { PO.items.push({ material_id: null, qty: "", price: "", taxfree: false }); renderPoItems(); };
 $("poFillLow").onclick = async () => { await poFillFromLow(); renderPoItems(); };
 function poBody() {
   // 입력한 이름이 등록 거래처와 정확히 일치하면 그 거래처로, 아니면 이름만 저장(미등록 거래처 허용)
@@ -7297,7 +7322,7 @@ function poBody() {
     partner_id: pa ? pa.id : null, partner_name: pname,
     due: $("poDue").value || "", note: $("poNote").value.trim(),
     items: PO.items.filter(it => it.material_id)
-      .map(it => ({ material_id: it.material_id, qty: _num(it.qty),
+      .map(it => ({ material_id: it.material_id, qty: _num(it.qty), taxfree: !!it.taxfree,
         price: poMoney() && String(it.price ?? "").trim() !== "" ? _num(it.price) : null })) };
 }
 /* 발주서 저장(새로 만들기 / 불러온 발주서면 수정) — 저장·인쇄·메일·복사 모두 이 함수를 거쳐 [발주 현황] 목록에 남는다 */
@@ -7341,7 +7366,7 @@ function applyPoRecord(h) {   // 저장된 발주서를 작성 폼에 불러오�
   PO.id = h.id; PO.seq = h.seq; PO.locked = !!h.sent_at && ROLE !== "admin"; PO.created_by = h.created_by || "";
   $("poPartner").value = h.partner === "거래처 미지정" ? "" : h.partner;
   $("poDate").value = h.date; $("poDue").value = h.due || ""; $("poNote").value = h.note || "";
-  PO.items = h.items.map(it => ({ material_id: it.material_id, qty: it.qty, price: it.price ?? "" }));
+  PO.items = h.items.map(it => ({ material_id: it.material_id, qty: it.qty, price: it.price ?? "", taxfree: !!it.taxfree }));
   renderPoItems();
   toast(`발주서 ${poNo(h)} 불러옴 — 고친 뒤 [저장]하면 이 발주서가 수정됩니다`);
 }
@@ -7471,9 +7496,10 @@ $("poViewRecv").addEventListener("click", async e => {
 });
 
 /* ══ 발주 현황 — 이카운트 발주서조회 방식 목록 (일자-No·거래처·담당·품목·납기·금액·진행상태) + 입고·정산 ═════ */
-const POSTAT = { mode: "all", date: "", q: "", status: "", data: null, page: 1, per: 20 };
+const POSTAT = { mode: "all", date: "", q: "", status: "", data: null, page: 1, per: 20,
+  basis: (() => { try { return localStorage.getItem("po_basis") || "recv"; } catch (e) { return "recv"; } })() };
 async function loadPoStat() {
-  const d = await api(`/api/postatus?mode=${POSTAT.mode}&date=${POSTAT.date}&q=${encodeURIComponent(POSTAT.q)}&status=${encodeURIComponent(POSTAT.status)}&limit=100000`);
+  const d = await api(`/api/postatus?mode=${POSTAT.mode}&date=${POSTAT.date}&q=${encodeURIComponent(POSTAT.q)}&status=${encodeURIComponent(POSTAT.status)}&basis=${POSTAT.basis}&limit=100000`);
   POSTAT.data = d; POSTAT.date = d.date;
   POSTAT.page = 1;   // 기간·검색이 바뀌면 첫 페이지부터
   const [a, b] = d.range;
@@ -7492,7 +7518,7 @@ function renderPoStat() {
     ["진행중", NF(d.open_cnt) + "건"],
     ["완료", NF(d.done_cnt) + "건"],
     ...(money && d.order_total ? [["발주금액 합계(VAT포함)", NF(d.order_total) + "원"]] : []),
-    ...(money && d.total_amount ? [["입고 정산금액", NF(Math.round(d.total_amount)) + "원"]] : []),
+    ...(money && d.total_amount ? [[d.basis === "recv" && POSTAT.mode !== "all" ? "이 기간 입고 정산금액" : "입고 정산금액", NF(Math.round(d.total_amount)) + "원"]] : []),
     ...(d.unpriced ? [["단가 미입력", NF(d.unpriced) + "품목"]] : []),
   ].map(([t, v]) => `<span class="pchip num">${t} <b style="margin-left:4px">${v}</b></span>`).join("");
   // 1) 발주 목록 — 20건씩 페이지네이션 (집계·정산 표는 전체 기준 그대로)
@@ -7508,6 +7534,8 @@ function renderPoStat() {
       <td class="auto">${esc(h.created_by || "—")}</td>
       <td class="po-items" title="${esc(h.items.map(x => x.name + " " + NF(x.qty) + (x.unit || "")).join(", "))}">${first}${extra}</td>
       <td>${esc(h.due || "—")}</td>
+      <td title="${esc((h.recv_dates || []).join(", "))}">${(h.recv_dates || []).length
+        ? esc(h.recv_dates[h.recv_dates.length - 1]) + (h.recv_dates.length > 1 ? ` <span class="auto">외 ${h.recv_dates.length - 1}회</span>` : "") : "—"}</td>
       ${money ? `<td class="r" style="font-weight:700;">${h.total ? NF(h.total) : "—"}</td>` : ""}
       <td title="입고 ${NF(h.recv_qty)} / 발주 ${NF(h.order_qty)}"><span class="po-prog"><i style="width:${Math.min(100, h.progress || 0)}%"></i></span><span class="auto" style="font-size:11px;">${h.progress || 0}%</span></td>
       <td>${poStChip(h)}${h.sent_at ? ` <span class="auto" title="📧 ${esc(h.sent_to || "")} · ${esc(h.sent_at.slice(0, 16))}">📧</span>` : ""}</td>
@@ -7517,9 +7545,9 @@ function renderPoStat() {
         ${canDel ? `<button class="btn ghost sm" data-psdel="${h.id}" style="color:var(--crit)">삭제</button>` : ""}</td></tr>`;
   }).join("");
   const listTbl = `<div class="tbl-wrap"><table id="postListTbl">
-    <thead><tr><th>일자-No.</th><th>거래처명</th><th>담당자</th><th>품목명[규격]</th><th>납기일자</th>${money ? '<th class="r">발주금액합계</th>' : ""}<th>입고</th><th>진행상태</th><th></th></tr></thead>
+    <thead><tr><th>일자-No.</th><th>거래처명</th><th>담당자</th><th>품목명[규격]</th><th>납기일자</th><th>입고일자</th>${money ? '<th class="r">발주금액합계</th>' : ""}<th>입고</th><th>진행상태</th><th></th></tr></thead>
     <tbody class="num" style="font-size:12.5px;">${listRows
-      || `<tr><td colspan="9" class="auto">발주서가 없습니다 — [+ 발주서 작성]으로 만드세요</td></tr>`}</tbody></table></div>`
+      || `<tr><td colspan="10" class="auto">발주서가 없습니다 — [+ 발주서 작성]으로 만드세요</td></tr>`}</tbody></table></div>`
     + pagerHtml(d.pos.length, POSTAT.page, POSTAT.per);
   // 2) 거래처별 정산 (월별로 보면 곧 월말 정산표)
   const partTbl = `<div class="tbl-wrap"><table id="postPartTbl">
@@ -7531,13 +7559,21 @@ function renderPoStat() {
       <td class="auto">${p.unpriced ? p.unpriced + "품목" : "—"}</td></tr>`).join("")
       || `<tr><td colspan="7" class="auto">이 기간 발주가 없습니다</td></tr>`}</tbody></table></div>`;
   $("postBody").innerHTML =
-    `<div style="font-size:12.5px; font-weight:700; color:var(--muted); margin:2px 0 6px;">발주 목록 <span class="auto" style="font-weight:400">— 일자-No.를 누르면 발주서·입고 이력을 봅니다 · 일부만 들어오면 잔량은 '진행중'으로 남습니다</span></div>` + listTbl +
-    `<div style="font-size:12.5px; font-weight:700; color:var(--muted); margin:16px 0 6px;">거래처별 정산 <span class="auto" style="font-weight:400">— 입고 정산금액 = 입고 처리 때의 단가 × 입고 수량</span></div>` + partTbl;
+    `<div style="font-size:12.5px; font-weight:700; color:var(--muted); margin:2px 0 6px;">발주 목록 <span class="auto" style="font-weight:400">— ${d.basis === "recv" ? "입고일 기준: 이 기간에 입고된 발주서 (+ 아직 입고 전인 발주서는 발주일로)" : "발주일 기준"} · 일자-No.를 누르면 발주서·입고 이력을 봅니다 · 일부만 들어오면 잔량은 '진행중'으로 남습니다</span></div>` + listTbl +
+    `<div style="font-size:12.5px; font-weight:700; color:var(--muted); margin:16px 0 6px;">거래처별 정산 <span class="auto" style="font-weight:400">— 입고 정산금액 = 입고 처리 때의 단가 × 입고 수량${d.basis === "recv" && POSTAT.mode !== "all" ? " (이 기간에 들어온 입고분만 — 월 마감용)" : ""}</span></div>` + partTbl;
 }
 $("postTabs").addEventListener("click", e => {
   const b = e.target.closest("button[data-pot]"); if (!b) return;
   document.querySelectorAll("#postTabs button").forEach(x => x.classList.toggle("on", x === b));
   POSTAT.mode = b.dataset.pot; loadPoStat();
+});
+document.querySelectorAll("#postBasis button").forEach(x => x.classList.toggle("on", x.dataset.pb === POSTAT.basis));
+$("postBasis").addEventListener("click", e => {   // 기준일: 입고일(월 마감) / 발주일
+  const b = e.target.closest("button[data-pb]"); if (!b) return;
+  POSTAT.basis = b.dataset.pb;
+  try { localStorage.setItem("po_basis", POSTAT.basis); } catch (err) { }
+  document.querySelectorAll("#postBasis button").forEach(x => x.classList.toggle("on", x === b));
+  loadPoStat();
 });
 $("postStTabs").addEventListener("click", e => {
   const b = e.target.closest("button[data-pst]"); if (!b) return;
@@ -7596,7 +7632,7 @@ $("poViewCompany").onclick = openInvCompany;
 const POCSV = { data: null };
 $("postCsv").onclick = async () => {
   try {
-    POCSV.data = await api(`/api/postatus?mode=${POSTAT.mode}&date=${POSTAT.date}&q=${encodeURIComponent(POSTAT.q)}&status=${encodeURIComponent(POSTAT.status)}&limit=100000`);
+    POCSV.data = await api(`/api/postatus?mode=${POSTAT.mode}&date=${POSTAT.date}&q=${encodeURIComponent(POSTAT.q)}&status=${encodeURIComponent(POSTAT.status)}&basis=${POSTAT.basis}&limit=100000`);
   } catch (e) { return; }
   $("pcPartnerDl").innerHTML = POCSV.data.by_partner.map(p => `<option value="${esc(p.partner)}">`).join("");
   $("pcPartner").value = "";
@@ -7628,8 +7664,9 @@ function buildSettleDoc() {
   let tot = 0, rowsHtml = "", no = 0;
   pos.forEach(h => (h.items || []).forEach(it => {
     no++;
-    const amt = money && it.amount != null ? Math.round(it.amount) : null;
-    if (money && it.amount) tot += it.amount;
+    const ia = it.pamt !== undefined ? it.pamt : it.amount;   // 입고일 기준이면 이 기간 입고분만
+    const amt = money && ia != null ? Math.round(ia) : null;
+    if (money && ia) tot += ia;
     rowsHtml += `<tr>
       <td style="${TD} text-align:center;">${no}</td>
       <td style="${TD} text-align:center;">${esc(poNo(h).slice(5))}</td>
@@ -7691,8 +7728,9 @@ $("poSettleCsv").onclick = () => {
   const lines = [head.map(cell).join(",")];
   let tot = 0;
   SETTLE.pos.forEach(h => (h.items || []).forEach(it => {
-    const amt = money && it.amount != null ? Math.round(it.amount) : "";
-    if (money && it.amount) tot += it.amount;
+    const ia = it.pamt !== undefined ? it.pamt : it.amount;
+    const amt = money && ia != null ? Math.round(ia) : "";
+    if (money && ia) tot += ia;
     lines.push([
       poNo(h), h.date, h.partner, it.name, it.spec || "", it.unit || "",
       it.qty, it.recv != null ? it.recv : "",
@@ -7879,7 +7917,7 @@ function buildPoDocData(d, opt = {}) {   // d = {id, seq, date, due, note, creat
   const blank = `<tr>${`<td style="${TD}"></td>`.repeat(ncol)}</tr>`.repeat(fill);
   const total = ss + sv;
   const amtBox = showAmt ? `<div style="border:2px solid #111; display:flex; justify-content:space-between; align-items:center; gap:12px; padding:7px 14px; margin:10px 0 8px; font-size:14px; font-weight:700;">
-      <span>금 액 : ${korAmount(total)} 정</span><span>(₩ ${NF(total)}원) / VAT포함</span></div>` : `<div style="height:10px;"></div>`;
+      <span>금 액 : ${korAmount(total)} 정</span><span>(₩ ${NF(total)}원) / ${sv ? "VAT포함" : "면세"}</span></div>` : `<div style="height:10px;"></div>`;
   const FT = `${B} padding:6px 8px; font-size:12.5px;`;
   const foot = `<table style="border-collapse:collapse; width:100%; margin-top:-1px;"><tr>
       <td style="${LB} width:70px;">수량</td><td style="${FT} text-align:right;">${NF(sq)}</td>
@@ -7913,7 +7951,7 @@ function buildPoDoc(opt = {}) {   // 작성 중인 폼 기준
   return buildPoDocData({ id: PO.id, seq: PO.seq, date: b.date, due: b.due, note: b.note, partner: pa,
     created_by: PO.created_by || USERNAME,
     items: b.items.map(it => { const m = materialById(it.material_id) || {};
-      return { code: m.code, name: m.name, spec: m.spec, unit: m.unit, qty: it.qty,
+      return { code: m.code, name: m.name, spec: m.spec, unit: m.unit, qty: it.qty, taxfree: it.taxfree,
         price: poMoney() ? (it.price != null ? it.price : (PO_LASTP[it.material_id] || 0)) : null }; }) },
     Object.assign({ showAmt: $("poShowAmt").checked }, opt));
 }

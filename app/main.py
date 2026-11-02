@@ -42,7 +42,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.122.1"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.123.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -139,7 +139,7 @@ MASTER_TABLES = {
                             "shelf_days", "safety_stock", "batch_yield", "status", "note", "is_semi", "fin_split"]),
     "material": ("material", ["code", "kind", "name", "spec", "unit", "pack_count", "pack_set", "unit_price", "partner_id",
                               "safety_stock", "prod_mult", "prod_per", "shelf_days", "status", "note",
-                              "is_semi", "batch_yield", "is_pallet", "category"]),   # category = 소모품 용도
+                              "is_semi", "batch_yield", "is_pallet", "category", "taxfree"]),   # category = 소모품 용도 · taxfree = 면세
     "partner": ("partner", ["name", "type", "phone", "contact", "note", "status", "biz_no", "ceo", "mobile", "email", "address"]),
     "staff": ("staff", ["name", "kind", "position", "process", "wage", "join_date", "leave_date", "phone", "status", "note"]),
     "line": ("line", ["name", "process", "std_hours", "parent_id", "note", "status"]),
@@ -3206,7 +3206,8 @@ def po_save(request: Request, body: dict):
             mid = it.get("material_id")
             if not mid:
                 continue
-            mt = con.execute("SELECT name, spec, unit, unit_price, COALESCE(code,'') code FROM material WHERE id=?",
+            mt = con.execute("""SELECT name, spec, unit, unit_price, COALESCE(code,'') code, COALESCE(taxfree,0) taxfree
+                FROM material WHERE id=?""",
                              (mid,)).fetchone()
             if not mt:
                 continue
@@ -3218,7 +3219,8 @@ def po_save(request: Request, body: dict):
             if pr <= 0:
                 pr = float(oldp.get(mid) or 0) or float(lastp.get(mid) or 0) or float(mt["unit_price"] or 0)
             clean.append({"material_id": mid, "code": mt["code"], "name": mt["name"], "spec": mt["spec"] or "",
-                          "unit": mt["unit"] or "", "qty": qty, "price": pr})   # 발주 단가 스냅샷
+                          "unit": mt["unit"] or "", "qty": qty, "price": pr,   # 발주 단가 스냅샷
+                          "taxfree": bool(it["taxfree"]) if "taxfree" in it else bool(mt["taxfree"])})
         if not clean:
             raise HTTPException(400, "발주 품목이 없습니다 — 자재와 수량을 입력해주세요")
         vals = (body.get("date") or dt.date.today().isoformat(), body.get("partner_id") or None,
@@ -3261,9 +3263,12 @@ def po_kakao(request: Request, po_id: int):
 
 
 @app.get("/api/postatus")
-def po_status(request: Request, mode: str = "m", date: str = "", q: str = "", limit: int = 50, status: str = ""):
+def po_status(request: Request, mode: str = "m", date: str = "", q: str = "", limit: int = 50, status: str = "",
+              basis: str = "recv"):
     """발주 현황(이카운트 발주서조회 방식) — 기간(전체/일/주/월/년) + 검색(품목명·거래처명) + 진행상태(진행중/완료).
     목록 금액 = 발주 기준 합계(VAT 포함). 거래처별 정산 금액 = 입고 처리 때의 단가 × 입고 수량.
+    basis='recv'(입고일 기준, 월 마감용): 기간 안에 입고가 있는 발주서 + 아직 입고 없는 발주서는 발주일로.
+      정산금액도 그 기간에 들어온 입고분만 (10월 발주 → 11월 입고면 11월 정산). basis='order' = 발주일 기준.
     집계는 검색·기간·상태에 걸린 전체 기준, 목록은 최근 limit건만."""
     require_stock_duty(request)
     money = mcan(request, "mat_amt")   # 자재 단가·금액 열람 권한
@@ -3278,8 +3283,37 @@ def po_status(request: Request, mode: str = "m", date: str = "", q: str = "", li
                 date = con.execute("SELECT MAX(date) d FROM purchase_order").fetchone()["d"] \
                     or dt.date.today().isoformat()
             a, b = period_range(mode, date)
-        pos = [po_enrich(r, True) for r in con.execute(
-            PO_SEL + " WHERE po.date BETWEEN ? AND ? ORDER BY po.date DESC, po.id DESC", (a, b))]
+        if basis == "order":
+            pos = [po_enrich(r, True) for r in con.execute(
+                PO_SEL + " WHERE po.date BETWEEN ? AND ? ORDER BY po.date DESC, po.id DESC", (a, b))]
+        else:   # 입고일 기준 — 입고는 발주일 이후이므로 발주일 ≤ 기간 끝인 것만 보면 됨
+            pos = []
+            for r in con.execute(PO_SEL + " WHERE po.date <= ? ORDER BY po.date DESC, po.id DESC", (b,)):
+                po = po_enrich(r, True)
+                rds = [(rc.get("date") or "")[:10] for rc in po["receipts"]]
+                inp = [d for d in rds if a <= d <= b]
+                if inp or (not rds and a <= po["date"] <= b):
+                    po["_key"] = max(inp) if inp else po["date"]
+                    pos.append(po)
+            pos.sort(key=lambda p: (p["_key"], p["id"]), reverse=True)
+        for po in pos:   # 입고일 목록 + 이 기간 입고분 정산금액
+            po.pop("_key", None)
+            its = po["items"]
+            po["recv_dates"] = sorted({(rc.get("date") or "")[:10] for rc in po["receipts"] if rc.get("date")})
+            pa, pi = 0.0, {}
+            for rc in po["receipts"]:
+                if basis != "order" and not (a <= (rc.get("date") or "")[:10] <= b):
+                    continue
+                for x in rc.get("items") or []:
+                    i = x.get("i")
+                    ok = isinstance(i, int) and 0 <= i < len(its)
+                    xp = float(x.get("price") or 0) or (float(its[i].get("price") or 0) if ok else 0)
+                    pa += float(x.get("qty") or 0) * xp
+                    if ok:
+                        pi[i] = pi.get(i, 0.0) + float(x.get("qty") or 0) * xp
+            po["period_amount"] = pa
+            for i, it in enumerate(its):   # 품목별 이 기간 입고금액 (정산서용)
+                it["pamt"] = pi.get(i) if po["receipts"] else None
         ql = (q or "").strip().lower()
         out_pos, by_part = [], {}
         total_amt, order_total, unpriced, done_cnt, open_cnt = 0.0, 0, 0, 0, 0
@@ -3293,7 +3327,7 @@ def po_status(request: Request, mode: str = "m", date: str = "", q: str = "", li
             done = po["status"] == "완료"
             done_cnt += 1 if done else 0
             open_cnt += 0 if done else 1
-            total_amt += po["amount"]
+            total_amt += po["period_amount"]
             order_total += po["total"]
             npr = sum(1 for it in po["items"] if not (it.get("price") or 0) > 0)
             unpriced += npr
@@ -3302,7 +3336,7 @@ def po_status(request: Request, mode: str = "m", date: str = "", q: str = "", li
             bp["cnt"] += 1
             bp["recv"] += 1 if done else 0
             bp["items"] += len(po["items"])
-            bp["amount"] += po["amount"]
+            bp["amount"] += po["period_amount"]
             bp["total"] += po["total"]
             bp["unpriced"] += npr
             out_pos.append(po)
@@ -3311,14 +3345,16 @@ def po_status(request: Request, mode: str = "m", date: str = "", q: str = "", li
         if not money:   # 금액 열람 권한 없으면 마스킹
             total_amt = order_total = None
             out_pos = [po_enrich(dict(p, items=json.dumps([{k: v for k, v in it.items()
-                                                            if k not in ("recv", "remain", "supply", "vat", "amount")}
+                                                            if k not in ("recv", "remain", "supply", "vat", "amount", "pamt")}
                                                            for it in p["items"]], ensure_ascii=False),
                                       receipts=json.dumps([x for x in p["receipts"] if not x.get("legacy")],
                                                           ensure_ascii=False)), False)
                        for p in out_pos]
             for v in by_part.values():
                 v["amount"] = v["total"] = None
-        return {"date": date, "mode": mode, "range": [a, b], "pos": out_pos,
+            for p in out_pos:
+                p["period_amount"] = None
+        return {"date": date, "mode": mode, "range": [a, b], "pos": out_pos, "basis": "order" if basis == "order" else "recv",
                 "total": total, "shown": len(out_pos),
                 "by_partner": sorted(by_part.values(), key=lambda x: (-(x["total"] or 0), -x["cnt"])),
                 "total_amount": total_amt, "order_total": order_total,
@@ -7981,7 +8017,7 @@ AI_HINTS = """업무 용어 → 테이블 안내 (SQLite):
 - 자재 사용 상세 = material_usage (date, material_id, product_id, qty, block 'semi:<id>'는 반제품 생산에 쓴 원료). 자재 폐기 = material_disposal.
 - 제품 = product (category 제품군). 생산 = production (date, product_id, prod_qty 생산수량, defect_qty 불량, line_id → line).
 - 출고(판매) = shipment (date, product_id, partner_id → partner, qty, unit_price, expiry 소비기한). 매출액 = qty * (unit_price, 0이면 product.unit_price).
-- 거래처 = partner (type 에 '판매처'·'자재 공급처'·'운송사' 등이 쉼표로 들어감).
+- 거래처 = partner (type 에 '판매처'·'자재 공급처'·'운송사'·'물류창고' 등이 쉼표로 들어감).
 - 운송비 = freight (date, kind 화물/용차/택배/퀵/직배송, origin 출발지, dest 도착지, carrier_id → partner(운송사),
   courier 택배사 코드(cj 등, carrier_id 대신), vehicle 차량, waybill 운송장, cost 비용(원), pay 결제방식).
 - 인원 = staffing (날짜·라인별 headcount, work_hours), staffing_member (직원별 hours → staff), staffing_agency (용역: hours, wage, cost=확정 금액, gender).
