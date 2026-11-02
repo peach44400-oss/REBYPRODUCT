@@ -7112,8 +7112,44 @@ window.gotoEntry = (date) => {
   document.querySelector('#nav button[data-scr="entry"]').click();
   entryCal.ym = date.slice(0, 7); entryCal.sel = date; entryCal.render(); loadDay(date);
 };
+/* 재고 이력 → 일일 입력으로 넘어온 경우 '돌아가기' — 원래 화면(스크롤 위치)으로 가서 이력 창을 다시 연다.
+   하단 파란 버튼 또는 브라우저 뒤로가기(Alt+←·마우스 뒤로 버튼)로. 저장 안 한 변경이 있으면 이탈 확인을 거친다. */
+let MHBACK = null;   // { scr, y, mid, name, go }
+function mhBackShow() {
+  const on = !!MHBACK && document.querySelector(".screen.on")?.id === "scr-entry";
+  $("mhBackFab").style.display = on ? "" : "none";
+  if (on) $("mhBackFab").textContent = `◀ '${MHBACK.name}' 재고 이력으로 돌아가기`;
+}
+function mhBackGo() {
+  if (!MHBACK) return;
+  MHBACK.go = Date.now();
+  document.querySelector(`#nav button[data-scr="${MHBACK.scr}"]`).click();   // 저장 안 한 변경이 있으면 이탈 확인
+}
+$("mhBackFab").onclick = mhBackGo;
+window.addEventListener("popstate", () => {
+  if (MHBACK && document.querySelector(".screen.on")?.id === "scr-entry") mhBackGo();
+});
+$("nav").addEventListener("click", async e => {   // 화면 전환 뒤 (위의 전환 처리보다 나중에 실행)
+  const b = e.target.closest("button[data-scr]"); if (!b || !MHBACK) return;
+  const cur = document.querySelector(".screen.on")?.id;
+  if (cur === "scr-entry") { mhBackShow(); return; }
+  const bk = MHBACK;
+  if (cur === "scr-" + bk.scr && bk.go && Date.now() - bk.go < 120000) {   // 돌아가기로 원래 화면 도착
+    MHBACK = null; mhBackShow();
+    if (bk.scr === "items") { try { await reloadMaster(mTab); } catch (err) { } }
+    window.scrollTo(0, bk.y || 0);
+    openMatHistory(bk.mid);
+    return;
+  }
+  MHBACK = null; mhBackShow();   // 다른 화면으로 직접 이동하면 돌아가기 해제
+});
 /** 자재 재고 이력의 날짜 클릭 → 그날 일일 입력 재고 탭으로 가서 그 자재 행을 잠깐 강조 */
 async function gotoEntryMaterial(date, mid) {
+  const from = (document.querySelector(".screen.on")?.id || "").replace("scr-", "");
+  if (from && from !== "entry") {   // 처음 넘어올 때만 출발 화면 기억 (일일 입력 안에서 다시 열면 유지)
+    MHBACK = { scr: from, y: window.scrollY, mid, name: (materialById(mid) || {}).name || "자재" };
+    try { history.pushState({ mhback: 1 }, ""); } catch (err) { }
+  } else if (MHBACK) { MHBACK.mid = mid; MHBACK.name = (materialById(mid) || {}).name || MHBACK.name; }
   document.querySelector('#nav button[data-scr="entry"]').click();
   entryCal.ym = date.slice(0, 7); entryCal.sel = date; entryCal.render();
   await loadDay(date);

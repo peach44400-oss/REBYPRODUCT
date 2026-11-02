@@ -682,6 +682,9 @@
   /* 왼쪽 날짜·상태 열 고정 — 오른쪽이 길어 스크롤해도 날짜/상태가 따라오게 */
   .entry-side{position:sticky; top:62px; align-self:start; z-index:20;}
   /* 저장 버튼 — 항상 보이는 고정 버튼 (스크롤 없이 저장). scr-entry 안에 있어 이 화면에서만 표시 */
+  .back-fab{position:fixed; left:50%; bottom:22px; transform:translateX(-50%); z-index:1150; background:#1f5fd6; color:#fff;
+    border:0; border-radius:999px; padding:11px 20px; font-size:13.5px; font-weight:800;
+    box-shadow:0 8px 22px rgba(0,0,0,.28); cursor:pointer; white-space:nowrap; max-width:calc(100vw - 32px); overflow:hidden; text-overflow:ellipsis;}
   .save-fab{position:fixed; right:22px; bottom:84px; z-index:1150; background:var(--solid); color:var(--solid-ink);
     border:0; border-radius:999px; padding:12px 22px; font-size:14px; font-weight:800;
     box-shadow:0 8px 22px rgba(0,0,0,.30); cursor:pointer; white-space:nowrap;}
@@ -1477,6 +1480,7 @@
     <!-- 일일 입력 -->
     <section class="screen" id="scr-entry">
       <button class="save-fab" id="entrySaveFab" title="현재 탭(생산 입력 / 재고·입고)을 저장합니다">💾 저장</button>
+      <button class="back-fab" id="mhBackFab" style="display:none;" title="재고 이력 창을 열었던 화면으로 돌아가 이력 창을 다시 엽니다 (저장한 내용이 반영된 상태로)"></button>
       <div class="entry-grid">
         <div class="dash-col entry-side">
           <div class="card">
