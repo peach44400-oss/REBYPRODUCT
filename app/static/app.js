@@ -7112,6 +7112,22 @@ window.gotoEntry = (date) => {
   document.querySelector('#nav button[data-scr="entry"]').click();
   entryCal.ym = date.slice(0, 7); entryCal.sel = date; entryCal.render(); loadDay(date);
 };
+/** 자재 재고 이력의 날짜 클릭 → 그날 일일 입력 재고 탭으로 가서 그 자재 행을 잠깐 강조 */
+async function gotoEntryMaterial(date, mid) {
+  document.querySelector('#nav button[data-scr="entry"]').click();
+  entryCal.ym = date.slice(0, 7); entryCal.sel = date; entryCal.render();
+  await loadDay(date);
+  entryTab = "stock"; renderEntryTabs();
+  await new Promise(r => setTimeout(r, 60));
+  const i = (E.mat || []).findIndex(r => r.material_id === mid);
+  const tr = i >= 0 ? $("eMat").querySelector(`tr[data-i="${i}"]`)
+    : ($("eMat").querySelector(`[data-use="${mid}"]`) || $("eMat").querySelector(`[data-fixreal="${mid}"]`) || {}).closest?.("tr");
+  const m = materialById(mid) || {};
+  if (!tr) { toast(`${date} — '${m.name || "자재"}' 행이 이 날짜 재고 실사에 없습니다`); return; }
+  tr.scrollIntoView({ block: "center" });
+  tr.style.transition = "background .3s"; tr.style.background = "#fff3bf";
+  setTimeout(() => { tr.style.background = ""; }, 2200);
+}
 
 /* ══ 사이드바 '발주 필요' 알림 ══
    팝업 대신 상주형 — 업무 흐름을 막지 않으면서 놓치지 않게.
@@ -9736,7 +9752,7 @@ async function openMatHistory(mid) {
     <div style="flex:1 1 auto; min-width:0; overflow:auto;"><div class="tbl-wrap"><table style="width:100%;">
     <thead><tr><th>날짜</th><th class="r">전일</th><th class="r">입고</th><th class="r">사용</th><th class="r">실재고</th><th>제조일자</th><th>소비기한</th><th>발주</th></tr></thead>
     <tbody class="num">${d.rows.map(r => `<tr ${r.in_qty > 0 ? 'style="background:var(--ok-soft)"' : ""}>
-      <td>${r.date}${r.src === "auto" ? ' <span class="chip cat">자동</span>' : ""}</td>
+      <td><button class="uselink num" data-mhday="${r.date}" title="클릭하면 이 날짜의 일일 입력(재고 탭)으로 이동합니다">${r.date}</button>${r.src === "auto" ? ' <span class="chip cat">자동</span>' : ""}</td>
       <td class="r">${NF(r.prev_qty)}</td>
       <td class="r" ${r.in_qty > 0 ? 'style="color:var(--ok); font-weight:700"' : ""}>${r.in_qty ? "+" + NF(r.in_qty) : "·"}</td>
       <td class="r">${r.used_qty ? NF(r.used_qty) : "·"}</td>
@@ -9755,7 +9771,7 @@ async function openMatHistory(mid) {
         ${(d.in_po && d.in_po[r.date]) ? d.in_po[r.date].map(pid =>
           `<button class="uselink" data-poin="${pid}" style="font-size:11px; font-weight:700; margin-left:4px;" title="이 입고의 발주서 보기">📋 #${pid}</button>`).join("") : ""}</td></tr>${
       (d.disp && d.disp[r.date]) ? `<tr style="background:#fdecea; color:#c0392b;">
-        <td style="font-weight:700;">${r.date} 🗑 폐기</td>
+        <td style="font-weight:700;"><button class="uselink num" data-mhday="${r.date}" style="color:inherit; font-weight:700;" title="클릭하면 이 날짜의 일일 입력으로 이동합니다">${r.date}</button> 🗑 폐기</td>
         <td class="r auto">·</td><td class="r auto">·</td>
         <td class="r" style="font-weight:700;">−${NF(d.disp[r.date].qty)}</td>
         <td class="r auto">·</td>
@@ -9784,6 +9800,8 @@ async function openMatHistory(mid) {
   }
   // 입고 기록의 발주 배지 클릭 → 그 발주서를 팝업으로 (자재 이력 → 발주서 추적)
   $("anaPBody").onclick = async e => {
+    const dj = e.target.closest("[data-mhday]");
+    if (dj) { closeAnaP(); gotoEntryMaterial(dj.dataset.mhday, mid); return; }
     const b2 = e.target.closest("[data-poin]");
     if (!b2) return;
     try {
