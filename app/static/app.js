@@ -4620,6 +4620,7 @@ function loadSalesRep() {
   if (!SREP.data) srQuery();
 }
 async function srQuery() {
+  QPMARK.sr?.();
   let d; try { d = await api(`/api/salesreport?frm=${$("srFrom").value}&to=${$("srTo").value}`); } catch (e) { return; }
   SREP.data = d;
   renderSalesRep();
@@ -4661,6 +4662,7 @@ function loadPurchRep() {
   if (!PREP.data) prQuery();
 }
 async function prQuery() {
+  QPMARK.pr?.();
   let d; try { d = await api(`/api/purchasereport?frm=${$("prFrom").value}&to=${$("prTo").value}`); } catch (e) { return; }
   PREP.data = d; renderPurchRep();
 }
@@ -4751,6 +4753,33 @@ $("prLoad").onclick = prQuery;
 ["prPartner", "prMat"].forEach(id => { const el = $(id); if (el) { el.addEventListener("input", renderPurchRep); el.addEventListener("change", renderPurchRep); } });
 if ($("prClear")) $("prClear").onclick = () => { $("prPartner").value = ""; $("prMat").value = ""; renderPurchRep(); };
 $("prCsv").onclick = () => tableToCsv($("prHead"), $("prBody"), csvName("매입통계_" + PREP.tab, todayISO()));
+// ── 기간 빠른 선택 (손익 요약·매출 통계·매입 통계 공용) — 이번 달 / 전월 / 올해 → 날짜 채우고 바로 조회 ──
+function quickPeriod(q) {
+  const t = todayISO(), y = +t.slice(0, 4), m = +t.slice(5, 7);
+  const p2 = n => String(n).padStart(2, "0");
+  if (q === "this") return [`${y}-${p2(m)}-01`, t];
+  if (q === "year") return [`${y}-01-01`, t];
+  const py = m === 1 ? y - 1 : y, pm = m === 1 ? 12 : m - 1;   // 전월 = 지난달 1일 ~ 말일
+  return [`${py}-${p2(pm)}-01`, `${py}-${p2(pm)}-${p2(new Date(py, pm, 0).getDate())}`];
+}
+const QPMARK = {};   // 화면별 표시 갱신 함수 — 조회할 때 불러 현재 기간 버튼을 켠다
+document.querySelectorAll("[data-qper]").forEach(box => {
+  const k = box.dataset.qper;
+  const mark = () => {   // 지금 날짜가 어느 빠른 기간과 같은지 표시
+    box.querySelectorAll("[data-q]").forEach(b => {
+      const [f, to] = quickPeriod(b.dataset.q);
+      b.classList.toggle("on", $(k + "From").value === f && $(k + "To").value === to);
+    });
+  };
+  box.addEventListener("click", e => {
+    const b = e.target.closest("[data-q]"); if (!b) return;
+    const [f, to] = quickPeriod(b.dataset.q);
+    $(k + "From").value = f; $(k + "To").value = to;
+    mark(); $(k + "Load").click();
+  });
+  [k + "From", k + "To"].forEach(id => $(id).addEventListener("change", mark));
+  QPMARK[k] = mark;
+});
 // ── 손익 요약 ──────────────────────────────────────────────────────────
 const PNL = { data: null };
 function loadPnl() {
@@ -4760,6 +4789,7 @@ function loadPnl() {
   if (!PNL.data) pnlQuery();
 }
 async function pnlQuery() {
+  QPMARK.pnl?.();
   let d; try { d = await api(`/api/pnl?frm=${$("pnlFrom").value}&to=${$("pnlTo").value}`); } catch (e) { return; }
   PNL.data = d; renderPnl();
 }
