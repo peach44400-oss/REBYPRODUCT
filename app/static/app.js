@@ -1269,6 +1269,11 @@ function renderUsageSoon() {   // 생산실적 재렌더 시 그룹 헤더(수�
   _usageTimer = setTimeout(renderUsage, 80);
 }
 const entryCal = Calendar("cal", d => loadDay(d));
+$("calToday").onclick = () => {   // 예전 날짜를 보다가 오늘로 한 번에
+  const t = todayISO();
+  entryCal.ym = t.slice(0, 7); entryCal.sel = t; entryCal.render();
+  if (E.date !== t) loadDay(t);
+};
 let ENTRY_STALE = false;   // 발주 입고/입고 취소 등 다른 화면에서 일일 데이터가 바뀌면 true → 일일 입력 진입 시 자동 재로드
 function openEntry() {
   // 첫 진입 시 오늘 날짜 자동 선택·로드
