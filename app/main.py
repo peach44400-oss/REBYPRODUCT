@@ -42,7 +42,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.123.2"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.124.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -7626,10 +7626,291 @@ def semiing_save(product_id: int, request: Request, body: dict):
         con.close()
 
 
-@app.post("/api/bom/{product_id}")
-def bom_save(product_id: int, body: dict):
+# ── 배합비 버전 이력 ─────────────────────
+def _bom_snapshot(con, pid):
+    """현재 배합 행 → 비교·보관용 리스트 (자재명·코드·단위는 당시 값으로 함께 저장)."""
+    return [{"material_id": r["material_id"], "name": r["name"] or "", "code": r["code"] or "",
+             "kind": r["kind"] or "", "mat_unit": r["mat_unit"] or "", "pack_count": r["pack_count"] or 0,
+             "unit": r["unit"] or "g", "block": r["block"] or "", "qty_per_unit": r["qty_per_unit"] or 0,
+             "batch_qty": r["batch_qty"] or 0, "block_yield": r["block_yield"] or 0,
+             "partner_ids": r["partner_ids"] or "", "note": r["note"] or ""}
+            for r in con.execute("""SELECT b.*, m.name, COALESCE(m.code,'') code, m.kind, m.unit mat_unit, m.pack_count
+                FROM bom b LEFT JOIN material m ON m.id=b.material_id WHERE b.product_id=? ORDER BY b.id""", (pid,))]
+
+
+def _bom_key(rows):   # 변경 여부 판단용 (자재명 스냅샷·비고 순서 차이는 무시)
+    return json.dumps(sorted((r["material_id"], r["block"], round(float(r["batch_qty"] or 0), 4),
+                              round(float(r["qty_per_unit"] or 0), 6), r["unit"], r["partner_ids"])
+                             for r in rows))
+
+
+def record_bom_version(con, pid, by="", note="", kind="save"):
+    """현재 배합(+버전 이름·제조 공정)을 새 버전으로 보관 — 직전 버전과 같으면 건너뜀."""
+    rows_ = _bom_snapshot(con, pid)
+    p = con.execute("SELECT COALESCE(recipe_label,'') l, COALESCE(recipe_process,'') pr, COALESCE(batch_yield,0) y "
+                    "FROM product WHERE id=?", (pid,)).fetchone()
+    if not p:
+        return None
+    last = con.execute("SELECT * FROM bom_version WHERE product_id=? ORDER BY ver DESC LIMIT 1", (pid,)).fetchone()
+    if last and kind != "base" and _bom_key(_jl(last["rows"], [])) == _bom_key(rows_) \
+            and last["label"] == p["l"] and last["process"] == p["pr"]:
+        return None
+    if kind == "base" and (last or not rows_):
+        return None   # 기록 시작 전 배합은 이력이 하나도 없고 배합이 있을 때만
+    ver = (last["ver"] if last else 0) + 1
+    con.execute("""INSERT INTO bom_version(product_id, ver, label, process, rows, batch_yield, note, kind, saved_at, saved_by)
+        VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                (pid, ver, p["l"], p["pr"], json.dumps(rows_, ensure_ascii=False), p["y"], note, kind,
+                 dt.datetime.now().strftime("%Y-%m-%d %H:%M"), by))
+    return ver
+
+
+@app.get("/api/bom/{product_id}/versions")
+def bom_versions(product_id: int):
+    """배합비 버전 목록 (최신 순) + 현재 버전 이름·제조 공정."""
     con = connect()
     try:
+        p = con.execute("SELECT COALESCE(recipe_label,'') l, COALESCE(recipe_process,'') pr FROM product WHERE id=?",
+                        (product_id,)).fetchone()
+        if p and record_bom_version(con, product_id, "", "이력 기록 시작 전 배합", "base"):
+            con.commit()   # 이력이 하나도 없으면 지금 배합을 v1로 보관해 두고 시작
+        vs = []
+        for r in con.execute("SELECT * FROM bom_version WHERE product_id=? ORDER BY ver DESC", (product_id,)):
+            d = dict(r)
+            d["rows"] = _jl(d["rows"], [])
+            vs.append(d)
+        return {"label": p["l"] if p else "", "process": p["pr"] if p else "", "versions": vs}
+    finally:
+        con.close()
+
+
+def _bom_sheet(wb, title, label, rows_, process, info, by_yield):
+    """배합비 1개 → 시트 (제조공정 양식: NO.·원료명·1배 투입량(g)·배합비(%) + 오른쪽 제조 공정)."""
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    ws = wb.create_sheet(re.sub(r'[\\/*?:\[\]]', "_", title)[:31] or "배합비")
+    thin, med, dbl = Side("thin"), Side("medium"), Side("double")
+    F = lambda sz=10, b=False: Font(name="맑은 고딕", size=sz, bold=b)
+    C = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    R = Alignment(horizontal="right", vertical="center")
+    L = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    gray = PatternFill("solid", fgColor="D9D9D9")
+    light = PatternFill("solid", fgColor="F2F2F2")
+    for col, w in {"A": 1.5, "B": 7, "C": 32, "D": 13, "E": 12, "F": 2.9}.items():
+        ws.column_dimensions[col].width = w
+    for col in "GHIJKLMNOPQ":
+        ws.column_dimensions[col].width = 9
+    ws.row_dimensions[1].height = 6.6
+
+    def box(r1, c1, r2, c2, top=None, bottom=None):
+        for r in range(r1, r2 + 1):
+            for c in range(c1, c2 + 1):
+                ws.cell(r, c).border = Border(left=med if c == 2 else thin, right=med if c == 5 else thin,
+                                              top=top if (top and r == r1) else thin,
+                                              bottom=bottom if (bottom and r == r2) else thin)
+    ws.merge_cells("B2:E2")
+    ws["B2"] = (title + (" " + label if label else "")).strip()
+    ws["B2"].font, ws["B2"].alignment, ws["B2"].fill = F(16, True), C, gray
+    box(2, 2, 2, 5, top=med, bottom=med)
+    ws.row_dimensions[2].height = 40
+    for c, t in zip("BCDE", ["NO.", "원료명", "*1배\n투입량 (g)", "배합비 (%)"]):
+        ws.merge_cells(f"{c}3:{c}4")
+        ws[f"{c}3"] = t
+        ws[f"{c}3"].font, ws[f"{c}3"].alignment = F(11, True), C
+    box(3, 2, 4, 5, top=med)
+    ws.row_dimensions[3].height, ws.row_dimensions[4].height = 28.5, 22.5
+    r = 5
+    weigh = [x for x in rows_ if not x["count"]]
+    count = [x for x in rows_ if x["count"]]
+    blocks = []
+    for b in ["반죽", "토핑", ""]:
+        items = [x for x in weigh if (x["block"] or "") == b]
+        if items:
+            blocks.append((b, items))
+    multi = len(blocks) > 1
+    no = 0
+    for b, items in blocks:
+        if multi:   # 반죽/토핑처럼 배합이 나뉘면 구분 줄 + 소계 (배합비는 그 배합 안에서 %)
+            ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=5)
+            y = by_yield.get(b) or 0
+            ws.cell(r, 2, f"{b or '구분 없음'} 배합" + (f"  ·  1배합 ≈ {round(y):,}개" if y else ""))
+            ws.cell(r, 2).font, ws.cell(r, 2).alignment, ws.cell(r, 2).fill = F(10, True), L, light
+            box(r, 2, r, 5)
+            ws.row_dimensions[r].height = 22
+            r += 1
+        first, last = r, r + len(items) - 1
+        tot = last + 1
+        for x in items:
+            no += 1
+            ws.cell(r, 2, no).alignment = C
+            ws.cell(r, 3, x["name"]).alignment = C
+            ws.cell(r, 3).font = F(10, True)
+            ws.cell(r, 4, x["g"]).alignment = R
+            ws.cell(r, 4).number_format = '_-* #,##0.0_-;\\-* #,##0.0_-;_-* "-"_-;_-@_-'
+            ws.cell(r, 5, f"=IF($D${tot}=0,0,D{r}/$D${tot}*100)").alignment = R
+            ws.cell(r, 5).number_format = '_-* #,##0.0_-;\\-* #,##0.0_-;_-* "-"_-;_-@_-'
+            for c in (2, 4, 5):
+                ws.cell(r, c).font = F(10)
+            ws.row_dimensions[r].height = 26.1
+            r += 1
+        box(first, 2, last, 5)
+        ws.cell(tot, 3, "소계" if multi else "합계").alignment = C
+        ws.cell(tot, 4, f"=SUM(D{first}:D{last})").alignment = R
+        ws.cell(tot, 5, f"=SUM(E{first}:E{last})").alignment = R
+        for c in (3, 4, 5):
+            ws.cell(tot, c).font = F(10, True)
+        ws.cell(tot, 4).number_format = ws.cell(tot, 5).number_format = '_-* #,##0.0_-;\\-* #,##0.0_-;_-* "-"_-;_-@_-'
+        box(tot, 2, tot, 5, top=dbl, bottom=med)
+        ws.row_dimensions[tot].height = 26.1
+        r = tot + 1
+    if count:   # 포장·부자재 (개수 자재) — 무게 배합비(%)와 따로
+        r += 1
+        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=5)
+        ws.cell(r, 2, "포장·부자재 (개수 자재 — 생산수량 ÷ 개입수)")
+        ws.cell(r, 2).font, ws.cell(r, 2).alignment, ws.cell(r, 2).fill = F(10, True), L, light
+        box(r, 2, r, 5, top=med)
+        r += 1
+        first = r
+        for i, x in enumerate(count, 1):
+            ws.cell(r, 2, i).alignment = C
+            ws.cell(r, 3, x["name"]).alignment = C
+            ws.merge_cells(start_row=r, start_column=4, end_row=r, end_column=5)
+            ws.cell(r, 4, f"개입수 {x['pack']:g}" if x["pack"] else "1개당 1")
+            ws.cell(r, 4).alignment = C
+            for c in (2, 3, 4):
+                ws.cell(r, c).font = F(10)
+            ws.row_dimensions[r].height = 22
+            r += 1
+        box(first, 2, r - 1, 5, bottom=med)
+    if info:
+        ws.cell(r + 1, 2, info).font = Font(name="맑은 고딕", size=9, color="666666")
+    # 오른쪽 제조 공정 — 한 줄 = 한 칸 (G:Q 병합)
+    ws.merge_cells("G2:Q4")
+    ws["G2"] = "제조 공정"
+    ws["G2"].font, ws["G2"].alignment = F(20, True), C
+    for c in range(7, 18):
+        ws.cell(4, c).border = Border(bottom=dbl)
+    lines = [ln.rstrip() for ln in (process or "").replace("\r", "").split("\n")]
+    while lines and not lines[-1].strip():
+        lines.pop()
+    for i, ln in enumerate(lines):
+        rr = 5 + i
+        ws.merge_cells(start_row=rr, start_column=7, end_row=rr, end_column=17)
+        ws.cell(rr, 7, ln if ln.strip() else "")
+        ws.cell(rr, 7).font, ws.cell(rr, 7).alignment = F(11), L
+        if not ws.row_dimensions[rr].height:
+            ws.row_dimensions[rr].height = 26.1
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.paperSize = 9
+    last_row = max(r + 1, 4 + len(lines))
+    ws.print_area = f"A1:Q{last_row}"
+    ws.page_setup.fitToWidth, ws.page_setup.fitToHeight = 1, (1 if last_row <= 45 else 0)   # 웬만하면 한 장에
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.page_margins.left = ws.page_margins.right = 0.16
+    ws.sheet_view.showGridLines = False
+    return ws
+
+
+def _bom_excel_rows(con, rows_):
+    """배합 행 → 엑셀 행: 1배 투입량(g) = 1배합당 소요량(없으면 1개당 × 그 배합 수율), 개수 자재는 따로."""
+    out = []
+    for x in rows_:
+        mu = (x.get("mat_unit") or "").strip()
+        is_count = mu in COUNT_UNITS_SET and float(x.get("pack_count") or 0) > 0
+        y = float(x.get("block_yield") or 0)
+        g = float(x.get("batch_qty") or 0) or (float(x.get("qty_per_unit") or 0) * y if y else float(x.get("qty_per_unit") or 0))
+        if (x.get("unit") or "g").lower() == "kg":
+            g *= 1000
+        out.append({"name": x.get("name") or f"자재#{x.get('material_id')}", "block": x.get("block") or "",
+                    "g": round(g, 3), "count": is_count, "pack": float(x.get("pack_count") or 0)})
+    return out
+
+
+def _bom_yields(rows_):
+    ys = {}
+    for x in rows_:
+        if float(x.get("block_yield") or 0) > 0:
+            ys.setdefault(x.get("block") or "", float(x["block_yield"]))
+    return ys
+
+
+def _xlsx_response(wb, fname):
+    import io
+    from urllib.parse import quote
+    buf = io.BytesIO()
+    wb.save(buf)
+    return Response(buf.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fname)}"})
+
+
+@app.get("/api/bom/{product_id}/xlsx")
+def bom_xlsx(product_id: int, ver_id: int = 0):
+    """배합비 → 제조공정 양식 엑셀. ver_id가 있으면 그 버전, 없으면 현재 배합."""
+    import openpyxl
+    con = connect()
+    try:
+        p = con.execute("SELECT * FROM product WHERE id=?", (product_id,)).fetchone()
+        if not p:
+            raise HTTPException(404, "제품이 없습니다")
+        if ver_id:
+            v = con.execute("SELECT * FROM bom_version WHERE id=? AND product_id=?", (ver_id, product_id)).fetchone()
+            if not v:
+                raise HTTPException(404, "배합비 버전을 찾을 수 없습니다")
+            rows_, label, process = _jl(v["rows"], []), v["label"], v["process"]
+            info = f"v{v['ver']} · {v['saved_at']} 저장{(' · ' + v['saved_by']) if v['saved_by'] else ''}{(' · ' + v['note']) if v['note'] else ''}"
+            tag = f"v{v['ver']}"
+        else:
+            rows_ = _bom_snapshot(con, product_id)
+            label, process = p["recipe_label"] or "", p["recipe_process"] or ""
+            info = f"현재 배합 · {dt.date.today().isoformat()} 출력"
+            tag = "현재"
+        if not rows_:
+            raise HTTPException(400, "배합비가 없습니다")
+        wb = openpyxl.Workbook()
+        wb.remove(wb.active)
+        _bom_sheet(wb, p["name"], label, _bom_excel_rows(con, rows_), process, info, _bom_yields(rows_))
+        return _xlsx_response(wb, f"배합비_{p['name']}_{tag}.xlsx")
+    finally:
+        con.close()
+
+
+@app.get("/api/bomxlsx/all")
+def bom_xlsx_all():
+    """배합비가 있는 모든 제품의 현재 배합 → 제품별 시트 1개씩."""
+    import openpyxl
+    con = connect()
+    try:
+        prods = con.execute("""SELECT * FROM product WHERE id IN (SELECT DISTINCT product_id FROM bom)
+            AND COALESCE(status,'')!='단종' AND COALESCE(is_semi,0)=0 ORDER BY sort, id""").fetchall()
+        if not prods:
+            raise HTTPException(400, "배합비가 등록된 제품이 없습니다")
+        wb = openpyxl.Workbook()
+        wb.remove(wb.active)
+        used = set()
+        for p in prods:
+            rows_ = _bom_snapshot(con, p["id"])
+            nm = p["name"]
+            k = 2
+            while nm[:31] in used:   # 시트 이름 중복 방지
+                nm = f"{p['name'][:27]}({k})"
+                k += 1
+            used.add(nm[:31])
+            ws = _bom_sheet(wb, nm, p["recipe_label"] or "", _bom_excel_rows(con, rows_), p["recipe_process"] or "",
+                            f"현재 배합 · {dt.date.today().isoformat()} 출력", _bom_yields(rows_))
+            ws["B2"] = (p["name"] + (" " + p["recipe_label"] if p["recipe_label"] else "")).strip()
+        return _xlsx_response(wb, f"배합비_전체_{dt.date.today().isoformat()}.xlsx")
+    finally:
+        con.close()
+
+
+@app.post("/api/bom/{product_id}")
+def bom_save(product_id: int, body: dict, request: Request):
+    con = connect()
+    try:
+        by = request.state.user.get("username", "")
+        record_bom_version(con, product_id, by, "이력 기록 시작 전 배합", "base")   # 첫 저장이면 이전 배합부터 보관
+        if "label" in body or "process" in body:   # 버전 이름·제조 공정 (현재 배합에 붙는 정보)
+            con.execute("UPDATE product SET recipe_label=?, recipe_process=? WHERE id=?",
+                        (str(body.get("label") or "").strip(), str(body.get("process") or "").rstrip(), product_id))
         con.execute("DELETE FROM bom WHERE product_id=?", (product_id,))
         for r in body.get("rows", []):
             mid = r.get("material_id")
@@ -7657,10 +7938,11 @@ def bom_save(product_id: int, body: dict):
         if body.get("batch_yield"):
             con.execute("UPDATE product SET batch_yield=? WHERE id=?",
                         (float(body["batch_yield"]), product_id))
-        audit(con, "save_bom", str(product_id))
+        ver = record_bom_version(con, product_id, by, str(body.get("ver_note") or "").strip())
+        audit(con, "save_bom", str(product_id) + (f" (v{ver})" if ver else ""))
         bump_masters()
         con.commit()
-        return {"ok": True}
+        return {"ok": True, "ver": ver}
     finally:
         con.close()
 
@@ -7687,7 +7969,13 @@ def bom_replace_material(request: Request, body: dict):
             WHERE b.material_id=? ORDER BY p.sort, p.id""", (frm,))]
         if not prods:
             raise HTTPException(400, "이 자재가 들어간 배합비가 없습니다")
+        pids = [r["product_id"] for r in con.execute("SELECT DISTINCT product_id FROM bom WHERE material_id=?", (frm,))]
+        by = request.state.user.get("username", "")
+        for pid in pids:
+            record_bom_version(con, pid, by, "이력 기록 시작 전 배합", "base")
         con.execute("UPDATE bom SET material_id=? WHERE material_id=?", (to, frm))
+        for pid in pids:
+            record_bom_version(con, pid, by, f"자재 일괄 교체: {names[int(frm)]} → {names[int(to)]}", "replace")
         audit(con, "replace_bom_mat", f"배합비 자재 교체: {names[int(frm)]} → {names[int(to)]} ({len(prods)}개 제품)")
         bump_masters()
         con.commit()
@@ -7703,8 +7991,11 @@ def bom_delete(request: Request, product_id: int):
     require_admin(request)
     con = connect()
     try:
+        by = request.state.user.get("username", "")
+        record_bom_version(con, product_id, by, "이력 기록 시작 전 배합", "base")
         n = con.execute("DELETE FROM bom WHERE product_id=?", (product_id,)).rowcount
         con.execute("UPDATE product SET batch_yield=0 WHERE id=?", (product_id,))
+        record_bom_version(con, product_id, by, "배합비 삭제", "delete")
         nm = con.execute("SELECT name FROM product WHERE id=?", (product_id,)).fetchone()
         audit(con, "delete_bom", f"{nm['name'] if nm else product_id}: 배합 {n}행 삭제")
         bump_masters()

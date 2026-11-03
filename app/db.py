@@ -293,6 +293,22 @@ CREATE TABLE IF NOT EXISTS daily_check (
 CREATE INDEX IF NOT EXISTS idx_dailycheck ON daily_check(done, created_date);
 
 -- 반제품(semi) 레시피 — 반제품 1단위를 만드는 데 필요한 원재료 구성 (반제품 생산 시 원재료 차감 기준)
+-- 배합비 버전 이력 — 저장할 때마다 그 시점 배합 전체를 스냅샷 (이전 배합 보존·비교·되돌리기·엑셀)
+CREATE TABLE IF NOT EXISTS bom_version (
+  id INTEGER PRIMARY KEY,
+  product_id INTEGER NOT NULL,
+  ver INTEGER NOT NULL,                -- 제품별 1, 2, 3 …
+  label TEXT DEFAULT '',               -- 버전 이름 (예: 4차 (A타입))
+  process TEXT DEFAULT '',             -- 제조 공정 (한 줄 = 한 단계)
+  rows TEXT DEFAULT '[]',              -- 배합 행 JSON (자재명·단위 스냅샷 포함)
+  batch_yield REAL DEFAULT 0,
+  note TEXT DEFAULT '',                -- 변경 메모
+  kind TEXT DEFAULT 'save',            -- base(기록 시작 전 배합)·save·replace(자재 일괄 교체)·delete
+  saved_at TEXT DEFAULT '',
+  saved_by TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_bomver ON bom_version(product_id, ver);
+
 CREATE TABLE IF NOT EXISTS semi_bom (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   semi_id INTEGER NOT NULL,
@@ -968,6 +984,9 @@ def init_db() -> None:
     pcols = [r[1] for r in con.execute("PRAGMA table_info(product)")]
     if "image" not in pcols:
         con.execute("ALTER TABLE product ADD COLUMN image TEXT DEFAULT ''")
+    for col in ("recipe_label", "recipe_process"):   # 현재 배합비의 버전 이름·제조 공정
+        if col not in pcols:
+            con.execute(f"ALTER TABLE product ADD COLUMN {col} TEXT DEFAULT ''")
     # 완제품 수불부 거래처 분리 표시 (0=미분리/기본, 1=이 제품은 거래처별 '거래처명 제품명' 행으로 분리)
     if "fin_split" not in pcols:
         con.execute("ALTER TABLE product ADD COLUMN fin_split INTEGER DEFAULT 0")

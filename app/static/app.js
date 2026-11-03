@@ -5420,7 +5420,7 @@ function renderMasters() {
   }
   $("bomBar").style.display = mTab === "bom" ? "flex" : "none";
   $("bomAddSearch").style.display = mTab === "bom" ? "" : "none";
-  if (mTab !== "bom") $("bomBlocks").style.display = "none";
+  if (mTab !== "bom") { $("bomBlocks").style.display = "none"; $("bomMeta").style.display = "none"; }
   $("mFilterBar").style.display = (mTab === "bom" || mTab === "users" || mTab === "audit") ? "none" : "flex";
   if (mTab === "bom" || mTab === "users" || mTab === "audit") $("mHealthBar").style.display = "none";
   $("mAdd").style.display = mTab === "audit" ? "none" : "";
@@ -5988,7 +5988,149 @@ async function loadBom(pid) {
   BOM.w = {};   // 블록별 분할 무게(1개당 g) — 전체무게 ÷ 수율로 역산해 초기 표시
   BOM.loadedFor = pid;
   renderBomRows();
+  loadBomMeta(pid);
 }
+/* ── 배합비 버전 이력 ── 저장할 때마다 서버가 그때 배합(+버전 이름·제조 공정)을 버전으로 보관 */
+async function loadBomMeta(pid) {
+  let d = { label: "", process: "", versions: [] };
+  try { d = await api(`/api/bom/${pid}/versions`); } catch (e) { }
+  if (BOM.pid !== pid) return;
+  BOM.vers = d.versions || [];
+  $("bomLabel").value = d.label || ""; $("bomProcess").value = d.process || ""; $("bomVerNote").value = "";
+  const v = BOM.vers[0];
+  $("bomVerInfo").innerHTML = v ? `현재 <b>v${v.ver}</b> · ${esc(v.saved_at)}${v.saved_by ? " · " + esc(v.saved_by) : ""} · 이력 ${BOM.vers.length}개`
+    : "아직 저장 이력이 없습니다 — 저장하면 v1로 보관됩니다";
+  $("bomMeta").style.display = mTab === "bom" ? "flex" : "none";
+}
+const bvCount = r => COUNT_UNITS.has(String(r.mat_unit || "").trim()) && Number(r.pack_count) > 0;
+function bvG(r) {   // 1배 투입량(g) — 엑셀과 같은 계산
+  const y = Number(r.block_yield) || 0;
+  let g = Number(r.batch_qty) || (y ? Number(r.qty_per_unit || 0) * y : Number(r.qty_per_unit || 0));
+  if (String(r.unit || "g").toLowerCase() === "kg") g *= 1000;
+  return Math.round(g * 1000) / 1000;
+}
+function bvDiff(prev, cur) {   // 직전 버전 대비 — 같은 배합(반죽/토핑) 안의 같은 자재끼리 비교
+  const key = r => (r.block || "") + "|" + r.material_id;
+  const pm = new Map((prev || []).map(r => [key(r), r])), cm = new Map(cur.map(r => [key(r), r]));
+  const st = {};
+  cur.forEach(r => { const p = pm.get(key(r));
+    st[key(r)] = !prev ? "" : !p ? "add" : (bvCount(r) ? "" : Math.abs(bvG(p) - bvG(r)) > 1e-6 ? "chg" : ""); });
+  const removed = prev ? prev.filter(r => !cm.has(key(r))) : [];
+  const n = { add: Object.values(st).filter(x => x === "add").length, chg: Object.values(st).filter(x => x === "chg").length, del: removed.length };
+  return { st, removed, n, pm, key };
+}
+const BH = { vers: [], sel: null };
+async function openBomHist() {
+  if (!BOM.pid) return toast("제품을 먼저 선택하세요");
+  const d = await api(`/api/bom/${BOM.pid}/versions`);
+  BH.vers = d.versions || [];
+  if (!BH.vers.length) return toast("이 제품은 배합비가 없어 이력이 없습니다");
+  BH.sel = BH.vers[0].id;
+  $("bhTitle").textContent = `🕘 배합비 이력 — ${(productById(BOM.pid) || {}).name || ""}`;
+  renderBomHist();
+  $("bomHistOverlay").classList.add("on");
+}
+window.closeBomHist = () => $("bomHistOverlay").classList.remove("on");
+const BH_KIND = { base: "기록 시작 전", replace: "자재 교체", delete: "삭제" };
+function renderBomHist() {
+  $("bhList").innerHTML = BH.vers.map((v, i) => {
+    const prev = BH.vers[i + 1];
+    const df = bvDiff(prev ? prev.rows : null, v.rows);
+    const sum = !prev ? `${v.rows.length}종` : [df.n.add && `+${df.n.add}`, df.n.del && `−${df.n.del}`, df.n.chg && `변경 ${df.n.chg}`,
+      prev.process !== v.process && "공정", prev.label !== v.label && "이름"].filter(Boolean).join(" · ") || "변경 없음";
+    return `<button class="bh-item ${v.id === BH.sel ? "on" : ""}" data-bhv="${v.id}">
+      <div style="display:flex; align-items:center; gap:6px;"><b class="num">v${v.ver}</b>${i === 0 ? '<span class="chip cat" style="background:#e3f4e8; color:#1d7a3e;">현재</span>' : ""}
+        ${BH_KIND[v.kind] ? `<span class="chip cat">${BH_KIND[v.kind]}</span>` : ""}<b style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(v.label || "")}</b></div>
+      <div class="auto num" style="font-size:11.5px; margin-top:2px;">${esc(v.saved_at)}${v.saved_by ? " · " + esc(v.saved_by) : ""} · ${esc(sum)}</div>
+      ${v.note ? `<div style="font-size:11.5px; margin-top:2px; color:var(--muted);">${esc(v.note)}</div>` : ""}</button>`;
+  }).join("");
+  const i = BH.vers.findIndex(v => v.id === BH.sel), v = BH.vers[i], prev = BH.vers[i + 1];
+  if (!v) { $("bhDetail").innerHTML = ""; return; }
+  const df = bvDiff(prev ? prev.rows : null, v.rows);
+  const SEC = { "반죽": "🍞 반죽 배합", "토핑": "🍪 토핑 배합", "": "구분 없음" };
+  const weigh = v.rows.filter(r => !bvCount(r)), cnt = v.rows.filter(bvCount);
+  let html = "";
+  ["반죽", "토핑", ""].forEach(b => {
+    const items = weigh.filter(r => (r.block || "") === b);
+    const gone = df.removed.filter(r => (r.block || "") === b && !bvCount(r));
+    if (!items.length && !gone.length) return;
+    const tot = items.reduce((s, r) => s + bvG(r), 0);
+    const y = Number((items.find(r => Number(r.block_yield) > 0) || {}).block_yield) || 0;
+    html += `<tr><td colspan="5" style="background:var(--bg); font-weight:700; font-size:12.5px;">${SEC[b]}${y ? ` <span class="auto num" style="font-weight:400">· 1배합 ≈ ${NF(Math.round(y))}개</span>` : ""}</td></tr>`
+      + items.map((r, k) => { const s = df.st[df.key(r)], p = df.pm.get(df.key(r));
+        return `<tr><td class="num auto">${k + 1}</td><td class="${s === "add" ? "bh-add" : ""}">${esc(r.name)}</td>
+          <td class="r num ${s === "chg" ? "bh-chg" : ""}">${NF(bvG(r))}</td><td class="r num">${tot ? (bvG(r) / tot * 100).toFixed(1) : "—"}</td>
+          <td class="auto" style="font-size:11.5px;">${s === "add" ? '<span class="bh-add">추가</span>' : s === "chg" ? `<span class="bh-chg">${NF(bvG(p))} → ${NF(bvG(r))}</span>` : ""}</td></tr>`; }).join("")
+      + gone.map(r => `<tr><td></td><td class="bh-del">${esc(r.name)}</td><td class="r num bh-del">${NF(bvG(r))}</td><td></td><td style="font-size:11.5px;"><span class="bh-del" style="text-decoration:none;">삭제</span></td></tr>`).join("")
+      + `<tr><td></td><td style="font-weight:700;">${b && weigh.some(r => (r.block || "") !== b) ? "소계" : "합계"}</td><td class="r num" style="font-weight:700;">${NF(Math.round(tot * 10) / 10)}</td><td class="r num">100.0</td><td></td></tr>`;
+  });
+  const goneCnt = df.removed.filter(bvCount);
+  if (cnt.length || goneCnt.length)
+    html += `<tr><td colspan="5" style="background:var(--bg); font-weight:700; font-size:12.5px;">📦 포장·부자재 (개수 자재)</td></tr>`
+      + cnt.map((r, k) => `<tr><td class="num auto">${k + 1}</td><td class="${df.st[df.key(r)] === "add" ? "bh-add" : ""}">${esc(r.name)}</td><td colspan="2" class="auto">개입수 ${NF(r.pack_count)}</td><td class="auto" style="font-size:11.5px;">${df.st[df.key(r)] === "add" ? '<span class="bh-add">추가</span>' : ""}</td></tr>`).join("")
+      + goneCnt.map(r => `<tr><td></td><td class="bh-del">${esc(r.name)}</td><td colspan="2"></td><td style="font-size:11.5px; color:var(--crit);">삭제</td></tr>`).join("");
+  const procChanged = prev && prev.process !== v.process;
+  $("bhDetail").innerHTML = `
+    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
+      <b style="font-size:15px;">v${v.ver}${v.label ? " · " + esc(v.label) : ""}</b>
+      <span class="auto num" style="font-size:12px;">${esc(v.saved_at)}${v.saved_by ? " · " + esc(v.saved_by) : ""}${prev ? ` · v${prev.ver} 대비 변경 표시` : ""}</span>
+      <span class="spacer"></span>
+      <button class="btn sm" data-bhxlsx="${v.id}">📥 이 버전 엑셀</button>
+      ${v.rows.length && BH.vers[0].id !== v.id ? `<button class="btn sm" data-bhrestore="${v.id}" title="이 버전 내용을 편집기에 불러옵니다 — [배합비 저장]을 눌러야 새 버전으로 확정됩니다">↩ 편집기로 불러오기</button>` : ""}
+    </div>
+    ${v.note ? `<div style="font-size:12.5px; margin-bottom:8px;">📝 ${esc(v.note)}</div>` : ""}
+    <div style="display:flex; gap:14px; flex-wrap:wrap; align-items:flex-start;">
+      <div class="tbl-wrap" style="flex:1 1 420px; min-width:0;"><table style="font-size:12.5px;">
+        <thead><tr><th style="width:34px">NO.</th><th>원료명</th><th class="r">1배 투입량 (g)</th><th class="r">배합비 (%)</th><th>직전 대비</th></tr></thead>
+        <tbody>${html || '<tr><td colspan="5" class="auto">배합이 없습니다 (삭제된 상태)</td></tr>'}</tbody></table></div>
+      <div style="flex:1 1 260px; min-width:0;">
+        <div style="font-weight:700; font-size:12.5px; margin-bottom:4px;">제조 공정 ${procChanged ? '<span class="bh-chg" style="font-size:11.5px;">· 직전 버전과 다름</span>' : ""}</div>
+        <div style="white-space:pre-wrap; font-size:12.5px; line-height:1.6; border:1px solid var(--line); border-radius:8px; padding:8px 10px; min-height:60px;">${v.process ? esc(v.process) : '<span class="auto">입력된 제조 공정이 없습니다</span>'}</div>
+        ${procChanged && prev.process ? `<details style="margin-top:6px; font-size:12px;"><summary class="auto" style="cursor:pointer;">v${prev.ver} 제조 공정 보기</summary>
+          <div style="white-space:pre-wrap; line-height:1.6; color:var(--muted); padding:6px 2px;">${esc(prev.process)}</div></details>` : ""}
+      </div>
+    </div>`;
+}
+$("bhList").addEventListener("click", e => {
+  const b = e.target.closest("[data-bhv]"); if (!b) return;
+  BH.sel = +b.dataset.bhv; renderBomHist();
+});
+$("bhDetail").addEventListener("click", e => {
+  const x = e.target.closest("[data-bhxlsx]");
+  if (x) { downloadFile(`/api/bom/${BOM.pid}/xlsx?ver_id=${x.dataset.bhxlsx}`); return; }
+  const rs = e.target.closest("[data-bhrestore]");
+  if (!rs) return;
+  const v = BH.vers.find(z => z.id === +rs.dataset.bhrestore); if (!v) return;
+  const gone = v.rows.filter(r => !materialById(r.material_id));
+  BOM.rows = v.rows.filter(r => materialById(r.material_id)).map(r => ({ material_id: r.material_id,
+    qty_per_unit: r.qty_per_unit, unit: r.unit || "g", block: r.block || "", batch_qty: r.batch_qty || 0,
+    block_yield: r.block_yield || 0, partner_ids: r.partner_ids || "", partner_id: null, note: r.note || "" }));
+  BOM.w = {};
+  $("bomLabel").value = v.label || ""; $("bomProcess").value = v.process || "";
+  $("bomVerNote").value = `v${v.ver}로 되돌림`;
+  renderBomRows();
+  closeBomHist();
+  toast(`v${v.ver} 내용을 불러왔습니다 — [배합비 저장]을 누르면 새 버전으로 확정됩니다`
+    + (gone.length ? ` (지금은 없는 자재 ${gone.length}종 제외: ${gone.map(r => r.name).join(", ")})` : ""));
+});
+/* 서버가 만든 파일(엑셀 등) 받기 — 오류면 메시지를 토스트로 */
+async function downloadFile(url) {
+  const res = await fetch(url, { credentials: "same-origin" });
+  if (!res.ok) { let m = "파일을 만들지 못했습니다"; try { m = (await res.json()).detail || m; } catch (e) { } toast(m); return; }
+  const cd = res.headers.get("Content-Disposition") || "";
+  const mm = cd.match(/filename\*=UTF-8''([^;]+)/i);
+  const name = mm ? decodeURIComponent(mm[1]) : "download.xlsx";
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(await res.blob()); a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  toast(`📥 ${name} 저장됨`);
+}
+$("bomHistBtn").onclick = openBomHist;
+$("bomXlsx").onclick = () => {
+  if (!BOM.pid) return toast("제품을 먼저 선택하세요");
+  downloadFile(`/api/bom/${BOM.pid}/xlsx`);
+};
+$("bomXlsxAll").onclick = () => downloadFile("/api/bomxlsx/all");
 function rowYield(r) {   // 그 행이 속한 배합 블록의 1배합당 생산수량 (없으면 제품 도우 수율)
   return Number(r.block_yield) || bomYield();
 }
@@ -6292,8 +6434,9 @@ $("bomSave").onclick = async () => {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ rows: BOM.rows.filter(r => r.material_id).map(r => ({ ...r,
         qty_per_unit: num(r.qty_per_unit), batch_qty: num(r.batch_qty), block_yield: num(r.block_yield) })),
-      batch_yield: dough ? Number(dough.block_yield) : null }) });
-  toast("배합비 저장 완료");
+      batch_yield: dough ? Number(dough.block_yield) : null,
+      label: $("bomLabel").value, process: $("bomProcess").value, ver_note: $("bomVerNote").value }) })
+    .then(r => toast(r.ver ? `배합비 저장 완료 — v${r.ver}로 이력에 보관됨` : "배합비 저장 완료 (바뀐 내용 없음)"));
   BOMALL = null;          // 일일 입력 '배합비 자동'이 새 배합을 쓰도록 캐시 무효화
   COSTS = null;           // 원가 분석도 새 배합 기준으로
   BOM.loadedFor = null;   // 저장본 재로드
