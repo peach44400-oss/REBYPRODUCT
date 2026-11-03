@@ -1690,6 +1690,8 @@
           <button class="btn sm" id="bomHistBtn" title="이 제품 배합비의 저장 이력 — 버전별 내용·변경점 비교·엑셀·되돌리기">🕘 이력</button>
           <button class="btn sm" id="bomXlsx" title="이 제품의 현재 배합비를 제조공정 양식 엑셀로 받습니다">📥 엑셀</button>
           <button class="btn sm" id="bomXlsxAll" title="배합비가 있는 모든 제품 — 제품별 시트 1개씩">📥 전체 엑셀</button>
+          <button class="btn sm" id="bomImpBtn" title="배합비 엑셀(원료명·투입량(g)·제조 공정)을 읽어 편집기에 넣습니다 — 원료명은 등록 자재와 자동 매칭">📤 엑셀 불러오기</button>
+          <input type="file" id="bomImpFile" accept=".xlsx" style="display:none;">
           <span class="spacer"></span>
           <button class="btn sm" id="bomDelete" style="color:var(--crit); border-color:var(--crit); display:none;"
                   title="이 제품의 배합비를 통째로 삭제 (자재는 그대로)">🗑 배합비 삭제</button>
@@ -2693,6 +2695,33 @@
 </div>
 
 <!-- 배합 자재 납품처 지정 (복수 선택) -->
+<div class="overlay" id="bomImpOverlay">
+  <div class="modal" style="width:1100px; max-width:96vw;">
+    <h3 id="biTitle">📤 배합비 엑셀 불러오기</h3>
+    <p class="hint">엑셀 원료명을 등록된 자재와 짝지었습니다 — <b style="color:var(--ok)">일치</b>는 그대로, <b style="color:#c76a00">추정</b>은 맞는지 확인, <b style="color:var(--crit)">선택 필요</b>는 자재를 골라 주세요 (안 고르면 빠짐). [편집기에 넣기] 후 <b>[배합비 저장]</b>을 눌러야 확정됩니다.</p>
+    <div id="biSheets" class="po-sttabs" style="margin:0 0 10px; flex-wrap:wrap;"></div>
+    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-bottom:10px;">
+      <div class="fld" style="margin:0;"><label>넣을 제품</label><select id="biProd" style="min-width:260px;"></select></div>
+      <div class="fld" style="margin:0;"><label>버전 이름</label><input id="biLabel" style="width:170px;"></div>
+      <div class="fld" style="margin:0;" id="biBlockFld"><label>넣을 배합</label><select id="biBlock"><option value="반죽">반죽</option><option value="토핑">토핑</option></select></div>
+      <div class="fld" style="margin:0;"><label>방식</label><select id="biMode">
+        <option value="replace">지금 배합을 이 엑셀로 교체</option><option value="append">지금 배합에 추가</option></select></div>
+      <label style="display:inline-flex; align-items:center; gap:5px; font-size:12.5px; padding-bottom:8px;"><input type="checkbox" id="biProc" checked style="width:15px; height:15px;">제조 공정도 넣기</label>
+    </div>
+    <div style="display:flex; gap:14px; max-height:56vh;">
+      <div class="tbl-wrap" style="flex:1 1 640px; overflow-y:auto; min-width:0;"><table style="font-size:12.5px;">
+        <thead><tr><th style="width:34px">NO.</th><th>엑셀 원료명</th><th class="r">투입량 (g)</th><th>→ 프로그램 자재</th><th>상태</th></tr></thead>
+        <tbody id="biRows"></tbody></table></div>
+      <div style="flex:0 1 300px; overflow-y:auto; min-width:0;">
+        <div style="font-weight:700; font-size:12.5px; margin-bottom:4px;">제조 공정</div>
+        <div id="biProcView" style="white-space:pre-wrap; font-size:12px; line-height:1.55; border:1px solid var(--line); border-radius:8px; padding:8px 10px;"></div>
+      </div>
+    </div>
+    <div class="modal-foot"><span class="auto" id="biSum" style="font-size:12.5px; margin-right:auto;"></span>
+      <button class="btn" onclick="closeBomImp()">취소</button><button class="btn primary" id="biApply">편집기에 넣기</button></div>
+  </div>
+</div>
+
 <div class="overlay" id="bomHistOverlay">
   <div class="modal" style="width:1180px; max-width:96vw;">
     <h3 id="bhTitle">배합비 이력</h3>

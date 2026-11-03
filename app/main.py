@@ -42,7 +42,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.124.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.125.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -7871,6 +7871,142 @@ def bom_xlsx(product_id: int, ver_id: int = 0):
         return _xlsx_response(wb, f"배합비_{p['name']}_{tag}.xlsx")
     finally:
         con.close()
+
+
+_NORM = lambda s: re.sub(r"\s+", "", str(s or "")).lower()
+_NOPAREN = lambda s: re.sub(r"\(.*?\)|\[.*?\]", "", _NORM(s))
+
+
+def _parse_bom_sheet(ws):
+    """배합비 엑셀 시트 1개 → {title, label, rows[{name, g, block, count}], process}.
+    머리행 = '원료명'(또는 원재료·자재명) 칸이 있는 행. 양 칸 = '투입량'·'(g)'·'배합량' 머리 → 없으면 원료명 오른쪽 첫 숫자 칸.
+    '반죽/토핑 … 배합' 줄은 구분 전환, 합계·소계는 건너뜀, '포장·부자재' 아래는 개수 자재, '제조 공정' 칸 아래 글은 공정."""
+    grid = [[c for c in r] for r in ws.iter_rows(values_only=True)]
+    txt = lambda v: str(v).strip() if v is not None else ""
+    hr = nc = qc = None
+    for i, r in enumerate(grid[:40]):
+        for j, v in enumerate(r):
+            if txt(v).replace(" ", "") in ("원료명", "원재료명", "원재료", "자재명", "재료명", "원료"):
+                hr, nc = i, j
+                break
+        if hr is not None:
+            break
+    if hr is None:
+        return None
+    for i in (hr, hr + 1):   # 머리가 두 줄로 병합된 경우도
+        if i < len(grid):
+            for j, v in enumerate(grid[i]):
+                t = txt(v).replace(" ", "").replace("\n", "")
+                if j != nc and qc is None and ("투입량" in t or "(g)" in t.lower() or "배합량" in t or "중량" in t):
+                    qc = j
+    title = ""
+    for i in range(hr - 1, -1, -1):
+        cand = [txt(v) for v in grid[i] if txt(v) and txt(v).replace(" ", "") not in ("제조공정",)]
+        if cand:
+            title = cand[0]
+            break
+    m = re.match(r"^(.*?)\s*((?:\d+\s*차|ver\.?\s*\d+|v\d+).*)$", title, re.I)
+    name, label = (m.group(1).strip(), m.group(2).strip()) if m and m.group(1).strip() else (title, "")
+    rows_, block, count_mode = [], "", False
+    for r in grid[hr + 1:]:
+        cells = [txt(v) for v in r]
+        nm = cells[nc] if nc < len(cells) else ""
+        joined = " ".join(c for c in cells[:max(nc, qc or nc) + 3] if c)
+        if not nm:
+            if "포장" in joined and ("부자재" in joined or "개수" in joined):
+                count_mode = True
+            elif "배합" in joined and ("반죽" in joined or "토핑" in joined):
+                block = "토핑" if "토핑" in joined else "반죽"
+                count_mode = False
+            continue
+        if nm.replace(" ", "") in ("합계", "소계", "총계", "계"):
+            continue
+        g = None
+        if qc is not None and qc < len(r) and isinstance(r[qc], (int, float)):
+            g = float(r[qc])
+        elif qc is None:
+            for v in r[nc + 1:]:
+                if isinstance(v, (int, float)):
+                    g = float(v)
+                    break
+        if g is None and not count_mode:
+            continue   # 숫자 없는 줄(메모 등)은 건너뜀
+        rows_.append({"name": nm, "g": round(g or 0, 4), "block": ("반죽" if count_mode and block else block), "count": count_mode})
+    process = []
+    for i, r in enumerate(grid[:10]):
+        for j, v in enumerate(r):
+            if txt(v).replace(" ", "") == "제조공정":
+                start = i + 1
+                for rr in grid[start:]:
+                    t = rr[j] if j < len(rr) else None
+                    if t is not None and str(t).strip():
+                        process.append(str(t).rstrip())
+                    elif process:
+                        process.append("")
+                while process and not process[-1].strip():
+                    process.pop()
+                break
+        if process:
+            break
+    return {"sheet": ws.title, "title": title, "name": name, "label": label, "rows": rows_, "process": "\n".join(process)}
+
+
+@app.post("/api/bom/parse_xlsx")
+def bom_parse_xlsx(body: dict):
+    """배합비 엑셀 불러오기 — 시트별로 읽고 원료명을 등록 자재와 자동 매칭해 돌려준다 (저장은 편집기에서)."""
+    import io
+    import openpyxl
+    mm = re.match(r"data:[^;]*;base64,(.+)$", body.get("data") or "", re.S)
+    if not mm:
+        raise HTTPException(400, "파일 데이터가 올바르지 않습니다")
+    try:
+        raw = base64.b64decode(mm.group(1), validate=True)
+        wb = openpyxl.load_workbook(io.BytesIO(raw), data_only=True)
+    except Exception:
+        raise HTTPException(400, "엑셀(.xlsx) 파일을 읽지 못했습니다 — .xls(옛 형식)라면 엑셀에서 .xlsx로 저장해 주세요")
+    con = connect()
+    try:
+        mats = [dict(r) for r in con.execute("""SELECT id, name, kind, status FROM material
+            WHERE kind IN ('raw','sub') OR COALESCE(is_semi,0)=1 ORDER BY (status='중단'), id""")]
+        prods = [dict(r) for r in con.execute("""SELECT id, name FROM product
+            WHERE COALESCE(status,'')!='단종' AND COALESCE(is_semi,0)=0""")]
+    finally:
+        con.close()
+    by_exact = {}
+    for m in mats:
+        by_exact.setdefault(m["name"], m)
+        by_exact.setdefault(_NORM(m["name"]), m)
+
+    def match(nm):
+        m = by_exact.get(nm) or by_exact.get(_NORM(nm))
+        if m:
+            return {"id": m["id"], "name": m["name"], "how": "exact"}, []
+        n, np_ = _NORM(nm), _NOPAREN(nm)
+        cands = [x for x in mats if np_ and (_NOPAREN(x["name"]) == np_)]
+        if len(cands) == 1:
+            return {"id": cands[0]["id"], "name": cands[0]["name"], "how": "guess"}, []
+        if not cands:
+            cands = [x for x in mats if n and (n in _NORM(x["name"]) or (len(np_) >= 2 and np_ in _NORM(x["name"]))
+                                               or (len(_NOPAREN(x["name"])) >= 2 and _NOPAREN(x["name"]) in n))]
+        if len(cands) == 1:
+            return {"id": cands[0]["id"], "name": cands[0]["name"], "how": "guess"}, []
+        return None, [{"id": x["id"], "name": x["name"]} for x in cands[:8]]
+
+    sheets = []
+    for ws in wb.worksheets:
+        sh = _parse_bom_sheet(ws)
+        if not sh or not sh["rows"]:
+            continue
+        for r in sh["rows"]:
+            r["match"], r["cands"] = match(r["name"])
+        pn = _NORM(sh["name"])
+        pm = next((p for p in prods if _NORM(p["name"]) == pn), None) or \
+            next((p for p in prods if pn and (pn in _NORM(p["name"]) or _NORM(p["name"]) in pn)), None)
+        sh["product_id"] = pm["id"] if pm else None
+        sheets.append(sh)
+    if not sheets:
+        raise HTTPException(400, "배합비 표를 찾지 못했습니다 — '원료명' 머리칸과 투입량(g) 칸이 있는 시트가 필요합니다")
+    return {"sheets": sheets}
 
 
 @app.get("/api/bomxlsx/all")

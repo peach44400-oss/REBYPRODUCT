@@ -5988,7 +5988,7 @@ async function loadBom(pid) {
   BOM.w = {};   // 블록별 분할 무게(1개당 g) — 전체무게 ÷ 수율로 역산해 초기 표시
   BOM.loadedFor = pid;
   renderBomRows();
-  loadBomMeta(pid);
+  await loadBomMeta(pid);
 }
 /* ── 배합비 버전 이력 ── 저장할 때마다 서버가 그때 배합(+버전 이름·제조 공정)을 버전으로 보관 */
 async function loadBomMeta(pid) {
@@ -6126,6 +6126,108 @@ async function downloadFile(url) {
   toast(`📥 ${name} 저장됨`);
 }
 $("bomHistBtn").onclick = openBomHist;
+/* ── 배합비 엑셀 불러오기 — 서버가 시트별로 원료명·투입량(g)·제조 공정을 읽고 자재를 자동 매칭 → 확인 후 편집기에 넣기 */
+const BI = { sheets: [], i: 0, file: "" };
+$("bomImpBtn").onclick = () => { $("bomImpFile").value = ""; $("bomImpFile").click(); };
+$("bomImpFile").addEventListener("change", async e => {
+  const f = e.target.files[0]; if (!f) return;
+  const data = await new Promise((res, rej) => { const rd = new FileReader(); rd.onload = () => res(rd.result); rd.onerror = rej; rd.readAsDataURL(f); });
+  let d;
+  try { d = await api("/api/bom/parse_xlsx", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ data }) }); }
+  catch (err) { return; }   // api가 토스트
+  BI.file = f.name;
+  BI.sheets = d.sheets.map(s => ({ ...s, pick: s.rows.map(r => r.match ? r.match.id : ""),
+    pid: s.product_id || "", labelIn: s.label || "" }));
+  BI.i = 0;
+  $("biTitle").textContent = `📤 배합비 엑셀 불러오기 — ${f.name}`;
+  renderBomImp();
+  $("bomImpOverlay").classList.add("on");
+});
+window.closeBomImp = () => $("bomImpOverlay").classList.remove("on");
+function biMatOptions(sel, cands) {
+  const o = m => `<option value="${m.id}" ${+sel === m.id ? "selected" : ""}>${esc(m.name)}</option>`;
+  const grp = (lbl, arr) => arr.length ? `<optgroup label="${lbl}">${arr.map(o).join("")}</optgroup>` : "";
+  const cs = (cands || []).map(c => materialById(c.id)).filter(Boolean);
+  return `<option value="">— 넣지 않음 (선택 필요)</option>` + grp("비슷한 이름", cs)
+    + grp("🧫 반제품", (M.semi || []).filter(m => m.status !== "중단")) + grp("원재료", M.raw.filter(m => m.status !== "중단"))
+    + grp("부재료", M.sub.filter(m => m.status !== "중단"));
+}
+function renderBomImp() {
+  const s = BI.sheets[BI.i]; if (!s) return;
+  $("biSheets").style.display = BI.sheets.length > 1 ? "flex" : "none";
+  $("biSheets").innerHTML = BI.sheets.map((x, k) => `<button data-bis="${k}" class="${k === BI.i ? "on" : ""}">${esc(x.name || x.sheet)}${x.labelIn ? " " + esc(x.labelIn) : ""}</button>`).join("");
+  const prods = M.product.filter(p => p.status !== "단종").slice().sort((a, b) => a.name.localeCompare(b.name, "ko"));
+  $("biProd").innerHTML = `<option value="">— 제품 선택 —</option>`
+    + (s.name ? `<option value="__new__" ${s.pid === "__new__" ? "selected" : ""}>➕ 새 제품으로 등록: ${esc(s.name)}</option>` : "")
+    + prods.map(p => `<option value="${p.id}" ${String(s.pid) === String(p.id) ? "selected" : ""}>${esc(p.name)}</option>`).join("");
+  $("biLabel").value = s.labelIn;
+  $("biBlockFld").style.display = s.rows.some(r => r.block) ? "none" : "";   // 엑셀에 반죽/토핑 구분이 있으면 그대로
+  $("biRows").innerHTML = s.rows.map((r, k) => {
+    const pk = s.pick[k], how = pk && r.match && +pk === r.match.id ? r.match.how : (pk ? "manual" : "");
+    const st = how === "exact" ? '<span style="color:var(--ok); font-weight:700;">✔ 일치</span>'
+      : how === "guess" ? '<span style="color:#c76a00; font-weight:700;">≈ 추정 · 확인</span>'
+      : how === "manual" ? '<span style="color:var(--ok);">✔ 선택함</span>' : '<span style="color:var(--crit); font-weight:700;">⚠ 선택 필요</span>';
+    return `<tr><td class="num auto">${k + 1}</td>
+      <td>${esc(r.name)}${r.block ? ` <span class="chip cat">${esc(r.block)}</span>` : ""}${r.count ? ' <span class="chip cat">포장</span>' : ""}</td>
+      <td class="r num">${r.count ? "—" : NF(r.g)}</td>
+      <td><select class="mini-sel" data-bipick="${k}" style="max-width:300px;">${biMatOptions(pk, r.cands)}</select></td>
+      <td style="white-space:nowrap; font-size:12px;">${st}</td></tr>`;
+  }).join("");
+  $("biProcView").innerHTML = s.process ? esc(s.process) : '<span class="auto">제조 공정 없음</span>';
+  const n = { ok: 0, guess: 0, none: 0 };
+  s.rows.forEach((r, k) => { const pk = s.pick[k]; if (!pk) n.none++; else if (r.match && +pk === r.match.id && r.match.how === "guess") n.guess++; else n.ok++; });
+  $("biSum").innerHTML = `원료 ${s.rows.length}종 · 넣을 것 <b>${n.ok + n.guess}</b>${n.guess ? ` (추정 ${n.guess} 확인)` : ""}${n.none ? ` · <span style="color:var(--crit)">선택 안 함 ${n.none} (빠짐)</span>` : ""}`;
+}
+$("biSheets").addEventListener("click", e => {
+  const b = e.target.closest("[data-bis]"); if (!b) return;
+  BI.i = +b.dataset.bis; renderBomImp();
+});
+$("biRows").addEventListener("change", e => {
+  const sel = e.target.closest("[data-bipick]"); if (!sel) return;
+  BI.sheets[BI.i].pick[+sel.dataset.bipick] = sel.value ? +sel.value : "";
+  renderBomImp();
+});
+$("biProd").addEventListener("change", e => { BI.sheets[BI.i].pid = e.target.value; });
+$("biLabel").addEventListener("input", e => { BI.sheets[BI.i].labelIn = e.target.value; });
+$("biApply").onclick = async () => {
+  const s = BI.sheets[BI.i]; if (!s) return;
+  let pid = $("biProd").value;
+  if (!pid) return toast("넣을 제품을 선택하세요 (없으면 '➕ 새 제품으로 등록')");
+  const picked = s.rows.map((r, k) => ({ r, mid: s.pick[k] })).filter(x => x.mid);
+  if (!picked.length) return toast("넣을 자재가 없습니다 — 프로그램 자재를 골라 주세요");
+  if (pid === "__new__") {
+    try { const r = await api("/api/masters/product", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: s.name, status: "판매중" }) }); pid = r.id; }
+    catch (err) { return; }
+    await reloadMaster("product");
+  }
+  pid = +pid;
+  const mode = $("biMode").value, blk = $("biBlock").value;
+  BOM.pid = pid; BOM.q = ""; $("bomProdSearch").value = "";
+  await loadBom(pid);   // 그 제품의 지금 배합·버전 정보
+  // 블록별 1개 분할 무게(g) = 지금 전체무게 ÷ 1배합 수율 — 새 배합에도 그대로 써서 1배합 생산수량을 다시 계산
+  const oldW = {};
+  ["반죽", "토핑"].forEach(b => { const y = Number(BOM.rows.find(r => r.block === b && Number(r.block_yield) > 0)?.block_yield) || 0;
+    const t = blockTotal(b); if (y > 0 && t > 0) oldW[b] = Math.round(t / y * 100) / 100; });
+  const yOf = b => Number(BOM.rows.find(r => r.block === b && Number(r.block_yield) > 0)?.block_yield) || 0;
+  const add = picked.map(({ r, mid }) => { const b = r.block || blk;
+    return { material_id: mid, qty_per_unit: 0, unit: "g", block: b, batch_qty: r.count ? 0 : r.g,
+      block_yield: mode === "append" ? yOf(b) : 0, partner_ids: "", partner_id: null, note: "" }; });
+  BOM.rows = mode === "append" ? BOM.rows.concat(add) : add;
+  BOM.w = {};
+  $("bomLabel").value = $("biLabel").value.trim();
+  if ($("biProc").checked && s.process) $("bomProcess").value = s.process;
+  $("bomVerNote").value = `엑셀 불러오기: ${BI.file}${BI.sheets.length > 1 ? " [" + s.sheet + "]" : ""}`;
+  closeBomImp();
+  await renderBomTab();
+  Object.entries(oldW).forEach(([b, w]) => { if (BOM.rows.some(r => r.block === b)) { BOM.w[b] = w; } });
+  renderBomRows();
+  Object.keys(BOM.w).forEach(b => recalcBlock(b));
+  const skipped = s.rows.length - picked.length;
+  toast(`'${(productById(pid) || {}).name}'에 ${picked.length}종 넣었습니다${skipped ? ` (${skipped}종 빠짐)` : ""} — `
+    + (Object.keys(BOM.w).length ? "분할 무게는 지금 값을 그대로 썼습니다 · " : "위 '분할 무게'를 넣으면 1배합 생산수량이 계산됩니다 · ")
+    + "확인 후 [배합비 저장]");
+};
 $("bomXlsx").onclick = () => {
   if (!BOM.pid) return toast("제품을 먼저 선택하세요");
   downloadFile(`/api/bom/${BOM.pid}/xlsx`);
