@@ -1921,13 +1921,15 @@ async function setBatchRatio(pid, ratio, block, quiet) {
 // '개수' 단위 자재 판정 — 개입수(pack_count)가 있으면 생산수량 ÷ 개입수로 소모 (kg/g 배합량 방식과 구분)
 const COUNT_UNITS = new Set(["개", "ea", "EA", "매", "장", "롤", "박스", "묶음", "봉", "set", "세트", "팩"]);
 function isCountMat(m) { return !!m && COUNT_UNITS.has(String(m.unit || "").trim()) && Number(m.pack_count) > 0; }
+// 포장지(롤) — 박스처럼 LOT 구간에 배정하지 않고 항상 생산수량 ÷ 개입수 올림 (예: 7,000개입 → 7,000개까지 1롤, 넘으면 2롤)
+function isWrapMat(m) { return isCountMat(m) && String(m.unit || "").trim() === "롤"; }
 // LOT 분할에서 구간별로 지정한 포장 배정 — {포장 자재 id: Σ올림(구간수량 ÷ 개입수)}
 // 하나라도 지정돼 있으면 그 포장들의 소모는 '배정 기준'으로 계산 (생산 전체 기준 이중 계산 방지)
 function lotPackAssign(pid) {
   const pr = E.prod.find(r => r.product_id === pid);
   const agg = {};
   const add = (m, qty) => {
-    if (!isCountMat(m)) return;
+    if (!isCountMat(m) || isWrapMat(m)) return;   // 포장지(롤)는 구간 배정 대상 아님
     agg[m.id] = (agg[m.id] || 0) + Math.ceil(qty / Number(m.pack_count));
   };
   (pr && pr.lotSplits || []).forEach(s => {
@@ -1957,8 +1959,8 @@ function updatePackUsage(pid) {
       x.material_id === u.material_id && (x.block || "") === (u.block || ""));
     const bpids = b ? bomPartnerIds(b) : [];
     let q;
-    if (hasAssign && Number(m.pack_count) > 1) {
-      // 포장을 구간별로 지정한 경우: 지정된 포장은 배정 합, 지정 안 된 포장(BOX류)은 0
+    if (hasAssign && Number(m.pack_count) > 1 && !isWrapMat(m)) {
+      // 포장을 구간별로 지정한 경우: 지정된 포장은 배정 합, 지정 안 된 포장(BOX류)은 0 — 포장지(롤)는 아래 자동 계산
       q = packAssign[u.material_id] || 0;
     } else if (bpids.length && splits.length) {
       const mine = splits.filter(x => bpids.includes(x.partner_id))
@@ -2300,7 +2302,7 @@ async function openLotSplit(i) {
     const seen = new Set();
     const addPack = mid => {
       const m = materialById(mid);
-      if (isCountMat(m) && Number(m.pack_count) > 1 && !seen.has(m.id)) {
+      if (isCountMat(m) && !isWrapMat(m) && Number(m.pack_count) > 1 && !seen.has(m.id)) {   // 포장지(롤)는 박스 후보에서 제외
         seen.add(m.id);
         LSP.packs.push({ mid: m.id, name: m.name, pack: Number(m.pack_count) });
       }
