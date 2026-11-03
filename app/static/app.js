@@ -1427,8 +1427,11 @@ async function loadDay(date) {
   E.viewers = d.viewers || [];
   renderEntryViewers();
   await ensureBomAll();   // 자재 사용의 블록 판정·배합수 역산에 배합비 필요
+  // 예전 계산 방식(박스 배정 시 포장지 0롤)으로 저장된 포장지를 생산수량 ÷ 개입수(올림)로 보정
+  const wrapFixed = E.prod.reduce((a, r) => a + (Number(r.prod_qty) > 0 ? updatePackUsage(r.product_id, true) : 0), 0);
   renderAll();
-  E.dirty = false;   // 막 불러온 상태 = 저장된 상태 (사용자가 입력하면 아래 리스너가 true로)
+  E.dirty = wrapFixed > 0;   // 막 불러온 상태 = 저장된 상태 (보정이 있으면 저장 필요)
+  if (wrapFixed) toast(`포장지(롤) ${wrapFixed}건이 0으로 저장돼 있어 생산수량 ÷ 개입수로 다시 계산했습니다 — 확인 후 저장하세요`);
 }
 // 일일 입력 화면에서 사용자가 값을 바꾸면 '미저장' 표시 — 다른 화면 이동 시 저장 여부 확인에 사용
 if ($("scr-entry")) {
@@ -1944,17 +1947,18 @@ function lotPackAssign(pid) {
 }
 // 생산수량이 바뀌면 그 제품의 개수 자재 사용량을 다시 계산 (배합량 자재는 그대로)
 // 우선순위: LOT 분할 포장 배정 > 납품처 지정 분배 몫 > 생산수량 전체
-function updatePackUsage(pid) {
+function updatePackUsage(pid, onlyWrapZero) {
   const pr = E.prod.find(r => r.product_id === pid);
   const prodQty = pr ? Number(pr.prod_qty) || 0 : 0;
   const splits = (pr && pr.prodSplits || []).filter(s => Number(s.qty) > 0);
   const packAssign = lotPackAssign(pid);
   const hasAssign = Object.keys(packAssign).length > 0;
-  let changed = false;
+  let changed = 0;
   E.usage.forEach(u => {
     if (u.product_id !== pid) return;
     const m = materialById(u.material_id);
     if (!isCountMat(m)) return;
+    if (onlyWrapZero && !(isWrapMat(m) && !(Number(u.qty) > 0))) return;   // 불러올 때: 0롤로 저장된 포장지만 보정
     const b = (BOMALL?.[pid] || []).find(x =>
       x.material_id === u.material_id && (x.block || "") === (u.block || ""));
     const bpids = b ? bomPartnerIds(b) : [];
@@ -1969,9 +1973,10 @@ function updatePackUsage(pid) {
     } else {
       q = prodQty > 0 ? Math.ceil(prodQty / Number(m.pack_count)) : 0;
     }
-    if (Number(u.qty) !== q) { u.qty = q; changed = true; }
+    if (Number(u.qty) !== q) { u.qty = q; changed++; }
   });
-  if (changed) renderUsage();
+  if (changed && !onlyWrapZero) renderUsage();
+  return changed;
 }
 const applyPartnerPack = updatePackUsage;   // 계획 분배 저장 시 납품처 부재료 재계산
 // 특정 블록(반죽/토핑/'')의 배합비 자재를 배합수만큼 채움 (다른 블록은 건드리지 않음)
@@ -1995,8 +2000,8 @@ async function applyBatchUsage(pid, ratio, block, quiet) {
     let qty;
     if (isCountMat(m)) {                               // 개수 자재: 수량 ÷ 개입수 (올림)
       const packAssign = lotPackAssign(pid);
-      if (Object.keys(packAssign).length && Number(m.pack_count) > 1) {
-        qty = packAssign[b.material_id] || 0;          // LOT 분할 포장 배정 우선
+      if (Object.keys(packAssign).length && Number(m.pack_count) > 1 && !isWrapMat(m)) {
+        qty = packAssign[b.material_id] || 0;          // LOT 분할 포장 배정 우선 (포장지(롤)는 제외 — 아래 자동 계산)
       } else if (bpids.length && splits.length) {      // 지정 납품처들의 분배 합 기준
         const mine = splits.filter(s => bpids.includes(s.partner_id))
           .reduce((a, s) => a + Number(s.qty), 0);
