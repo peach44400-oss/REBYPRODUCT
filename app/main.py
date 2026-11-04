@@ -42,7 +42,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.127.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.127.1"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -144,6 +144,12 @@ MASTER_TABLES = {
     "staff": ("staff", ["name", "kind", "position", "process", "wage", "join_date", "leave_date", "phone", "status", "note"]),
     "line": ("line", ["name", "process", "std_hours", "parent_id", "note", "status"]),
 }
+
+
+def _nf(v):
+    """안내문용 숫자 — 쉼표 + 불필요한 소수 0 제거 (1234.50 → 1,234.5)."""
+    t = f"{float(v or 0):,.3f}".rstrip("0").rstrip(".")
+    return "0" if t in ("", "-0") else t
 
 
 def rows(cur):
@@ -1395,7 +1401,7 @@ def _expiry_alert_once():
             lines = [f"⏰ 소비기한 아침 알림 — 만료 {n_exp}건 · 임박(7일 이내) {len(found) - n_exp}건"]
             for dleft, name, qty, exp in sorted(found)[:8]:
                 tag = f"D+{-dleft} 만료" if dleft < 0 else ("오늘 만료" if dleft == 0 else f"D-{dleft}")
-                lines.append(f"· {name} {tag} ({qty:g}개, 기한 {exp})")
+                lines.append(f"· {name} {tag} ({_nf(qty)}개, 기한 {exp})")
             if len(found) > 8:
                 lines.append(f"· 외 {len(found) - 8}건 — LOT 관리에서 확인")
             chat_system("\n".join(lines))
@@ -1413,7 +1419,7 @@ def _expiry_alert_once():
             lines = [f"📦 안전재고 미달 아침 알림 — {len(todo)}종 발주 필요"]
             for r in todo[:8]:
                 short = round((r["safety"] or 0) - (r["stock"] or 0), 1)
-                lines.append(f"· {r['name']} 재고 {r['stock']:g}{r['unit'] or ''} (부족 {short:g})")
+                lines.append(f"· {r['name']} 재고 {_nf(r['stock'])}{r['unit'] or ''} (부족 {_nf(short)})")
             if len(todo) > 8:
                 lines.append(f"· 외 {len(todo) - 8}종 — 발주 관리에서 확인")
             chat_system("\n".join(lines))
@@ -1591,7 +1597,7 @@ def integrity_check(request: Request):
                     run = r["real_qty"]
             if run < -0.005:
                 neg.append(f"{nm} ({round(run, 3)})")
-        pneg = [f"{r['name']} ({r['stock']:g})" for r in con.execute("""
+        pneg = [f"{r['name']} ({_nf(r['stock'])})" for r in con.execute("""
             SELECT p.name,
                    COALESCE(os.qty,0)+COALESCE(pb.q,0)-COALESCE(sb.q,0)-COALESCE(dp.q,0) stock
             FROM product p
@@ -2076,7 +2082,7 @@ def matprice_add(request: Request, mid: int, body: dict):
             con.execute("INSERT INTO material_price(material_id, from_date, price, set_at) "
                         "VALUES(?,?,?,datetime('now','localtime'))", (mid, fd, price))
         _sync_material_price(con, mid)
-        audit(con, "mat_price", f"자재#{mid} 단가 {fd}부터 {price:g}원 (이력 추가)")
+        audit(con, "mat_price", f"자재#{mid} 단가 {fd}부터 {_nf(price)}원 (이력 추가)")
         bump_masters()
         con.commit()
         return {"ok": True}
@@ -2802,15 +2808,15 @@ def matdisposal_create(request: Request, body: dict):
             raise HTTPException(404, "자재 없음")
         onhand = material_stock_expiry(con, mid, date)[0]
         if qty - onhand > 1e-6:
-            raise HTTPException(400, f"폐기 수량 {qty:g}{m['unit']}이(가) "
-                                f"현재고 {onhand:g}{m['unit']}를 초과합니다")
+            raise HTTPException(400, f"폐기 수량 {_nf(qty)}{m['unit']}이(가) "
+                                f"현재고 {_nf(onhand)}{m['unit']}를 초과합니다")
         con.execute("""INSERT INTO material_disposal(date, material_id, qty, expiry, reason, note, created_at, created_by)
             VALUES(?,?,?,?,?,?,datetime('now','localtime'),?)""",
                     (date, mid, qty, (body.get("expiry") or "").strip(),
                      body.get("reason") or "유통기한 만료", body.get("note") or "",
                      request.state.user.get("username", "")))
         _recompute_material_day(con, mid, date, manual_delta=-qty)
-        audit(con, "mat_disposal", f"{date} {m['name']} {qty:g}{m['unit']} 폐기 ({body.get('reason','유통기한 만료')})")
+        audit(con, "mat_disposal", f"{date} {m['name']} {_nf(qty)}{m['unit']} 폐기 ({body.get('reason','유통기한 만료')})")
         bump_masters()
         con.commit()
         return {"ok": True}
@@ -2836,7 +2842,7 @@ def matdisposal_delete(request: Request, did: int):
                 con.execute("INSERT OR REPLACE INTO material_expiry_ack(material_id, expiry, acked_at, acked_by) "
                             "VALUES(?,?,datetime('now','localtime'),?)",
                             (row["material_id"], e, request.state.user.get("username", "")))
-        audit(con, "mat_disposal_undo", f"{row['date']} {row['name']} {float(row['qty'] or 0):g}{row['unit']}")
+        audit(con, "mat_disposal_undo", f"{row['date']} {row['name']} {_nf(float(row['qty'] or 0))}{row['unit']}")
         bump_masters()
         con.commit()
         return {"ok": True}
@@ -3513,7 +3519,7 @@ def po_close(request: Request, po_id: int, body: dict):
                 raise HTTPException(400, "이미 전량 입고된 발주서입니다")
             con.execute("UPDATE purchase_order SET closed_at=datetime('now','localtime'), closed_by=? WHERE id=?",
                         (user, po_id))
-            left = ", ".join(f"{it['name']} {it['remain']:g}" for it in e["items"] if it["remain"] > 0)
+            left = ", ".join(f"{it['name']} {_nf(it['remain'])}" for it in e["items"] if it["remain"] > 0)
             audit(con, "close_po", f"발주서 #{po_id} 잔량 종결 — 미입고: {left}")
         else:
             con.execute("UPDATE purchase_order SET closed_at='', closed_by='' WHERE id=?", (po_id,))
@@ -4945,7 +4951,7 @@ def master_update(mtype: str, mid: int, body: dict):
                 else:
                     con.execute("INSERT INTO material_price(material_id, from_date, price, set_at) "
                                 "VALUES(?,?,?,datetime('now','localtime'))", (mid, fd, newp))
-                audit(con, "mat_price", f"자재#{mid} 단가 {fd}부터 {newp:g}원")
+                audit(con, "mat_price", f"자재#{mid} 단가 {fd}부터 {_nf(newp)}원")
         # 현재고 직접 수정: 기초재고(opening_stock)를 조정해 계산 재고가 입력값이 되도록
         if mtype == "product" and stock_set is not None:
             cur = con.execute("""
@@ -6536,7 +6542,7 @@ def _material_warnings(con, date):
             FROM material_daily md JOIN material m ON m.id=md.material_id WHERE md.date=?""", (date,)):
         u = used.get(r["material_id"], 0.0)
         unit = r["unit"] or ""
-        f = lambda v: f"{float(v or 0):g}"
+        f = lambda v: f"{_nf(float(v or 0))}"
         if r["src"] != "auto":
             calc = float(r["prev_qty"] or 0) + float(r["in_qty"] or 0) - float(r["real_qty"] or 0)
             if abs(calc - u) > 0.005:
@@ -7846,7 +7852,7 @@ def _bom_sheet(wb, title, label, rows_, process, info, by_yield):
             ws.cell(r, 2, i).alignment = C
             ws.cell(r, 3, x["name"]).alignment = C
             ws.merge_cells(start_row=r, start_column=4, end_row=r, end_column=5)
-            ws.cell(r, 4, f"개입수 {x['pack']:g}" if x["pack"] else "1개당 1")
+            ws.cell(r, 4, f"개입수 {_nf(x['pack'])}" if x["pack"] else "1개당 1")
             ws.cell(r, 4).alignment = C
             for c in (2, 3, 4):
                 ws.cell(r, c).font = F(10)
@@ -9257,7 +9263,7 @@ def pallets_add(request: Request, body: dict):
             new_id = con.execute("""INSERT INTO pallet_move(date, kind, material_id, partner_id, partner_name, qty, note, created_by)
                 VALUES(?, 'out', ?, ?, ?, ?, ?, ?)""", (date, mid, pid, pname, qty, (body.get("note") or "").strip()[:200], user)).lastrowid
         _pallet_sync_usage(con, new_id, old)   # 파렛트 재고 차감
-        audit(con, "pallet", f"파렛트 출고 {date} · {qty:g}개 (기록 #{new_id})")
+        audit(con, "pallet", f"파렛트 출고 {date} · {_nf(qty)}개 (기록 #{new_id})")
         bump_masters()
         con.commit()
         return {"ok": True, "id": new_id}

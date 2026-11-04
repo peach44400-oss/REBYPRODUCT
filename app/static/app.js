@@ -3,6 +3,40 @@
 
 const $ = (id) => document.getElementById(id);
 const NF = (n) => (n == null ? "—" : Number(Math.round(n * 1000) / 1000).toLocaleString("ko-KR"));
+/* ── 숫자 입력칸 쉼표 표시 — 화면에만 쉼표, 코드가 읽는 .value는 항상 쉼표 없는 원본 (저장·계산·수식 45*3 그대로).
+   대상: 숫자칸(.num·inputmode). 날짜·메모·운송장·포트·검색칸은 제외. innerHTML로 그려진 칸은 MutationObserver가 바로 포맷 */
+const NUM_INPUT_SEL = 'input:is(.num,[inputmode="decimal"],[inputmode="numeric"]):not(.datepick,[type="date"],[type="number"],[type="checkbox"],[type="radio"],[type="file"],[type="hidden"],[type="password"],[list],[data-f="order_date"],[data-f="note"],[data-bf="note"],[data-ff="waybill"],#smtpPort)';
+function numFmtText(v) {   // "1234.5" → "1,234.5" — 숫자가 아니거나(수식 등) 0으로 시작하는 코드형은 그대로
+  const t = String(v ?? ""), m = t.replace(/,/g, "").match(/^(-?)(\d+)(\.\d*)?$/);
+  if (!m || (m[2].length > 1 && m[2][0] === "0")) return t;
+  return m[1] + m[2].replace(/\B(?=(\d{3})+$)/g, ",") + (m[3] || "");
+}
+const _inputValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+Object.defineProperty(HTMLInputElement.prototype, "value", {
+  configurable: true, enumerable: true,
+  get() { const v = _inputValue.get.call(this); return v.includes(",") && this.matches(NUM_INPUT_SEL) ? v.replace(/,/g, "") : v; },
+  set(v) { _inputValue.set.call(this, this.matches(NUM_INPUT_SEL) ? numFmtText(v) : v); },
+});
+function fmtNumInputs(root) {
+  const list = [...root.querySelectorAll(NUM_INPUT_SEL)];
+  if (root.matches && root.matches(NUM_INPUT_SEL)) list.push(root);
+  list.forEach(el => { const v = _inputValue.get.call(el), f = numFmtText(v); if (f !== v) _inputValue.set.call(el, f); });
+}
+new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(n => { if (n.nodeType === 1) fmtNumInputs(n); })))
+  .observe(document.documentElement, { childList: true, subtree: true });
+fmtNumInputs(document);
+document.addEventListener("input", e => {   // 타이핑 중 쉼표 넣기 — 커서는 같은 숫자 뒤에 유지
+  const el = e.target;
+  if (!(el instanceof HTMLInputElement) || e.isComposing || !el.matches(NUM_INPUT_SEL)) return;
+  const raw = _inputValue.get.call(el), next = numFmtText(raw);
+  if (raw === next) return;
+  const keep = raw.slice(0, el.selectionStart ?? raw.length).replace(/,/g, "").length;
+  _inputValue.set.call(el, next);
+  if (document.activeElement !== el) return;
+  let i = 0, n = 0;
+  while (i < next.length && n < keep) { if (next[i] !== ",") n++; i++; }
+  el.setSelectionRange(i, i);
+}, true);
 const PCT = (a, b) => (b > 0 ? (a / b * 100).toFixed(1) + "%" : "—");
 // 로컬 시간대 기준 YYYY-MM-DD (toISOString은 UTC라 KST에서 날짜가 밀림 — 사용 금지)
 const fmtISO = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -518,7 +552,7 @@ async function loadDash() {
   const util = d.util;
   const kpis = [];
   kpis.push(`<div class="kpi ${lowTotal ? "alert" : ""}"><div class="lbl"><span class="ki">📦</span>부족 자재</div>
-    <div class="val num">${lowTotal}<small>종</small></div>
+    <div class="val num">${NF(lowTotal)}<small>종</small></div>
     <div class="delta">원재료 ${k.low_raw} · 부재료 ${k.low_sub}</div></div>`);
   kpis.push(`<div class="kpi"><div class="lbl"><span class="ki">🍩</span>최근 기록일 생산</div>
     <div class="val num">${NF(k.last_prod)}<small>개</small></div>
@@ -5726,7 +5760,7 @@ $("mErpFile").addEventListener("change", async e => {
   try {
     const pv = await post(false);   // 1차: 미리보기 (저장 없음)
     if (!pv.added && !pv.updated)
-      return toast(`추가할 신규 거래처가 없습니다 — 전부 기존과 중복 (${pv.total}건 확인)`);
+      return toast(`추가할 신규 거래처가 없습니다 — 전부 기존과 중복 (${NF(pv.total)}건 확인)`);
     const sample = (pv.new_names || []).join(", ") + (pv.added > (pv.new_names || []).length ? " …" : "");
     if (!confirm(`엑셀 거래처를 추가할까요?\n\n· 신규 등록: ${pv.added}건${sample ? ` (${sample})` : ""}\n· 기존 거래처 빈 항목 채움: ${pv.updated}건\n· 중복 제외: ${pv.skipped}건`)) return;
     const r = await post(true);     // 2차: 실제 저장
@@ -5795,7 +5829,7 @@ async function importCsvApply(text) {
     headers: { "Content-Type": "application/json" }, body: JSON.stringify({ rows: rows2 }) });
   await reloadMaster(mTab);
   renderMasters();
-  toast(`📤 ${res.applied}건 적용 완료${res.missed_total ? ` · 이름 미매칭 ${res.missed_total}건` : ""}`);
+  toast(`📤 ${NF(res.applied)}건 적용 완료${res.missed_total ? ` · 이름 미매칭 ${NF(res.missed_total)}건` : ""}`);
   if (res.missed && res.missed.length)
     setTimeout(() => alert("이름이 일치하지 않아 건너뛴 항목:\n" + res.missed.join("\n")), 300);
 }
@@ -8020,7 +8054,7 @@ $("postCsv").onclick = async () => {
   } catch (e) { return; }
   $("pcPartnerDl").innerHTML = POCSV.data.by_partner.map(p => `<option value="${esc(p.partner)}">`).join("");
   $("pcPartner").value = "";
-  $("poCsvHint").innerHTML = `<b>${$("postLbl").textContent}</b> 기간의 발주 ${POCSV.data.total}건을 <b>품목별 상세</b>로 저장합니다. 거래처를 고르면 그 거래처만, 비워두면 전체가 저장됩니다.`;
+  $("poCsvHint").innerHTML = `<b>${$("postLbl").textContent}</b> 기간의 발주 ${NF(POCSV.data.total)}건을 <b>품목별 상세</b>로 저장합니다. 거래처를 고르면 그 거래처만, 비워두면 전체가 저장됩니다.`;
   $("poCsvOverlay").classList.add("on");
 };
 window.closePoCsv = () => $("poCsvOverlay").classList.remove("on");
@@ -9648,7 +9682,7 @@ async function loadCosts() {
   // 신뢰도 경고: 단가 미입력 자재가 있으면 원가가 실제보다 낮게 계산됨
   const missTotal = d.rows.reduce((s, r) => s + r.missing, 0);
   $("anaCostWarn").innerHTML = (missTotal || d.no_bom)
-    ? `<div class="mh-wrap" style="margin-bottom:10px;">📋 ${missTotal ? `<b>단가 미입력 자재 사용 ${missTotal}건</b> — 해당 제품 원가는 실제보다 낮게 계산됩니다 (기준정보 › 원/부재료에서 단가 입력)` : ""}
+    ? `<div class="mh-wrap" style="margin-bottom:10px;">📋 ${missTotal ? `<b>단가 미입력 자재 사용 ${NF(missTotal)}건</b> — 해당 제품 원가는 실제보다 낮게 계산됩니다 (기준정보 › 원/부재료에서 단가 입력)` : ""}
        ${d.no_bom ? ` · 배합비 없는 제품 ${d.no_bom}종은 제외` : ""}</div>` : "";
   const rows2 = [...d.rows].sort((a, b) => {
     const am = a.sell > 0 ? (a.sell - a.mat_cost - d.labor_rate) / a.sell : 9e9;
@@ -13532,7 +13566,7 @@ function _schedPickRender() {
       const undo = anyPlaced ? ` <span class="sched-pick-undo" data-undo="${esc(key)}" title="이 카드로 담은 ${NF(used)}개를 생산 표에서 다시 빼냅니다 (합쳐진 칸이면 이 몫만 차감)" style="float:right; font-size:10px; color:#b33; cursor:pointer; border:1px solid #e5b4b4; border-radius:5px; padding:0 5px; background:#fff; line-height:16px;">↩ 빼기</span>` : "";
       return `<button type="button" class="sched-pick-card" draggable="${full ? "false" : "true"}" data-pick="${payload}" ${full ? 'aria-disabled="true" title="출고 수량을 모두 담았습니다 — [↩ 빼기]로 되돌리거나 생산 표에서 수량을 줄이면 다시 담을 수 있어요"' : (partial ? `title="남은 ${NF(rem)}개를 끌어다 놓으면 담깁니다"` : "")}
         style="display:block; width:100%; text-align:left; border:1px solid var(--line); border-left:3px solid ${full ? "#37a24a" : (partial ? "#e08a1e" : "var(--accent,#2f6df0)")}; border-radius:8px; padding:5px 8px; margin-bottom:5px; background:#fff; cursor:${full ? "default" : "grab"}; font-size:12px;">
-        ${undo}<span style="${full ? "opacity:.45;" : ""}"><b>${esc(it.label)}</b> <span class="num">${esc(it.qty)}</span>${it.pack ? ` <span class="auto" style="font-size:10.5px">${esc(it.pack)}</span>` : ""}</span> ${badge}</button>`;
+        ${undo}<span style="${full ? "opacity:.45;" : ""}"><b>${esc(it.label)}</b> <span class="num">${esc(numFmtText(it.qty))}</span>${it.pack ? ` <span class="auto" style="font-size:10.5px">${esc(numFmtText(it.pack))}</span>` : ""}</span> ${badge}</button>`;
     }).join("") || `<div class="auto" style="font-size:11.5px; padding:6px;">제품 없음</div>`;
     return `<div style="flex:0 0 165px; border:1px solid var(--line); border-radius:8px; padding:6px; background:#fff;">
       <div style="font-weight:800; font-size:12.5px; text-align:center; padding-bottom:4px; border-bottom:1px solid var(--line-soft); margin-bottom:6px;">${esc(g.name || "—")}${g.partner ? `<div class="auto" style="font-weight:500; font-size:10.5px;">${esc(g.partner)}</div>` : ""}${g.shipDate ? `<div class="auto" style="font-weight:500; font-size:10px;">${esc(_schedMD(g.shipDate))}</div>` : ""}</div>
