@@ -99,7 +99,7 @@
   .nav-sep:hover{background:rgba(255,255,255,.05);}
   .nav-sep span{font-size:10px; font-weight:800; letter-spacing:.06em; color:var(--side-muted);
     text-transform:uppercase; white-space:nowrap;}
-  .nav-sep .chev{flex:none; color:var(--side-muted); opacity:.7; transition:transform .18s ease; margin-left:2px;}
+  .nav-sep .chev{flex:none; color:#fff; opacity:1; width:14px; height:14px; transition:transform .18s ease; margin-left:2px;}
   .nav-sep.collapsed .chev{transform:rotate(-90deg);}
   .nav-sep::before{content:''; flex:1; order:3; height:1px; background:rgba(255,255,255,.08);}
   .nav-sep .chev{order:4;}
@@ -109,7 +109,7 @@
   .nav-subsep{display:flex; align-items:center; gap:6px; margin:2px 4px 2px 12px; padding:6px 8px; border-radius:7px; cursor:pointer; user-select:none;}
   .nav-subsep:hover{background:rgba(255,255,255,.05);}
   .nav-subsep span{font-size:11.5px; font-weight:700; color:var(--side-muted); white-space:nowrap;}
-  .nav-subsep .chev{flex:none; color:var(--side-muted); opacity:.7; transition:transform .18s ease; margin-left:auto;}
+  .nav-subsep .chev{flex:none; color:#fff; opacity:1; width:13px; height:13px; transition:transform .18s ease; margin-left:auto;}
   .nav-subsep.collapsed .chev{transform:rotate(-90deg);}
   .nav-subgrp{display:flex; flex-direction:column; gap:2px;}
   .nav-subgrp.collapsed{display:none;}
@@ -123,11 +123,24 @@
   .nav.pinopen .nav-sep{cursor:default;}
   .nav.pinopen .nav-sep:hover{background:none;}
   .nav.pinopen .nav-sep .chev{display:none;}
-  .nav-mode{display:flex; align-items:center; justify-content:center; gap:6px; margin:12px 4px 2px;
-    padding:7px; border:1px dashed rgba(255,255,255,.14); border-radius:8px; background:none;
-    color:var(--side-muted); font-size:11.5px; font-weight:700; cursor:pointer; width:auto;}
-  .nav-mode:hover{background:rgba(255,255,255,.05); color:var(--side-ink);}
-  .nav-mode svg{flex:none; opacity:.8; transition:transform .18s ease;}
+  .nav button.nav-off{display:none !important;}
+  .ned-row{display:flex; align-items:center; gap:6px; padding:4px 6px; border-radius:7px; border-top:2px solid transparent; border-bottom:2px solid transparent;}
+  .ned-row.grp{background:var(--bg); font-weight:700;}
+  .ned-row.off input[data-nf="label"]{color:var(--faint); text-decoration:line-through;}
+  .ned-row.ned-before{border-top-color:#1f5fd6;} .ned-row.ned-after{border-bottom-color:#1f5fd6;}
+  .ned-row.ned-in{outline:2px solid #1f5fd6; outline-offset:-2px;}
+  .ned-grip{cursor:grab; color:var(--muted); user-select:none; padding:2px 4px; font-size:15px; touch-action:none;}
+  .ned-row.ned-drag{opacity:.45;}
+  .ned-row input[data-nf="label"]{flex:1 1 120px; min-width:90px; padding:4px 7px; border:1px solid var(--line); border-radius:6px; font:inherit; font-size:12.5px; background:var(--surface); color:var(--ink);}
+  .ned-row button{border:1px solid var(--line); background:var(--surface); color:var(--ink); border-radius:6px; padding:2px 6px; font-size:11px; cursor:pointer; white-space:nowrap;}
+  .ned-row button:disabled{opacity:.35; cursor:default;}
+  .ned-row select{max-width:130px; font-size:11.5px; padding:3px 4px; border:1px solid var(--line); border-radius:6px; background:var(--surface); color:var(--ink);}
+  /* 펼치기/접기 — 메뉴가 길어 스크롤이 생겨도 항상 보이도록 사이드바 아래에 고정 */
+  .nav .nav-mode{display:flex; align-items:center; justify-content:center; gap:6px; margin:12px 0 0; width:100%;
+    position:sticky; bottom:0; z-index:2; padding:9px 8px; border:0; border-radius:9px; background:#1f5fd6;
+    color:#fff; font-size:12.5px; font-weight:800; cursor:pointer; box-shadow:0 -10px 14px var(--side);}
+  .nav .nav-mode:hover{background:#2f6fe6; color:#fff;}
+  .nav-mode svg{flex:none; opacity:1; transition:transform .18s ease;}
   .nav.pinopen .nav-mode svg{transform:rotate(180deg);}
   .nav button em{white-space:nowrap;}
   .nav .cnt{margin-left:auto; background:var(--crit); color:#fff; font-size:11px; font-weight:700;
@@ -2646,6 +2659,18 @@
       <button data-atab="backup">💾 백업 / 복원</button>
       <button data-atab="check">🔍 데이터 점검</button>
       <button data-atab="theme">🎨 화면(테마)</button>
+      <button data-atab="nav">🧭 메뉴 편집</button>
+    </div>
+
+    <div class="admin-pane" data-apane="nav" style="display:none;">
+      <p class="hint" style="margin:0 0 8px;">왼쪽 메뉴의 이름·순서·그룹을 바꿉니다 — ⠿를 끌어 옮기거나(그룹 가운데에 놓으면 그 안으로) ▲▼·위치 목록을 쓰세요. <b>[저장]</b>해야 왼쪽 메뉴에 적용되고 모든 사용자에게 같이 보입니다.</p>
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px; flex-wrap:wrap;">
+        <button class="btn sm" id="nedAddGroup">+ 새 그룹</button>
+        <span class="spacer"></span>
+        <button class="btn sm" id="nedReset" title="처음 메뉴 구성으로 되돌립니다">기본값으로 되돌리기</button>
+        <button class="btn sm primary" id="nedSave">저장</button>
+      </div>
+      <div id="nedTree" style="max-height:56vh; overflow-y:auto; border:1px solid var(--line); border-radius:10px; padding:4px;"></div>
     </div>
 
     <div class="admin-pane" data-apane="theme" style="display:none;">

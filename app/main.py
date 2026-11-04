@@ -42,7 +42,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.126.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.127.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -536,7 +536,8 @@ def logout(request: Request, response: Response):
 def me(request: Request):
     u = request.state.user
     return {"username": u["username"], "role": u["role"], "duty": u.get("duty", "all"),
-            "money_perms": sorted(money_set(u)), "weak_pw": bool(u.get("weak_pw"))}
+            "money_perms": sorted(money_set(u)), "weak_pw": bool(u.get("weak_pw")),
+            "nav_ver": get_app_setting("nav_layout_ver", "")}   # 왼쪽 메뉴 구성이 바뀌면 화면이 자동 반영
 
 
 @app.post("/api/password")
@@ -4146,6 +4147,61 @@ def whereused(mid: int, request: Request):
 
 # ── 공급자(회사) 정보 — 거래명세서·발주서 상단에 쓰는 우리 회사 정보 ──
 CO_KEYS = ["co_name", "co_bizno", "co_ceo", "co_addr", "co_tel", "co_type", "co_item", "co_stamp"]   # co_stamp = 대표 도장 이미지 파일명(Image/ 폴더)
+
+
+# ── 왼쪽 메뉴 구성 (관리 > 메뉴 편집) — 이름·순서·그룹/하위 그룹·숨김. 비어 있으면 기본 메뉴 ──
+def _nav_clean(items, depth=0, seen=None):
+    """화면에서 온 메뉴 트리 검증 — 그룹은 3단계까지, 메뉴는 한 번씩만."""
+    seen = set() if seen is None else seen
+    if not isinstance(items, list) or len(items) > 200:
+        raise HTTPException(400, "메뉴 구성이 올바르지 않습니다")
+    out = []
+    for n in items:
+        if not isinstance(n, dict):
+            raise HTTPException(400, "메뉴 구성이 올바르지 않습니다")
+        label = str(n.get("label") or "").strip()[:30]
+        if n.get("t") == "menu":
+            key = str(n.get("key") or "")
+            if not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", key) or key in seen:
+                raise HTTPException(400, f"메뉴 구성이 올바르지 않습니다: {key}")
+            seen.add(key)
+            out.append({"t": "menu", "key": key, "label": label, "hidden": bool(n.get("hidden"))})
+        elif n.get("t") == "group":
+            gid = str(n.get("id") or "")
+            if not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", gid):
+                raise HTTPException(400, "메뉴 구성이 올바르지 않습니다 (그룹)")
+            if depth >= 3:
+                raise HTTPException(400, "그룹은 3단계까지만 만들 수 있습니다")
+            if not label:
+                raise HTTPException(400, "그룹 이름을 입력해주세요")
+            out.append({"t": "group", "id": gid, "label": label, "items": _nav_clean(n.get("items") or [], depth + 1, seen)})
+        else:
+            raise HTTPException(400, "메뉴 구성이 올바르지 않습니다")
+    return out
+
+
+@app.get("/api/navlayout")
+def navlayout_get():
+    return {"layout": _jl(get_app_setting("nav_layout", ""), []) or None, "ver": get_app_setting("nav_layout_ver", "")}
+
+
+@app.post("/api/navlayout")
+def navlayout_set(request: Request, body: dict):
+    require_admin(request)
+    if body.get("reset"):
+        layout = ""
+    else:
+        layout = json.dumps(_nav_clean(body.get("layout")), ensure_ascii=False)
+    ver = dt.datetime.now().strftime("%Y%m%d%H%M%S%f")
+    set_app_setting("nav_layout", layout)
+    set_app_setting("nav_layout_ver", ver)
+    con = connect()
+    try:
+        audit(con, "save_nav", "왼쪽 메뉴 기본값으로 되돌림" if body.get("reset") else "왼쪽 메뉴 구성 변경")
+        con.commit()
+    finally:
+        con.close()
+    return {"ok": True, "ver": ver}
 
 
 @app.get("/api/company")

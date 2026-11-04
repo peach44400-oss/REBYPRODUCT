@@ -182,8 +182,11 @@ function navEnsureGroupOpen(scr) {
   if (!btn) return;
   const grp = btn.closest(".nav-grp");
   if (grp) { const open = navOpenSet(); if (!open.has(grp.dataset.grp)) { open.add(grp.dataset.grp); navSaveSet(open); applyNavGroups(); } }
-  const sub = btn.closest(".nav-subgrp");   // 하위 그룹도 열어줌
-  if (sub) { const so = navSubOpenSet(); if (!so.has(sub.dataset.subgrp)) { so.add(sub.dataset.subgrp); navSubSaveSet(so); applyNavSub(); } }
+  // 하위 그룹도 열어줌 (여러 단계면 바깥쪽까지 모두)
+  const so = navSubOpenSet(); let added = false;
+  for (let sub = btn.closest(".nav-subgrp"); sub; sub = sub.parentElement.closest(".nav-subgrp"))
+    if (!so.has(sub.dataset.subgrp)) { so.add(sub.dataset.subgrp); added = true; }
+  if (added) { navSubSaveSet(so); applyNavSub(); }
 }
 // 하위 그룹(nav-subsep/nav-subgrp) 접기·펼치기 — 상위 그룹과 별도 저장
 const NAVSUB_KEY = "navOpenSub";
@@ -212,7 +215,7 @@ function applyNavPin() {
   const pin = navPinned();
   $("nav").classList.toggle("pinopen", pin);
   const lbl = $("navModeToggle") && $("navModeToggle").querySelector("span");
-  if (lbl) lbl.textContent = pin ? "그룹별 접기 모드" : "메뉴 항상 펼치기";
+  if (lbl) lbl.textContent = pin ? "그룹별로 접기" : "메뉴 모두 펼치기";
   if (!pin) applyNavGroups();
 }
 if ($("navModeToggle")) $("navModeToggle").addEventListener("click", () => {
@@ -11157,6 +11160,9 @@ document.addEventListener("keydown", e => {
 function setAdminTab(tab) {
   document.querySelectorAll("#adminTabs [data-atab]").forEach(b => b.classList.toggle("on", b.dataset.atab === tab));
   document.querySelectorAll("#adminOverlay .admin-pane").forEach(p => p.style.display = p.dataset.apane === tab ? "" : "none");
+  const md = $("adminOverlay").querySelector(".modal");
+  md.style.width = tab === "nav" ? "780px" : ""; md.style.maxWidth = tab === "nav" ? "96vw" : "560px";   // 메뉴 편집은 넓게
+  if (tab === "nav" && !NAVED.dirty) navEdOpen();
 }
 document.getElementById("adminTabs")?.addEventListener("click", e => {
   const b = e.target.closest("[data-atab]"); if (b) setAdminTab(b.dataset.atab);
@@ -11169,6 +11175,7 @@ async function openAdmin() {
   $("updNotes").textContent = "";
   $("updMsg").textContent = "";
   UPD.latest = null;
+  NAVED.dirty = false;   // 저장 안 한 메뉴 편집은 관리 창을 다시 열면 버림
   setAdminTab("upd");   // 열 때 항상 첫 탭(업데이트)
   loadBackups();
   loadBackupSettings();
@@ -11178,6 +11185,237 @@ async function openAdmin() {
 }
 window.closeAdmin = () => $("adminOverlay").classList.remove("on");
 $("btnAdmin").onclick = () => { openAdmin(); applyTheme(); };
+
+/* ── 왼쪽 메뉴 구성 — 관리 > 메뉴 편집 (admin): 이름·순서·그룹/하위 그룹·숨기기. 서버 저장 → 모든 사용자 공통.
+   메뉴 버튼은 새로 만들지 않고 그대로 옮겨 붙인다 (권한별 표시·배지 id·클릭 처리 유지).
+   저장본에 없는 메뉴(새 버전에서 추가된 화면)는 원래 그룹, 없으면 맨 아래에 자동으로 붙는다. */
+const NAV_CHEV = '<svg class="chev" width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const NAVBTN = {}, NAV_ORIG = {};   // 메뉴 키 → 버튼 / 원래 이름
+const NAV = { items: [], ver: "" };
+function navParseDom(box) {   // 처음 HTML의 메뉴 구성 → 기본값
+  const out = [];
+  [...box.children].forEach(el => {
+    if (el.matches("button[data-scr], button#navLedger")) {
+      const key = el.dataset.scr || el.id;
+      NAVBTN[key] = el; NAV_ORIG[key] = el.querySelector("em").textContent;
+      out.push({ t: "menu", key, label: "", hidden: false });
+    } else if (el.matches(".nav-sep, .nav-subsep")) {
+      out.push({ t: "group", id: el.dataset.grp || el.dataset.subgrp, label: el.querySelector("span").textContent,
+        items: navParseDom(el.nextElementSibling) });
+    }
+  });
+  return out;
+}
+const NAV_DEFAULT = navParseDom($("nav"));
+function navWalk(items, fn, depth = 0, parent = null) {
+  items.forEach((n, i) => { fn(n, items, i, depth, parent); if (n.t === "group") navWalk(n.items, fn, depth + 1, n); });
+}
+function navMerge(saved) {   // 저장본 + 기본값: 없어진 메뉴는 빼고, 새 메뉴는 원래 그룹에 추가
+  const items = JSON.parse(JSON.stringify(saved || NAV_DEFAULT));
+  const seen = new Set();
+  const clean = arr => arr.filter(n => {
+    if (n.t === "group") { n.items = clean(n.items || []); return true; }
+    if (!NAVBTN[n.key] || seen.has(n.key)) return false;
+    seen.add(n.key); return true;
+  });
+  const out = clean(items);
+  navWalk(NAV_DEFAULT, (n, _a, _i, _d, parent) => {
+    if (n.t !== "menu" || seen.has(n.key)) return;
+    let host = null;
+    if (parent) navWalk(out, g => { if (g.t === "group" && g.id === parent.id) host = g; });
+    (host ? host.items : out).push({ t: "menu", key: n.key, label: "", hidden: false });
+  });
+  return out;
+}
+function navHideEmpty() {   // 보이는 메뉴가 하나도 없는 그룹은 제목도 숨김 (권한·숨기기·빈 그룹)
+  $("nav").querySelectorAll(".nav-sep, .nav-subsep").forEach(sep => {
+    const any = [...sep.nextElementSibling.querySelectorAll("button")]
+      .some(b => !b.classList.contains("nav-off") && b.style.display !== "none");
+    sep.style.display = any ? "" : "none";
+  });
+}
+function navSyncHeading(scr, orig, name) {   // 화면 안 큰 제목에 메뉴 이름이 있으면 같이 바꿈 (예: 📊 매입 통계)
+  const h = document.querySelector(`#scr-${scr} h2`); if (!h) return;
+  h.childNodes.forEach(t => {
+    if (t.nodeType !== 3) return;
+    if (t.navOrig === undefined) t.navOrig = t.textContent;
+    if (t.navOrig.includes(orig)) t.textContent = t.navOrig.replace(orig, name);
+  });
+}
+function navApply(items) {
+  NAV.items = items;
+  const nav = $("nav"), mode = $("navModeToggle");
+  Object.values(NAVBTN).forEach(b => b.remove());
+  [...nav.children].forEach(el => { if (el !== mode) el.remove(); });
+  const build = (arr, depth) => {
+    const frag = document.createDocumentFragment();
+    arr.forEach(n => {
+      if (n.t === "menu") {
+        const b = NAVBTN[n.key], name = n.label || NAV_ORIG[n.key];
+        b.querySelector("em").textContent = name;
+        b.classList.toggle("nav-off", !!n.hidden);
+        b.style.paddingLeft = depth >= 3 ? "36px" : "";
+        if (b.dataset.scr) { TITLES[b.dataset.scr] = name; navSyncHeading(b.dataset.scr, NAV_ORIG[n.key], name); }
+        frag.appendChild(b);
+      } else {
+        const sub = depth > 0, sep = document.createElement("div"), body = document.createElement("div");
+        sep.className = sub ? "nav-subsep" : "nav-sep"; body.className = sub ? "nav-subgrp" : "nav-grp";
+        sep.dataset[sub ? "subgrp" : "grp"] = n.id; body.dataset[sub ? "subgrp" : "grp"] = n.id;
+        const sp = document.createElement("span"); sp.textContent = n.label;
+        sep.appendChild(sp); sep.insertAdjacentHTML("beforeend", NAV_CHEV);
+        if (depth >= 2) sep.style.marginLeft = "24px";
+        body.appendChild(build(n.items, depth + 1));
+        frag.append(sep, body);
+      }
+    });
+    return frag;
+  };
+  nav.insertBefore(build(items, 0), mode);
+  applyNavGroups(); applyNavSub(); applyNavPin(); navHideEmpty();
+  const cur = nav.querySelector("button.on[data-scr]");
+  if (cur) { navEnsureGroupOpen(cur.dataset.scr); $("scrTitle").textContent = TITLES[cur.dataset.scr]; }
+}
+async function navLayoutLoad() {
+  let d = { layout: null, ver: "" };
+  try { d = await api("/api/navlayout"); } catch (e) { }
+  NAV.ver = d.ver || "";
+  navApply(navMerge(d.layout));
+}
+// ── 메뉴 편집 화면 ──
+const NAVED = { items: [], dirty: false, flat: [], drag: null };
+function navEdOpen() { NAVED.items = JSON.parse(JSON.stringify(NAV.items)); NAVED.dirty = false; navEdRender(); }
+const navSubDepth = n => n.t === "group" ? 1 + Math.max(0, ...n.items.map(navSubDepth)) : 0;   // 이 항목이 차지하는 그룹 단수
+const navContains = (g, n) => g === n || (g.t === "group" && g.items.some(x => navContains(x, n)));
+function navCanPlace(n, group, level) {   // group(level 단계) 안에 n을 넣을 수 있나 — 자기 안으로 불가, 그룹은 3단계까지
+  if (navContains(n, group)) return false;
+  return level + navSubDepth(n) <= 2;
+}
+function navEdRender() {
+  const flat = []; navWalk(NAVED.items, (n, arr, i, depth, parent) => flat.push({ n, arr, i, depth, parent }));
+  NAVED.flat = flat;
+  const groups = flat.filter(x => x.n.t === "group");
+  $("nedTree").innerHTML = flat.map((x, idx) => {
+    const { n, depth, parent, arr, i } = x, g = n.t === "group";
+    const opts = `<option value="">최상위</option>` + groups.filter(o => navCanPlace(n, o.n, o.depth))
+      .map(o => `<option value="${esc(o.n.id)}" ${parent === o.n ? "selected" : ""}>${"　".repeat(o.depth)}${esc(o.n.label || "(이름 없음)")}</option>`).join("");
+    return `<div class="ned-row ${g ? "grp" : ""} ${n.hidden ? "off" : ""}" data-i="${idx}" style="margin-left:${depth * 20}px;">
+      <span class="ned-grip" title="끌어서 옮기기">⠿</span><span>${g ? "📁" : ""}</span>
+      <input data-nf="label" value="${esc(n.label || (g ? "" : NAV_ORIG[n.key] || ""))}" placeholder="${g ? "그룹 이름" : esc(NAV_ORIG[n.key] || "")}" maxlength="30"
+        ${g ? "" : `title="원래 이름: ${esc(NAV_ORIG[n.key] || "")} — 비워 두면 원래 이름"`}>
+      <button data-na="up" title="위로" ${!parent && i === 0 ? "disabled" : ""}>▲</button>
+      <button data-na="down" title="아래로" ${!parent && i === arr.length - 1 ? "disabled" : ""}>▼</button>
+      <select data-nf="parent" title="어느 그룹에 넣을지">${opts}</select>
+      ${g ? `${depth < 2 ? '<button data-na="addsub" title="이 그룹 안에 하위 그룹 만들기">＋하위</button>' : ""}<button data-na="del" title="그룹만 지우기 — 안의 메뉴는 바깥으로 나옵니다">삭제</button>`
+        : `<label style="display:inline-flex; align-items:center; gap:3px; font-size:11.5px; font-weight:400; cursor:pointer;" title="체크 해제 = 모든 사용자의 왼쪽 메뉴에서 숨김"><input type="checkbox" data-nf="show" ${n.hidden ? "" : "checked"}>표시</label>`}
+    </div>`;
+  }).join("");
+}
+function navEdMove(n, targetArr, index) {   // n을 지금 자리에서 빼서 targetArr[index]에 넣기
+  const x = NAVED.flat.find(f => f.n === n);
+  x.arr.splice(x.i, 1);
+  if (targetArr === x.arr && index > x.i) index--;
+  targetArr.splice(index, 0, n);
+  NAVED.dirty = true; navEdRender();
+}
+const navFlatOf = n => NAVED.flat.find(f => f.n === n);
+$("nedTree").addEventListener("input", e => {
+  if (e.target.dataset.nf !== "label") return;
+  NAVED.flat[+e.target.closest(".ned-row").dataset.i].n.label = e.target.value;
+  NAVED.dirty = true;
+});
+$("nedTree").addEventListener("change", e => {
+  const row = e.target.closest(".ned-row"); if (!row) return;
+  const x = NAVED.flat[+row.dataset.i], f = e.target.dataset.nf;
+  if (f === "label") { navEdRender(); return; }   // 그룹 이름이 위치 목록에도 반영되도록
+  if (f === "show") { x.n.hidden = !e.target.checked; NAVED.dirty = true; navEdRender(); return; }
+  if (f === "parent") {
+    const g = groupById(e.target.value);
+    const target = g ? g.items : NAVED.items;
+    navEdMove(x.n, target, target.length);
+  }
+});
+function groupById(id) { let hit = null; if (id) navWalk(NAVED.items, g => { if (g.t === "group" && g.id === id) hit = g; }); return hit; }
+$("nedTree").addEventListener("click", e => {
+  const b = e.target.closest("[data-na]"); if (!b) return;
+  const x = NAVED.flat[+b.closest(".ned-row").dataset.i], { n, arr, i, parent } = x, a = b.dataset.na;
+  if (a === "up" || a === "down") {
+    const up = a === "up";
+    if (up ? i > 0 : i < arr.length - 1) { arr.splice(i, 1); arr.splice(up ? i - 1 : i + 1, 0, n); NAVED.dirty = true; navEdRender(); }
+    else if (parent) { const p = navFlatOf(parent); navEdMove(n, p.arr, up ? p.i : p.i + 1); }   // 그룹 끝에서 더 움직이면 그룹 밖으로
+    return;
+  }
+  if (a === "addsub") { navEdNewGroup(n.items); return; }
+  if (a === "del") {   // 그룹만 지우고 안의 항목은 그 자리로
+    arr.splice(i, 1, ...n.items); NAVED.dirty = true; navEdRender();
+  }
+});
+function navEdNewGroup(arr) {
+  const id = "g" + Date.now().toString(36);
+  arr.push({ t: "group", id, label: "새 그룹", items: [] });
+  const o = navOpenSet(); o.add(id); navSaveSet(o);
+  const so = navSubOpenSet(); so.add(id); navSubSaveSet(so);
+  NAVED.dirty = true; navEdRender();
+  const inp = [...$("nedTree").querySelectorAll(".ned-row")].find(r => NAVED.flat[+r.dataset.i].n.id === id)?.querySelector('[data-nf="label"]');
+  if (inp) { inp.scrollIntoView({ block: "nearest" }); inp.focus(); inp.select(); }
+}
+$("nedAddGroup").onclick = () => navEdNewGroup(NAVED.items);
+// 끌어서 옮기기 — ⠿를 잡고 이동: 행의 위쪽 = 앞에, 아래쪽 = 뒤에, 그룹 가운데 = 그 안으로 (마우스·터치 공용)
+function navDropInfo(e) {
+  const hit = document.elementFromPoint(e.clientX, e.clientY);
+  const row = hit && hit.closest(".ned-row"); if (!row || NAVED.drag == null) return null;
+  const to = NAVED.flat[+row.dataset.i], from = NAVED.flat[NAVED.drag];
+  const rect = row.getBoundingClientRect(), ratio = (e.clientY - rect.top) / rect.height;
+  const zone = ratio < .3 ? "before" : ratio > .7 ? "after" : (to.n.t === "group" ? "in" : (ratio < .5 ? "before" : "after"));
+  if (navContains(from.n, to.n)) return null;   // 자기 자신·자기 안으로는 불가
+  if (zone === "in") { if (!navCanPlace(from.n, to.n, to.depth)) return null; }
+  else if (to.depth - 1 + navSubDepth(from.n) > 2) return null;
+  return { row, to, from, zone };
+}
+const navClearDrop = () => $("nedTree").querySelectorAll(".ned-row").forEach(r => r.classList.remove("ned-before", "ned-after", "ned-in"));
+$("nedTree").addEventListener("pointerdown", e => {
+  if (!e.target.classList.contains("ned-grip")) return;
+  e.preventDefault();
+  const srcRow = e.target.closest(".ned-row"), tree = $("nedTree");
+  NAVED.drag = +srcRow.dataset.i;
+  srcRow.classList.add("ned-drag");
+  const move = ev => {
+    navClearDrop();
+    const d = navDropInfo(ev);
+    if (d) d.row.classList.add("ned-" + d.zone);
+    const r = tree.getBoundingClientRect();   // 목록 끝으로 가면 자동 스크롤
+    if (ev.clientY < r.top + 28) tree.scrollTop -= 14; else if (ev.clientY > r.bottom - 28) tree.scrollTop += 14;
+  };
+  const up = ev => {
+    document.removeEventListener("pointermove", move);
+    document.removeEventListener("pointerup", up);
+    document.removeEventListener("pointercancel", up);
+    const d = ev.type === "pointerup" ? navDropInfo(ev) : null;
+    navClearDrop(); srcRow.classList.remove("ned-drag"); NAVED.drag = null;
+    if (!d) return;
+    if (d.zone === "in") navEdMove(d.from.n, d.to.n.items, d.to.n.items.length);
+    else navEdMove(d.from.n, d.to.arr, d.zone === "before" ? d.to.i : d.to.i + 1);
+  };
+  document.addEventListener("pointermove", move);
+  document.addEventListener("pointerup", up);
+  document.addEventListener("pointercancel", up);
+});
+$("nedSave").onclick = async () => {
+  let bad = false; navWalk(NAVED.items, n => { if (n.t === "group" && !String(n.label || "").trim()) bad = true; });
+  if (bad) return toast("그룹 이름을 입력해주세요");
+  let r; try { r = await api("/api/navlayout", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ layout: NAVED.items }) }); } catch (e) { return; }
+  NAV.ver = r.ver;
+  navApply(navMerge(NAVED.items));
+  NAVED.dirty = false; navEdOpen();
+  toast("왼쪽 메뉴에 적용했습니다 — 다른 사용자는 20초 안에 자동으로 바뀝니다");
+};
+$("nedReset").onclick = async () => {
+  if (!confirm("왼쪽 메뉴를 처음 구성으로 되돌릴까요?\n바꾼 이름·순서·그룹이 모두 사라집니다.")) return;
+  let r; try { r = await api("/api/navlayout", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reset: true }) }); } catch (e) { return; }
+  NAV.ver = r.ver;
+  navApply(navMerge(null));
+  navEdOpen();
+  toast("왼쪽 메뉴를 기본값으로 되돌렸습니다");
+};
 
 /* ── 화면 테마 (라이트 / 다크 / 시스템) — 이 기기(localStorage 'ms_theme')에 저장 ── */
 function _themeEffective(mode) {
@@ -12284,6 +12522,7 @@ async function startApp(me) {
   $("btnSaveStock").title = canStock ? ""
     : (MYDUTY.size === 0 ? noDuty : "재고·입고 담당이 아니어서 저장할 수 없습니다");
   await loadMasters();
+  await navLayoutLoad();   // 관리자가 바꾼 왼쪽 메뉴 구성
   await loadDash();
   loadLowStock();   // 사이드바 '발주 필요' 알림 (자재 담당·admin)
   aiInit();         // ✨ AI에게 묻기 버튼 (관리자 + 허용 계정)
@@ -12296,6 +12535,7 @@ async function startApp(me) {
   { const pr = $("navPurchRep"); if (pr) pr.style.display = canM("mat_amt") ? "" : "none"; }   // 매입 통계 — 자재 금액 권한
   { const pl = $("navPnl"); if (pl) pl.style.display = canM("ship_amt") ? "" : "none"; }
   { const qn = $("navQuote"); if (qn) qn.style.display = canM("cost") ? "" : "none"; }   // 견적 계산 — 원가 권한   // 손익 요약 — 출고 금액 권한
+  navHideEmpty();   // 권한으로 다 숨겨진 그룹은 제목도 숨김
   api("/api/mysign").then(s => { MYSIGN.img = s.img || ""; }).catch(() => { });   // 내 사인 (발주서 서명란)
   $("dbStatus").innerHTML = `🟢 제품 ${M.product.length} · 자재 ${M.raw.length + M.sub.length}`;
   // 권한 실시간 반영: admin이 권한을 바꾸면(서버 세션은 즉시 교체됨) 화면도 20초 내 자동 새로고침
@@ -12304,6 +12544,7 @@ async function startApp(me) {
       const r = await fetch("/api/me");
       if (r.status === 401) { location.reload(); return; }
       const me2 = await r.json();
+      if ((me2.nav_ver || "") !== NAV.ver) navLayoutLoad();   // 관리자가 메뉴 구성을 바꿈 → 바로 반영
       const mp2 = (me2.money_perms || []).slice().sort().join(",");
       if (me2.role !== ROLE || (me2.duty || "all") !== DUTY
           || (ROLE !== "admin" && mp2 !== [...MPERM].sort().join(","))) {
