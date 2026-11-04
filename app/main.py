@@ -42,7 +42,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.125.3"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.126.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -4441,6 +4441,22 @@ def salesreport(request: Request, frm: str = "", to: str = ""):
 
 
 # ── 매입 통계 (거래처별·자재별·월별 매입액 — 입고 기준) ──────────────────
+@app.get("/api/freightreport")
+def freightreport(frm: str = "", to: str = ""):
+    """운송 현황 — 기간 내 운송비 기록 (1행 = 운송 1회). 운송회사·도착지·월별 집계는 화면에서 필터와 함께 계산."""
+    today = dt.date.today()
+    frm = frm or today.replace(day=1).isoformat()
+    to = to or today.isoformat()
+    con = connect()
+    try:
+        data = rows(con.execute("""SELECT f.*, COALESCE(p.name,'') carrier_name FROM freight f
+            LEFT JOIN partner p ON p.id=f.carrier_id
+            WHERE f.date BETWEEN ? AND ? ORDER BY f.date DESC, f.id DESC""", (frm, to)))
+        return {"from": frm, "to": to, "rows": data}
+    finally:
+        con.close()
+
+
 @app.get("/api/purchasereport")
 def purchasereport(request: Request, frm: str = "", to: str = ""):
     if not mcan(request, "mat_amt"):

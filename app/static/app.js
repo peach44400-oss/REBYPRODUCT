@@ -102,7 +102,7 @@ async function reloadMaster(t) {
 }
 
 /* ── 네비게이션 ─────────────────────── */
-const TITLES = { dash: "대시보드", prod: "생산 현황", workorder: "작업지시서", ship: "출고 현황", invoice: "거래명세서", recv: "미수금", salesrep: "매출 통계", pcard: "거래처 원장", postat: "발주 현황", purchrep: "매입 통계", salesorder: "수주 관리", entry: "일일 입력", lot: "LOT 관리", matstat: "자재 현황", sched: "출고 스케줄", prodsched: "생산 스케줄", items: "기준정보 관리", ana: "분석", lookup: "기록 조회", memos: "특이사항", staff: "인원 관리", pnl: "손익 요약", quote: "견적 계산", pallet: "파렛트 관리" };
+const TITLES = { dash: "대시보드", prod: "생산 현황", workorder: "작업지시서", ship: "출고 현황", invoice: "거래명세서", recv: "미수금", salesrep: "매출 통계", pcard: "거래처 원장", postat: "발주 현황", purchrep: "매입 통계", salesorder: "수주 관리", entry: "일일 입력", lot: "LOT 관리", matstat: "자재 현황", sched: "출고 스케줄", prodsched: "생산 스케줄", items: "기준정보 관리", ana: "분석", lookup: "기록 조회", memos: "특이사항", staff: "인원 관리", pnl: "손익 요약", quote: "견적 계산", pallet: "파렛트 관리", freight: "운송 현황" };
 /* 표 검색(필터)은 화면·탭을 옮기면 초기화한다.
    남아 있으면 다른 화면에서 '등록된 항목이 없습니다'만 보여 데이터가 없는 것처럼 오해하게 된다.
    ※ 행 추가용 검색(qaProd 등)은 필터가 아니라 입력칸이므로 대상 아님. */
@@ -145,7 +145,7 @@ $("nav").addEventListener("click", e => {
   $("scrTitle").textContent = TITLES[b.dataset.scr];
   resetSearches();
   const fn = { dash: loadDash, prod: loadProd, ship: loadShip, entry: openEntry, lot: loadLot, items: renderMasters, ana: loadAna, lookup: () => lkCal.render(),
-    postat: loadPoStat, memos: loadMemos, matstat: loadMatStatus, sched: () => { SCHED.kind = "ship"; _schedApplyKindUI(); loadSchedule(); }, prodsched: () => loadProdSched(), invoice: loadInvoice, recv: loadReceivables, salesorder: loadSalesOrders, pcard: loadPCard, pnl: loadPnl, quote: loadQuote, pallet: loadPallet, workorder: loadWorkorder, salesrep: loadSalesRep, purchrep: loadPurchRep,
+    postat: loadPoStat, memos: loadMemos, matstat: loadMatStatus, sched: () => { SCHED.kind = "ship"; _schedApplyKindUI(); loadSchedule(); }, prodsched: () => loadProdSched(), invoice: loadInvoice, recv: loadReceivables, salesorder: loadSalesOrders, pcard: loadPCard, pnl: loadPnl, quote: loadQuote, pallet: loadPallet, workorder: loadWorkorder, salesrep: loadSalesRep, purchrep: loadPurchRep, freight: loadFreightRep,
     staff: () => { STAFF.mode = "d"; STAFF.date = todayISO();   // 진입 시 항상 일별·오늘로 초기화
       document.querySelectorAll("#staffTabs button").forEach(x => x.classList.toggle("on", x.dataset.sh === "d"));
       loadStaff(); } }[b.dataset.scr];
@@ -4773,6 +4773,78 @@ $("prLoad").onclick = prQuery;
 ["prPartner", "prMat"].forEach(id => { const el = $(id); if (el) { el.addEventListener("input", renderPurchRep); el.addEventListener("change", renderPurchRep); } });
 if ($("prClear")) $("prClear").onclick = () => { $("prPartner").value = ""; $("prMat").value = ""; renderPurchRep(); };
 $("prCsv").onclick = () => tableToCsv($("prHead"), $("prBody"), csvName("매입통계_" + PREP.tab, todayISO()));
+// ── 운송 현황 — 일일 입력 운송비 기록 조회 (1행 = 운송 1회) ──────────────
+const FREP = { data: null, tab: "detail" };
+const frCarrierName = r => r.carrier_name || (COURIERS.find(x => x[0] === r.courier) || [])[1] || "운송회사 미지정";
+function loadFreightRep() {
+  if (!$("frFrom").value || !$("frTo").value) { const [f, t] = quickPeriod("this"); $("frFrom").value = f; $("frTo").value = t; }
+  frQuery();   // 일일 입력에서 방금 저장한 기록도 보이도록 들어올 때마다 다시 조회
+}
+async function frQuery() {
+  QPMARK.fr?.();
+  let d; try { d = await api(`/api/freightreport?frm=${$("frFrom").value}&to=${$("frTo").value}`); } catch (e) { return; }
+  FREP.data = d; renderFreightRep();
+}
+function renderFreightRep() {
+  const d = FREP.data; if (!d) return;
+  const dests = r => r.dest || "도착지 미입력";
+  $("frCarrierDl").innerHTML = [...new Set(d.rows.map(frCarrierName))].sort((a, b) => a.localeCompare(b, "ko")).map(x => `<option value="${esc(x)}">`).join("");
+  $("frDestDl").innerHTML = [...new Set(d.rows.map(dests))].sort((a, b) => a.localeCompare(b, "ko")).map(x => `<option value="${esc(x)}">`).join("");
+  const cq = $("frCarrier").value.trim(), dq = $("frDest").value.trim();
+  const list = d.rows.filter(r => (!cq || frCarrierName(r).includes(cq)) && (!dq || dests(r).includes(dq)));
+  const cost = r => Number(r.cost) || 0;
+  const sum = list.reduce((a, r) => a + cost(r), 0);
+  const days = new Set(list.map(r => r.date)).size;
+  const filt = [cq && `운송회사 '${esc(cq)}'`, dq && `도착지 '${esc(dq)}'`].filter(Boolean).join(" · ");
+  $("frSummary").innerHTML = `기간 ${esc(d.from)} ~ ${esc(d.to)}${filt ? " · " + filt : ""} · 운송 <span style="color:#1f5fd6">${NF(list.length)}회</span> (${NF(days)}일) · 비용 합계 <b>₩${NF(sum)}</b>${list.length ? ` · 회당 평균 ₩${NF(Math.round(sum / list.length))}` : ""}`;
+  const empty = n => `<tr><td colspan="${n}" class="auto" style="padding:16px; text-align:center;">조건에 맞는 운송 기록이 없습니다 — 일일 입력 › 운송비에서 입력합니다</td></tr>`;
+  if (FREP.tab === "detail") {
+    $("frHead").innerHTML = `<tr><th>일자</th><th>구분</th><th>출발지</th><th>도착지</th><th>운송회사</th><th>차량·톤수</th><th>운송장</th><th class="r">비용(원)</th><th>결제</th><th>비고</th></tr>`;
+    let prev = "";
+    $("frBody").innerHTML = list.map(r => {
+      const first = r.date !== prev; prev = r.date;
+      const url = freightTrackUrl(r);
+      return `<tr${first ? ' style="border-top:2px solid var(--line);"' : ""}>
+        <td style="white-space:nowrap;"><button class="uselink num" data-frday="${esc(r.date)}" title="클릭하면 이 날짜의 일일 입력으로 이동합니다"${first ? "" : ' style="color:var(--faint);"'}>${esc(r.date)}</button></td>
+        <td>${esc(r.kind || "—")}</td><td>${esc(r.origin || "—")}</td><td><b>${esc(r.dest || "—")}</b></td><td>${esc(frCarrierName(r))}</td><td>${esc(r.vehicle || "—")}</td>
+        <td style="white-space:nowrap;">${esc(r.waybill || "—")}${url ? ` <a href="${esc(url)}" target="_blank" rel="noopener" title="배송조회" style="text-decoration:none;">🔍</a>` : ""}</td>
+        <td class="r" style="font-weight:700;">${cost(r) ? NF(cost(r)) : "—"}</td><td>${esc(r.pay || "—")}</td><td class="auto">${esc(r.note || "")}</td></tr>`; }).join("")
+      + (list.length ? `<tr style="background:var(--bg); font-weight:800;"><td colspan="7">합계 ${NF(list.length)}회</td><td class="r">${NF(sum)}</td><td colspan="2"></td></tr>` : empty(10));
+    return;
+  }
+  // 묶음 탭 — 운송회사별·도착지별·월별 (횟수·비용·회당 평균·비중)
+  const keyOf = { carrier: frCarrierName, dest: dests, month: r => r.date.slice(0, 7) }[FREP.tab];
+  const label = { carrier: "운송회사", dest: "도착지", month: "월" }[FREP.tab];
+  const g = new Map();
+  list.forEach(r => { const k = keyOf(r); if (!g.has(k)) g.set(k, { k, n: 0, cost: 0, days: new Set(), last: "", monthly: 0 });
+    const x = g.get(k); x.n++; x.cost += cost(r); x.days.add(r.date); if (r.date > x.last) x.last = r.date; if (r.pay === "월정산") x.monthly += cost(r); });
+  const arr = [...g.values()].sort(FREP.tab === "month" ? (a, b) => a.k.localeCompare(b.k) : (a, b) => b.n - a.n || b.cost - a.cost);
+  const canPick = FREP.tab !== "month";
+  $("frHead").innerHTML = `<tr><th>${label}</th><th class="r">횟수</th><th class="r">운송 일수</th><th class="r">비용(원)</th><th class="r">회당 평균</th><th class="r">월정산 금액</th><th class="r">비중</th><th>마지막 운송일</th></tr>`;
+  $("frBody").innerHTML = arr.map(x => `<tr>
+      <td>${canPick ? `<button class="uselink" data-frpick="${esc(x.k)}" title="클릭하면 이 ${label}의 일자별 내역을 봅니다" style="font-weight:700;">${esc(x.k)}</button>` : `<b>${esc(x.k)}</b>`}</td>
+      <td class="r" style="font-weight:800;">${NF(x.n)}회</td><td class="r">${NF(x.days.size)}일</td><td class="r" style="font-weight:700;">${NF(x.cost)}</td>
+      <td class="r">${NF(Math.round(x.cost / x.n))}</td><td class="r auto">${x.monthly ? NF(x.monthly) : "—"}</td>
+      <td class="r auto">${sum ? (x.cost / sum * 100).toFixed(1) : "0.0"}%</td><td>${esc(x.last)}</td></tr>`).join("")
+    + (arr.length ? `<tr style="background:var(--bg); font-weight:800;"><td>합계</td><td class="r">${NF(list.length)}회</td><td class="r">${NF(days)}일</td><td class="r">${NF(sum)}</td><td class="r">${list.length ? NF(Math.round(sum / list.length)) : "—"}</td><td class="r">${NF(list.reduce((a, r) => a + (r.pay === "월정산" ? cost(r) : 0), 0))}</td><td></td><td></td></tr>` : empty(8));
+}
+$("frTabs").addEventListener("click", e => {
+  const b = e.target.closest("[data-frtab]"); if (!b) return;
+  FREP.tab = b.dataset.frtab;
+  [...$("frTabs").children].forEach(x => x.classList.toggle("on", x === b));
+  renderFreightRep();
+});
+$("frBody").addEventListener("click", e => {
+  const day = e.target.closest("[data-frday]");
+  if (day) { gotoEntry(day.dataset.frday); return; }
+  const p = e.target.closest("[data-frpick]"); if (!p) return;
+  $(FREP.tab === "carrier" ? "frCarrier" : "frDest").value = p.dataset.frpick;
+  document.querySelector('#frTabs [data-frtab="detail"]').click();
+});
+$("frLoad").onclick = frQuery;
+["frCarrier", "frDest"].forEach(id => $(id).addEventListener("input", renderFreightRep));
+$("frClear").onclick = () => { $("frCarrier").value = ""; $("frDest").value = ""; renderFreightRep(); };
+$("frCsv").onclick = () => tableToCsv($("frHead"), $("frBody"), csvName("운송현황_" + FREP.tab, $("frFrom").value + "_" + $("frTo").value));
 // ── 기간 빠른 선택 (손익 요약·매출 통계·매입 통계 공용) — 이번 달 / 전월 / 올해 → 날짜 채우고 바로 조회 ──
 function quickPeriod(q) {
   const t = todayISO(), y = +t.slice(0, 4), m = +t.slice(5, 7);
