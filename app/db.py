@@ -1094,6 +1094,8 @@ def init_db() -> None:
     # 파렛트 여부 — 기준정보 부재료의 '파렛트' 체크 (이름 오타와 무관하게 파렛트 관리·출고 행 파렛트 칸에 나옴)
     if "category" not in [r[1] for r in con.execute("PRAGMA table_info(material)")]:   # 소모품 용도(청소·위생 …)
         con.execute("ALTER TABLE material ADD COLUMN category TEXT DEFAULT ''")
+    if "expiry" not in [r[1] for r in con.execute("PRAGMA table_info(disposal)")]:   # 폐기 LOT 지정 (생산일+소비기한)
+        con.execute("ALTER TABLE disposal ADD COLUMN expiry TEXT DEFAULT ''")
     if "taxfree" not in [r[1] for r in con.execute("PRAGMA table_info(material)")]:   # 면세 자재 (부가세 0)
         con.execute("ALTER TABLE material ADD COLUMN taxfree INTEGER DEFAULT 0")
     if "is_pallet" not in [r[1] for r in con.execute("PRAGMA table_info(material)")]:

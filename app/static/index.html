@@ -2878,12 +2878,17 @@
 </div>
 
 <div class="overlay" id="dispOverlay">
-  <div class="modal" style="width:440px;">
+  <div class="modal" style="width:620px; max-width:96vw;">
     <h3>LOT 폐기 처리</h3>
-    <p class="hint" id="dispHint">폐기하면 재고에서 즉시 차감되고 이력에 기록됩니다.</p>
+    <p class="hint" id="dispHint">폐기할 LOT(생산일·소비기한)마다 수량을 넣으세요 — [전량]은 그 LOT 전부. 폐기하면 재고에서 즉시 차감되고 이력에 기록됩니다.</p>
     <div class="fld"><label>대상</label><div id="dispTarget" style="font-size:13.5px; font-weight:700;"></div></div>
+    <div class="tbl-wrap" style="max-height:38vh; overflow-y:auto; margin-bottom:10px;"><table style="font-size:12.5px;">
+      <thead><tr><th>생산일자</th><th>소비기한</th><th class="r">재고</th><th class="r">폐기 수량</th><th></th></tr></thead>
+      <tbody class="num" id="dispLots"></tbody></table></div>
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px; font-size:13px;">
+      <button class="btn sm" id="dispAll" type="button">모든 LOT 전량</button><button class="btn sm" id="dispNone" type="button">비우기</button>
+      <span class="spacer"></span><span id="dispSum"></span></div>
     <div class="fgrid">
-      <div class="fld"><label>폐기 수량 *</label><input class="mini-input num" id="dispQty" style="width:100%; text-align:right;" inputmode="decimal"></div>
       <div class="fld"><label>폐기일</label><input type="text" readonly placeholder="📅 폐기일" class="datepick" id="dispDate" style="width:100%;"></div>
       <div class="fld"><label>사유</label><select id="dispReason" style="width:100%;">
         <option>소비기한 만료</option><option>불량</option><option>파손</option><option>기타</option></select></div>

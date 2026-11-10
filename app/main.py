@@ -42,7 +42,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.127.2"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.127.3"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -1008,7 +1008,7 @@ def current_lots(con, pid, upto, exclude_ship_on_date=False, exclude_ship_date=N
           SELECT date, qty, COALESCE(prod_date,'') pd, COALESCE(expiry,'') pex, partner_id spid, id FROM shipment
             WHERE product_id=? AND date>? AND date{ship_cmp}?{ship_skip}
           UNION ALL
-          SELECT date, qty, COALESCE(prod_date,'') pd, '' pex, NULL spid, id FROM disposal
+          SELECT date, qty, COALESCE(prod_date,'') pd, COALESCE(expiry,'') pex, NULL spid, id FROM disposal
             WHERE product_id=? AND date>? AND date<=?)
         ORDER BY date, id""", (*ship_params, pid, base, upto)):
         if float(s["qty"] or 0) > 0:
@@ -1072,7 +1072,7 @@ def current_lots(con, pid, upto, exclude_ship_on_date=False, exclude_ship_date=N
 
 
 @app.get("/api/lots/{pid}")
-def lots_get(pid: int, date: str = ""):
+def lots_get(pid: int, date: str = "", disp: int = 0):
     """출고용: 출고 가능한 생산일자별 재고.
     현재(오늘 또는 편집일 중 늦은 날) 시점의 실재고를 기준으로 하되, 편집 중인 그 날짜의
     출고만 되돌려(차감 제외) 재선택·수정이 가능하게 한다. 다른 날짜에 이미 나간 LOT은
@@ -1082,6 +1082,8 @@ def lots_get(pid: int, date: str = ""):
         today = dt.date.today().isoformat()
         d = date or today
         upto = d if d > today else today
+        if disp:   # 폐기용 — 그날 출고도 반영된 실제 남은 LOT
+            return current_lots(con, pid, upto)
         return current_lots(con, pid, upto, exclude_ship_date=d)
     finally:
         con.close()
@@ -2708,32 +2710,46 @@ def lotboard(request: Request):
 def disposal_create(request: Request, body: dict):
     require_prod_duty(request)
     pid = body.get("product_id")
-    qty = float(body.get("qty") or 0)
-    if not pid or qty <= 0:
-        raise HTTPException(400, "제품과 폐기 수량을 입력하세요")
     date = body.get("date") or dt.date.today().isoformat()
+    # items = [{prod_date, expiry, qty}] — LOT별 폐기 (한 번에 여러 LOT). 옛 형식(qty·prod_date 하나)도 허용
+    items = body.get("items")
+    if items is None:
+        items = [{"prod_date": body.get("prod_date") or "", "expiry": body.get("expiry") or "", "qty": body.get("qty")}]
+    want = {}
+    for it in items:
+        q = float(str(it.get("qty") or 0).replace(",", "") or 0)
+        if q > 0:
+            k = (str(it.get("prod_date") or ""), str(it.get("expiry") or ""))
+            want[k] = want.get(k, 0.0) + q
+    if not pid or not want:
+        raise HTTPException(400, "제품과 폐기 수량을 입력하세요")
     con = connect()
     try:
         p = con.execute("SELECT name FROM product WHERE id=?", (pid,)).fetchone()
         if not p:
             raise HTTPException(404, "제품 없음")
-        # 재고 초과 검증: 폐기 수량 ≤ 현재고 (지정 LOT이면 그 LOT 재고)
+        # 재고 초과 검증: LOT(생산일+소비기한)별 폐기 수량 ≤ 그 LOT 재고, 합계 ≤ 현재고
         cl = current_lots(con, pid, date)
-        if body.get("prod_date"):
-            avail = sum(l["qty"] for l in cl["lots"] if l["made"] == body["prod_date"])
-        else:
-            avail = cl["stock"]
-        if qty - float(avail) > 0.5:
-            raise HTTPException(400, f"폐기 수량 {qty:,.0f}개가 "
-                                f"{'해당 LOT ' if body.get('prod_date') else ''}재고 {float(avail):,.0f}개를 초과합니다")
-        cur = con.execute("""INSERT INTO disposal(date, product_id, qty, prod_date, reason, note)
-            VALUES(?,?,?,?,?,?)""",
-                          (date, pid, qty, body.get("prod_date") or "",
-                           body.get("reason") or "", body.get("note") or ""))
-        audit(con, "disposal", f"{date} {p['name']} {qty} ({body.get('reason','')})")
+        for (made, exp), q in want.items():
+            if not made and not exp:
+                avail = cl["stock"]
+            else:
+                avail = sum(l["qty"] for l in cl["lots"] if l["made"] == made and (not exp or l["expiry"] == exp))
+            if q - float(avail) > 0.5:
+                lot = f"LOT {made or '이월'}{' · ' + exp if exp else ''} " if (made or exp) else ""
+                raise HTTPException(400, f"폐기 수량 {q:,.0f}개가 {lot}재고 {float(avail):,.0f}개를 초과합니다")
+        total = sum(want.values())
+        if total - float(cl["stock"]) > 0.5:
+            raise HTTPException(400, f"폐기 수량 합계 {total:,.0f}개가 현재고 {float(cl['stock']):,.0f}개를 초과합니다")
+        ids = []
+        for (made, exp), q in want.items():
+            cur = con.execute("""INSERT INTO disposal(date, product_id, qty, prod_date, expiry, reason, note)
+                VALUES(?,?,?,?,?,?,?)""", (date, pid, q, made, exp, body.get("reason") or "", body.get("note") or ""))
+            ids.append(cur.lastrowid)
+        audit(con, "disposal", f"{date} {p['name']} {_nf(total)} ({body.get('reason','')}) · LOT {len(want)}개")
         bump_masters()
         con.commit()
-        return {"id": cur.lastrowid}
+        return {"id": ids[0], "ids": ids}
     finally:
         con.close()
 

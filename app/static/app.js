@@ -5697,7 +5697,7 @@ $("mBody").addEventListener("drop", e => {
 // ▲▼ 버튼
 $("mBody").addEventListener("click", e => {
   const pd = e.target.closest("[data-pdisp]");
-  if (pd) { openDisp(+pd.dataset.pdisp, "", +pd.dataset.qty); return; }   // 기준정보 완제품 → 현재고 전체 폐기(기본값)
+  if (pd) { openDisp(+pd.dataset.pdisp, null, +pd.dataset.qty); return; }   // 기준정보 완제품 → LOT별 폐기 수량 지정
   const sd = e.target.closest("[data-sdisp]");
   if (sd) {   // 기준정보 반제품 → 자재 폐기 모달(현재고 전체 기본값)
     const m = (M.semi || []).find(x => x.id === +sd.dataset.sdisp) || {};
@@ -10828,7 +10828,7 @@ function renderLot() {
       <td class="r" style="${ddayStyle(l.days_left)}">${dday(l.days_left)}</td>
       <td>${LOT_CHIP[l.status]}</td>
       <td>${canLot ? `<button class="btn ghost sm" style="color:var(--crit)"
-        data-disp="${l.product_id}" data-made="${esc(l.made)}" data-qty="${l.qty}">폐기</button>` : ""}</td></tr>`;
+        data-disp="${l.product_id}" data-made="${esc(l.made)}" data-exp="${esc(l.expiry || "")}" data-qty="${l.qty}">폐기</button>` : ""}</td></tr>`;
   // 그룹 = 급한 순 정렬 (만료 → 임박 → 정상 → 기한미상, 같은 상태끼리는 D-day 오름차순)
   const gmeta = {};
   groups.forEach(pid => {
@@ -10913,7 +10913,7 @@ function renderDispHist() {
     : `${list.length}건 / ${scope}${(LOT.dispFrom || LOT.dispTo) ? "" : " " + all.length + "건"}`;
   $("dispBody").innerHTML = list.map(r => `<tr>
       <td>${r.date}</td><td><b>${esc(r.name)}</b></td>
-      <td class="r">${r.prod_date || "—"}</td><td class="r">${NF(r.qty)}</td>
+      <td class="r">${r.prod_date || "—"}${r.expiry ? `<div class="auto" style="font-size:11px;">기한 ${esc(r.expiry)}</div>` : ""}</td><td class="r">${NF(r.qty)}</td>
       <td>${esc(r.reason || "—")}</td><td class="auto">${esc(r.note || "")}</td>
       <td>${canLot ? `<button class="btn ghost sm" data-dispundo="${r.id}">취소</button>` : ""}</td></tr>`).join("")
     || `<tr><td colspan="7" class="auto">폐기 이력이 없습니다</td></tr>`;
@@ -10958,28 +10958,63 @@ $("shipHistBody").addEventListener("click", e => {
   const go = e.target.closest("[data-golot]");
   if (go) gotoLookup(go.dataset.golot);
 });
-/* 폐기 모달 */
+/* 폐기 모달 — LOT(생산일+소비기한)별로 폐기 수량 지정. made를 주면(LOT 관리의 그 LOT) 그 LOT 전량을 미리 채움 */
 let dispCtx = null;
-function openDisp(pid, made, qty) {
+async function openDisp(pid, made, qty, exp) {
   const p = productById(pid);
-  dispCtx = { product_id: pid, prod_date: made, maxQty: qty };
-  $("dispTarget").innerHTML = made ? `${esc(p ? p.name : "?")} — LOT ${made} <span class="auto">(현재 ${NF(qty)}개)</span>`
-    : `${esc(p ? p.name : "?")} — 전체 재고 <span class="auto">(현재 ${NF(qty)}개 · 생산일 오래된 LOT부터 차감)</span>`;
-  $("dispQty").value = qty;
+  dispCtx = { product_id: pid, made: made ?? null, exp: exp || "", lots: [] };
+  $("dispTarget").innerHTML = `${esc(p ? p.name : "?")} <span class="auto">(현재고 ${NF(qty)}개)</span>`;
   $("dispDate").value = todayISO();
   $("dispReason").value = "소비기한 만료";
   $("dispNote").value = "";
   $("dispOverlay").classList.add("on");
-  $("dispQty").focus();
+  await dispLoadLots(true);
 }
+async function dispLoadLots(prefill) {
+  let d = { lots: [] };
+  try { d = await api(`/api/lots/${dispCtx.product_id}?date=${$("dispDate").value || todayISO()}&disp=1`); } catch (e) { }
+  const keep = {}; (dispCtx.lots || []).forEach(l => { if (l.q) keep[l.made + "|" + l.expiry] = l.q; });
+  const by = new Map();   // 같은 생산일·소비기한(거래처별 구간)은 한 줄로
+  (d.lots || []).forEach(l => { const k = l.made + "|" + l.expiry; const x = by.get(k) || { made: l.made, expiry: l.expiry, qty: 0, q: "" }; x.qty += Number(l.qty) || 0; by.set(k, x); });
+  dispCtx.lots = [...by.values()].map(l => ({ ...l, qty: Math.round(l.qty * 1000) / 1000,
+    q: prefill ? (dispCtx.made != null && dispCtx.made !== undefined && l.made === dispCtx.made && (!dispCtx.exp || l.expiry === dispCtx.exp) ? Math.round(l.qty * 1000) / 1000 : "")
+      : (keep[l.made + "|" + l.expiry] ?? "") }));
+  dispRender();
+}
+function dispRender() {
+  $("dispLots").innerHTML = dispCtx.lots.map((l, i) => `<tr data-dl="${i}">
+      <td>${l.made ? esc(l.made) : '<span class="auto">이월(생산일 미상)</span>'}</td><td>${esc(l.expiry || "—")}</td>
+      <td class="r" style="font-weight:700;">${NF(l.qty)}</td>
+      <td class="r"><input class="mini-input num" data-dlq value="${l.q}" placeholder="0" style="width:96px;" inputmode="decimal"></td>
+      <td><button class="btn ghost sm" data-dlall type="button">전량</button></td></tr>`).join("")
+    || `<tr><td colspan="5" class="auto" style="padding:12px; text-align:center;">남은 LOT이 없습니다</td></tr>`;
+  dispSum();
+}
+function dispSum() {
+  const t = dispCtx.lots.reduce((a, l) => a + (Number(l.q) || 0), 0);
+  const over = dispCtx.lots.some(l => (Number(l.q) || 0) - l.qty > 0.5);
+  $("dispSum").innerHTML = over ? `<span style="color:var(--crit); font-weight:700;">LOT 재고보다 많이 넣은 줄이 있습니다</span>`
+    : `폐기 합계 <b>${NF(t)}개</b>`;
+}
+$("dispLots").addEventListener("input", e => {
+  const inp = e.target.closest("[data-dlq]"); if (!inp) return;
+  dispCtx.lots[+inp.closest("tr").dataset.dl].q = inp.value; dispSum();
+});
+$("dispLots").addEventListener("click", e => {
+  const b = e.target.closest("[data-dlall]"); if (!b) return;
+  const l = dispCtx.lots[+b.closest("tr").dataset.dl]; l.q = l.qty; dispRender();
+});
+$("dispAll").onclick = () => { dispCtx.lots.forEach(l => l.q = l.qty); dispRender(); };
+$("dispNone").onclick = () => { dispCtx.lots.forEach(l => l.q = ""); dispRender(); };
+$("dispDate").addEventListener("change", () => dispLoadLots(false));   // 그 날짜 기준 남은 LOT
 window.closeDisp = () => $("dispOverlay").classList.remove("on");
 $("dispSave").onclick = async () => {
-  const qty = Number(String($("dispQty").value).replace(/,/g, ""));
-  if (!(qty > 0)) return toast("폐기 수량을 입력하세요");
-  if (dispCtx && dispCtx.maxQty != null && qty - dispCtx.maxQty > 0.5)
-    return toast(`폐기 수량이 이 LOT 재고 ${NF(dispCtx.maxQty)}개를 초과합니다`);
+  const items = dispCtx.lots.filter(l => Number(l.q) > 0).map(l => ({ prod_date: l.made, expiry: l.expiry, qty: Number(l.q) }));
+  if (!items.length) return toast("폐기할 LOT에 수량을 입력하세요");
+  const bad = dispCtx.lots.find(l => (Number(l.q) || 0) - l.qty > 0.5);
+  if (bad) return toast(`LOT ${bad.made || "이월"} · ${bad.expiry || "기한 미상"} 재고 ${NF(bad.qty)}개보다 많습니다`);
   await api("/api/disposal", { method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...dispCtx, qty, date: $("dispDate").value,
+    body: JSON.stringify({ product_id: dispCtx.product_id, items, date: $("dispDate").value,
       reason: $("dispReason").value, note: $("dispNote").value.trim() }) });
   closeDisp();
   toast("폐기 처리됨 — 재고에서 차감되었습니다");
@@ -10990,7 +11025,7 @@ $("dispSave").onclick = async () => {
 };
 $("lotBody").addEventListener("click", e => {
   const d = e.target.closest("[data-disp]");
-  if (d) { openDisp(+d.dataset.disp, d.dataset.made, +d.dataset.qty); return; }
+  if (d) { const p = productById(+d.dataset.disp); openDisp(+d.dataset.disp, d.dataset.made, p ? Number(p.stock) || +d.dataset.qty : +d.dataset.qty, d.dataset.exp); return; }
   const ph = e.target.closest("[data-phist]");
   if (ph) { openProdHistory(+ph.dataset.phist); return; }
   const go = e.target.closest("[data-golot]");
