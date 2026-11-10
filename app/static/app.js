@@ -3215,7 +3215,8 @@ function renderMatStatus() {
         <td style="padding:6px 8px;">${exp}</td>
         <td style="padding:6px 8px; text-align:right;">${saf}</td>
         <td style="padding:6px 8px; text-align:center; font-size:11.5px; color:var(--muted);">${esc(it.last_in || "—")}</td>
-        <td style="padding:6px 8px; text-align:center; white-space:nowrap;">${canStock && it.low && !it.ordered ? `${selChk(it.id, it.name, it.unit, Math.ceil((it.shortage || 0) * 100) / 100)}<button class="btn ghost sm" data-msorder="${it.id}" data-q="${Math.ceil((it.shortage || 0) * 100) / 100}" data-nm="${esc(it.name || "")}" data-un="${esc(it.unit || "")}" style="padding:1px 8px;">발주</button>` : "—"}</td></tr>`;
+        <td style="padding:6px 8px; text-align:center; white-space:nowrap;">${canStock && it.low && !it.ordered ? `${selChk(it.id, it.name, it.unit, Math.ceil((it.shortage || 0) * 100) / 100)}<button class="btn ghost sm" data-msorder="${it.id}" data-q="${Math.ceil((it.shortage || 0) * 100) / 100}" data-nm="${esc(it.name || "")}" data-un="${esc(it.unit || "")}" style="padding:1px 8px;">발주</button>` : ""}${canStock && it.onhand > 0 && !Number(it.is_semi) && ["raw", "sub", "cons"].includes(it.kind)
+          ? ` <button class="btn ghost sm" data-msuse="${it.id}" style="padding:1px 8px;" title="다 썼거나 일부 쓴 수량을 기록 — 오늘 날짜 재고 실사로 반영">사용 처리</button>` : ""}${!(canStock && ((it.low && !it.ordered) || (it.onhand > 0 && ["raw", "sub", "cons"].includes(it.kind) && !Number(it.is_semi)))) ? "—" : ""}</td></tr>`;
     }).join("") : `<tr><td colspan="7" class="auto" style="padding:16px; text-align:center;">해당하는 자재가 없습니다</td></tr>`;
     return;
   }
@@ -3252,6 +3253,39 @@ function renderMatStatus() {
     <td style="padding:6px 8px; text-align:center; white-space:nowrap;">${e.type === "부족" ? selChk(e.material_id, e.name, e.unit, e.qty) : ""}${e.act || '<span class="auto">—</span>'}</td></tr>`).join("")
     : `<tr><td colspan="6" class="auto" style="padding:16px; text-align:center;">해당 이벤트가 없습니다</td></tr>`;
 }
+/* 사용 처리 — 생산과 무관한 자재(A4·세제 등)를 다 썼을 때. 오늘 날짜 실사(현재고 = 지금 − 쓴 양)로 기록 → 쓴 양은 사용량으로 집계 */
+let UD = null;
+function openUseDone(mid) {
+  if (MATSTAT.date && MATSTAT.date !== todayISO()) return toast("사용 처리는 오늘 기준 화면에서만 할 수 있습니다 — 날짜를 오늘로 바꿔 주세요");
+  const it = (MATSTAT.data.items || []).find(x => x.id === mid); if (!it) return;
+  UD = it;
+  $("udName").textContent = `${it.name} · 현재고 ${NF(it.onhand)}${it.unit || ""}`;
+  $("udUnit").textContent = it.unit || "";
+  $("udQty").value = it.onhand;
+  udLeft();
+  $("useDoneOverlay").classList.add("on");
+  setTimeout(() => { $("udQty").focus(); $("udQty").select(); }, 50);
+}
+function udLeft() {
+  const q = Number($("udQty").value) || 0, left = Math.round((UD.onhand - q) * 1000) / 1000;
+  $("udLeft").innerHTML = left < 0 ? `<span style="color:var(--crit)">현재고보다 많이 쓸 수 없습니다</span>`
+    : `처리 후 남는 수량 <b>${NF(left)}${esc(UD.unit || "")}</b>${left === 0 ? " — 다 씀" : ""}`;
+}
+$("udQty").addEventListener("input", udLeft);
+$("udAll").onclick = () => { $("udQty").value = UD.onhand; udLeft(); };
+$("udOk").onclick = async () => {
+  const q = Number($("udQty").value) || 0;
+  if (!(q > 0)) return toast("쓴 수량을 입력해주세요");
+  if (q > UD.onhand + 1e-9) return toast("현재고보다 많이 쓸 수 없습니다");
+  const left = Math.round((UD.onhand - q) * 1000) / 1000;
+  try {
+    await api(`/api/masters/${UD.kind}/${UD.id}`, { method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stock_set: left, stock_date: todayISO() }) });
+  } catch (e) { return; }
+  $("useDoneOverlay").classList.remove("on");
+  toast(`${UD.name} ${NF(q)}${UD.unit || ""} 사용 처리 — 남은 수량 ${NF(left)}${UD.unit || ""}`);
+  loadMatStatus();
+};
 function msDispose(mid) {
   const it = (MATSTAT.data.items || []).find(x => x.id === mid);
   if (!it || !(it.expired > 0)) return;
@@ -3304,6 +3338,7 @@ $("msBody").addEventListener("change", e => {
 $("msBody").addEventListener("click", async e => {
   if (e.target.closest("[data-mssel]")) return;   // 체크박스 클릭은 change 핸들러가 처리
   const dz = e.target.closest("[data-msdispose]"); if (dz) { msDispose(+dz.dataset.msdispose); return; }
+  const us = e.target.closest("[data-msuse]"); if (us) { openUseDone(+us.dataset.msuse); return; }
   const od = e.target.closest("[data-msorder]"); if (od) {
     const q = Number(od.dataset.q) || 0;
     if (q > 0) poBulkFromItems([{ material_id: +od.dataset.msorder, name: od.dataset.nm || "", unit: od.dataset.un || "", qty: q }]);

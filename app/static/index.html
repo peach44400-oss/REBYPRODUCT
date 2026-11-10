@@ -2858,6 +2858,25 @@
 </div>
 
 <!-- LOT 폐기 -->
+<div class="overlay" id="useDoneOverlay">
+  <div class="modal" style="width:420px;">
+    <h3>사용 처리</h3>
+    <p class="hint" id="udHint">A4 용지·세제처럼 생산과 무관하게 쓰는 자재를 다 썼을 때 — 오늘 날짜 재고 실사로 기록되어 남은 수량이 줄고, 쓴 양은 사용량으로 잡힙니다.</p>
+    <div style="font-size:14px; font-weight:700; margin:6px 0 10px;" id="udName"></div>
+    <div class="fld"><label>이번에 쓴 수량</label>
+      <div style="display:flex; gap:6px; align-items:center;">
+        <input class="mini-input num" id="udQty" inputmode="decimal" style="width:140px; text-align:right;">
+        <span class="auto" id="udUnit"></span>
+        <button class="btn sm" id="udAll" type="button">전부 사용</button>
+      </div></div>
+    <div class="hint" id="udLeft" style="margin-top:8px; font-size:13px;"></div>
+    <div class="modal-foot">
+      <button class="btn" onclick="$('useDoneOverlay').classList.remove('on')">취소</button>
+      <button class="btn primary" id="udOk">사용 처리</button>
+    </div>
+  </div>
+</div>
+
 <div class="overlay" id="dispOverlay">
   <div class="modal" style="width:440px;">
     <h3>LOT 폐기 처리</h3>
