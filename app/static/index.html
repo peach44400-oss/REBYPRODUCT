@@ -821,13 +821,13 @@
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 8.5 8 3l6 5.5M4 7.5V13h8V7.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
         <em>대시보드</em><span class="cnt" id="navLowCnt" style="display:none">0</span>
       </button>
-      <button data-scr="entry">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-        <em>일일 입력</em>
-      </button>
 
       <div class="nav-sep" data-grp="prod"><span>생산관리</span><svg class="chev" width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
       <div class="nav-grp" data-grp="prod">
+      <button data-scr="entprod" title="생산 입력 — 생산실적·자재 사용·인원·가동·특이사항 (날짜별)">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        <em>생산 입력</em>
+      </button>
       <button data-scr="prod">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2.5" y="2.5" width="11" height="11" rx="2" stroke="currentColor" stroke-width="1.4"/><path d="M5.5 10.5V8m2.5 2.5V5.5m2.5 5V7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
         <em>생산 현황</em>
@@ -851,6 +851,10 @@
       </div>
       <div class="nav-sep" data-grp="stock"><span>재고관리</span><svg class="chev" width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
       <div class="nav-grp" data-grp="stock">
+      <button data-scr="entstock" title="재고·입고 입력 — 원부자재 입고·소모품·비품 입고·재고 실사 (날짜별)">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 2 13.5 4.7v6.6L8 14 2.5 11.3V4.7L8 2Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 5.5v5M5.5 8h5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        <em>재고·입고 입력</em>
+      </button>
       <button data-scr="matstat" title="자재 현황 — 전체 원부자재 재고·유통기한(만료/임박)·부족을 한눈에 · 확정 폐기·발주">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2.5" y="3" width="11" height="10" rx="1.5" stroke="currentColor" stroke-width="1.4"/><path d="M2.5 6.5h11M6 3v10" stroke="currentColor" stroke-width="1.3"/></svg>
         <em>자재 현황</em><span class="cnt" id="navMatCnt" style="display:none">0</span>
@@ -879,6 +883,10 @@
       </div>
       <div class="nav-sep" data-grp="sales"><span>판매 · 출고</span><svg class="chev" width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
       <div class="nav-grp" data-grp="sales">
+      <button data-scr="entship" title="출고 입력 — 완제품 출고(LOT·파렛트)·운송비 (날짜별)">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M1.5 5h8v6.5h-8zM9.5 7h3l2 2.5v2h-5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M4 2.2v3.6M2.2 4h3.6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        <em>출고 입력</em>
+      </button>
       <button data-scr="ship">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M1.5 5.5h8v6h-8zM9.5 7.5h3l2 2.5v1.5h-5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><circle cx="4" cy="12.5" r="1.2" stroke="currentColor" stroke-width="1.2"/><circle cx="11.5" cy="12.5" r="1.2" stroke="currentColor" stroke-width="1.2"/></svg>
         <em>출고 현황</em>
@@ -1535,7 +1543,7 @@
 
     <!-- 일일 입력 -->
     <section class="screen" id="scr-entry">
-      <button class="save-fab" id="entrySaveFab" title="현재 탭(생산 입력 / 재고·입고)을 저장합니다">💾 저장</button>
+      <button class="save-fab" id="entrySaveFab" title="지금 화면(생산 입력 / 출고 입력 / 재고·입고 입력)의 항목만 저장합니다">💾 저장</button>
       <button class="back-fab" id="mhBackFab" style="display:none;" title="재고 이력 창을 열었던 화면으로 돌아가 이력 창을 다시 엽니다 (저장한 내용이 반영된 상태로)"></button>
       <div class="entry-grid">
         <div class="dash-col entry-side">
@@ -1554,15 +1562,16 @@
           <div class="card">
             <h2 id="entryStateTitle">상태</h2>
             <div id="entryState" style="font-size:12.5px; color:var(--muted); line-height:1.8;"></div>
-            <button class="btn sm" style="margin-top:10px; width:100%;" id="btnCopyPrevProd" title="직전 생산일의 제품·라인·배합·계획 구성을 불러옵니다 (생산수량은 비움)">📋 어제처럼 — 생산 구성 불러오기</button>
-            <button class="btn sm" style="margin-top:6px; width:100%;" id="btnCopyPrevStaff" title="직전 생산일의 인원·가동 구성을 불러옵니다 (정지사유는 비움)">👷 어제처럼 — 인원 구성 불러오기</button>
-            <button class="btn sm" style="margin-top:6px; width:100%;" id="btnCopyPrev">직전 기록일 자재 불러오기</button>
+            <button class="btn sm" data-esec="prod" style="margin-top:10px; width:100%;" id="btnCopyPrevProd" title="직전 생산일의 제품·라인·배합·계획 구성을 불러옵니다 (생산수량은 비움)">📋 어제처럼 — 생산 구성 불러오기</button>
+            <button class="btn sm" data-esec="prod" style="margin-top:6px; width:100%;" id="btnCopyPrevStaff" title="직전 생산일의 인원·가동 구성을 불러옵니다 (정지사유는 비움)">👷 어제처럼 — 인원 구성 불러오기</button>
+            <button class="btn sm" data-esec="stock" style="margin-top:10px; width:100%;" id="btnCopyPrev">직전 기록일 자재 불러오기</button>
           </div>
         </div>
         <div class="dash-col">
           <div class="card" style="padding-bottom:2px;">
             <div class="tabs" id="entryTabs" style="margin-bottom:8px;">
               <button class="on" data-et="prod">🏭 생산 입력</button>
+              <button data-et="ship">🚚 출고 입력</button>
               <button data-et="stock">📦 재고 · 입고</button>
             </div>
             <p class="hint" id="entryTabHint" style="margin:0 0 10px;"></p>
@@ -1582,8 +1591,8 @@
             <datalist id="qaProducts"></datalist>
             <datalist id="qaSemiProdList"></datalist>
           </div>
-          <div class="card" data-esec="prod">
-            <h2>완제품 출고</h2>
+          <div class="card" data-esec="ship">
+            <h2>완제품 출고 <span class="sub">같은 날 생산한 제품을 내보내려면 생산 입력을 먼저 저장하세요 (저장된 생산분만 출고 가능 재고로 잡힙니다)</span></h2>
             <div class="tbl-wrap"><table>
               <thead><tr><th>제품명</th><th>생산일자 (재고 LOT)</th><th>거래처</th><th title="이 출고와 함께 나간 파렛트 — 저장하면 파렛트 관리에 기록되고 파렛트 재고에서 빠집니다">파렛트</th><th class="r">출고량</th><th></th></tr></thead>
               <tbody class="num" id="eShip"></tbody>
@@ -1592,7 +1601,7 @@
               <input class="mini-input" id="qaShip" list="qaProducts" placeholder="🔍 제품 검색 후 Enter = 행 추가" style="text-align:left; width:220px;">
               <button class="btn sm" id="shipFromSO" title="수주 관리에 접수된 주문을 골라 출고 행으로 채웁니다">📥 수주 불러오기</button></div>
           </div>
-          <div class="card" data-esec="prod">
+          <div class="card" data-esec="ship">
             <h2>🚛 운송비 <span class="sub">운송 1건 = 1행 · 운송회사는 거래처(유형 '운송사') 또는 택배사 — 택배사 + 운송장 번호를 넣으면 🔍로 배송조회</span></h2>
             <div class="tbl-wrap"><table id="freightTbl">
               <thead><tr><th>구분</th><th>출발지</th><th>도착지</th><th>운송회사</th><th>차량·톤수</th><th>운송장</th><th class="r">비용(원)</th><th>결제</th><th>비고</th><th></th></tr></thead>
@@ -1649,6 +1658,7 @@
           <!-- 저장은 고정 FAB(💾)로 통일 — 이 버튼은 FAB이 대신 눌러주므로 DOM엔 남기고 화면에서만 숨김 -->
           <div class="card" style="display:none;">
             <button class="btn primary" id="btnSaveStock">재고 · 입고 저장</button>
+            <button class="btn primary" id="btnSaveShip">출고 입력 저장</button>
           </div>
           <div class="card" data-esec="prod">
             <h2>인원 · 가동 <span class="sub">가동률 = 실가동 ÷ 라인 정상가동시간 · 정직원은 이름 선택, 용역은 [＋ 용역]으로 추가</span></h2>

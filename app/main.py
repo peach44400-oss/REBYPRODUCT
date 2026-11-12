@@ -43,7 +43,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.128.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.129.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -9278,7 +9278,7 @@ def pallets_add(request: Request, body: dict):
         if body.get("id"):
             o = con.execute("SELECT material_id, date, src FROM pallet_move WHERE id=?", (body["id"],)).fetchone()
             if o and o["src"] == "ship":
-                raise HTTPException(400, "일일 입력 > 완제품 출고에서 넣은 파렛트입니다 — 그 화면에서 수정해주세요")
+                raise HTTPException(400, "출고 입력 > 완제품 출고에서 넣은 파렛트입니다 — 그 화면에서 수정해주세요")
             old = (o["material_id"], o["date"]) if o else None
             con.execute("""UPDATE pallet_move SET date=?, material_id=?, partner_id=?, partner_name=?, qty=?, note=?
                 WHERE id=?""", (date, mid, pid, pname, qty, (body.get("note") or "").strip()[:200], body["id"]))
@@ -9302,7 +9302,7 @@ def pallets_del(request: Request, mid: int):
     try:
         o = con.execute("SELECT material_id, date, src FROM pallet_move WHERE id=?", (mid,)).fetchone()
         if o and o["src"] == "ship":
-            raise HTTPException(400, "일일 입력 > 완제품 출고에서 넣은 파렛트입니다 — 그 화면에서 수정해주세요")
+            raise HTTPException(400, "출고 입력 > 완제품 출고에서 넣은 파렛트입니다 — 그 화면에서 수정해주세요")
         con.execute("DELETE FROM pallet_move WHERE id=?", (mid,))
         _pallet_sync_usage(con, mid, (o["material_id"], o["date"]) if o else None)   # 차감했던 재고 되돌림
         audit(con, "pallet", f"파렛트 출고 기록 #{mid} 삭제")

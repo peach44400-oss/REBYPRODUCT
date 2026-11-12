@@ -138,7 +138,7 @@ async function reloadMaster(t) {
 }
 
 /* ── 네비게이션 ─────────────────────── */
-const TITLES = { dash: "대시보드", prod: "생산 현황", workorder: "작업지시서", ship: "출고 현황", invoice: "거래명세서", recv: "미수금", salesrep: "매출 통계", pcard: "거래처 원장", postat: "발주 현황", purchrep: "매입 통계", salesorder: "수주 관리", entry: "일일 입력", lot: "LOT 관리", matstat: "자재 현황", sched: "출고 스케줄", prodsched: "생산 스케줄", items: "기준정보 관리", ana: "분석", lookup: "기록 조회", memos: "특이사항", staff: "인원 관리", pnl: "손익 요약", quote: "견적 계산", pallet: "파렛트 관리", freight: "운송 현황" };
+const TITLES = { dash: "대시보드", prod: "생산 현황", workorder: "작업지시서", ship: "출고 현황", invoice: "거래명세서", recv: "미수금", salesrep: "매출 통계", pcard: "거래처 원장", postat: "발주 현황", purchrep: "매입 통계", salesorder: "수주 관리", entry: "일일 입력", entprod: "생산 입력", entship: "출고 입력", entstock: "재고·입고 입력", lot: "LOT 관리", matstat: "자재 현황", sched: "출고 스케줄", prodsched: "생산 스케줄", items: "기준정보 관리", ana: "분석", lookup: "기록 조회", memos: "특이사항", staff: "인원 관리", pnl: "손익 요약", quote: "견적 계산", pallet: "파렛트 관리", freight: "운송 현황" };
 /* 표 검색(필터)은 화면·탭을 옮기면 초기화한다.
    남아 있으면 다른 화면에서 '등록된 항목이 없습니다'만 보여 데이터가 없는 것처럼 오해하게 된다.
    ※ 행 추가용 검색(qaProd 등)은 필터가 아니라 입력칸이므로 대상 아님. */
@@ -160,11 +160,14 @@ function resetSearches() {
   });
 }
 let _navBypass = false;
+/* 일일 입력은 화면 1개(scr-entry)를 메뉴 3개가 나눠 씀 — 생산 입력 / 출고 입력 / 재고·입고 입력 (각자 자기 항목만 저장) */
+const ENTRY_SCR = { entprod: "prod", entship: "ship", entstock: "stock" };
+function entryNavBtn(tab) { return document.querySelector(`#nav button[data-scr="ent${tab || entryTab}"]`); }
 $("nav").addEventListener("click", e => {
   const b = e.target.closest("button[data-scr]"); if (!b) return;
-  // 일일 입력에서 저장 안 한 변경이 있으면, 다른 화면으로 넘어가기 전에 확인
+  // 일일 입력에서 저장 안 한 변경이 있으면, 다른 화면(다른 입력 메뉴 포함)으로 넘어가기 전에 확인
   const curScr = document.querySelector(".screen.on")?.id;
-  if (!_navBypass && curScr === "scr-entry" && b.dataset.scr !== "entry" && E.dirty) {
+  if (!_navBypass && curScr === "scr-entry" && ENTRY_SCR[b.dataset.scr] !== entryTab && E.dirty) {
     openLeaveGuard(b.dataset.scr);
     return;
   }
@@ -177,10 +180,12 @@ $("nav").addEventListener("click", e => {
   _navBypass = false;
   document.querySelectorAll("#nav button").forEach(x => x.classList.toggle("on", x === b));
   navEnsureGroupOpen(b.dataset.scr);
-  document.querySelectorAll(".screen").forEach(s => s.classList.toggle("on", s.id === "scr-" + b.dataset.scr));
+  const scrId = ENTRY_SCR[b.dataset.scr] ? "entry" : b.dataset.scr;
+  if (ENTRY_SCR[b.dataset.scr]) { entryTab = ENTRY_SCR[b.dataset.scr]; renderEntryTabs(); }
+  document.querySelectorAll(".screen").forEach(s => s.classList.toggle("on", s.id === "scr-" + scrId));
   $("scrTitle").textContent = TITLES[b.dataset.scr];
   resetSearches();
-  const fn = { dash: loadDash, prod: loadProd, ship: loadShip, entry: openEntry, lot: loadLot, items: renderMasters, ana: loadAna, lookup: () => lkCal.render(),
+  const fn = { dash: loadDash, prod: loadProd, ship: loadShip, entprod: openEntry, entship: openEntry, entstock: openEntry, lot: loadLot, items: renderMasters, ana: loadAna, lookup: () => lkCal.render(),
     postat: loadPoStat, memos: loadMemos, matstat: loadMatStatus, sched: () => { SCHED.kind = "ship"; _schedApplyKindUI(); loadSchedule(); }, prodsched: () => loadProdSched(), invoice: loadInvoice, recv: loadReceivables, salesorder: loadSalesOrders, pcard: loadPCard, pnl: loadPnl, quote: loadQuote, pallet: loadPallet, workorder: loadWorkorder, salesrep: loadSalesRep, purchrep: loadPurchRep, freight: loadFreightRep,
     staff: () => { STAFF.mode = "d"; STAFF.date = todayISO();   // 진입 시 항상 일별·오늘로 초기화
       document.querySelectorAll("#staffTabs button").forEach(x => x.classList.toggle("on", x.dataset.sh === "d"));
@@ -264,15 +269,15 @@ applyNavPin();
 // 일일 입력 이탈 가드 — 저장 안 한 변경이 있을 때 [저장하고 이동]/[저장 안 함]/[취소]
 function navGoScr(scr) { _navBypass = true; document.querySelector(`#nav button[data-scr="${scr}"]`).click(); }
 async function saveEntryDirect() {   // 현재 탭 저장(요약 모달 없이) → 성공 시 true
-  const build = (typeof entryTab !== "undefined" && entryTab === "stock") ? buildStockBody : buildProdBody;
-  const label = (typeof entryTab !== "undefined" && entryTab === "stock") ? "재고·입고" : "생산 입력";
+  const build = { stock: buildStockBody, ship: buildShipBody }[entryTab] || buildProdBody;
+  const label = ENTRY_TAB_LABEL[entryTab] || "생산 입력";
   const body = build();
   if (!body) return false;   // 검증 실패 — 그대로 머무름
   await saveDayBody(body, label);
   return !E.dirty;           // 저장 성공 시 loadDay가 E.dirty=false로 만듦
 }
 function openLeaveGuard(scr) {
-  const msg = $("leaveGuardMsg"); if (msg) msg.textContent = "일일 입력에 저장하지 않은 내용이 있습니다. 저장하고 이동할까요?";
+  const msg = $("leaveGuardMsg"); if (msg) msg.textContent = `${ENTRY_TAB_LABEL[entryTab] || "일일 입력"}에 저장하지 않은 내용이 있습니다. 저장하고 이동할까요?`;
   $("leaveGuardOverlay").classList.add("on");
   $("leaveSaveGo").onclick = async () => {
     $("leaveGuardOverlay").classList.remove("on");
@@ -537,14 +542,14 @@ async function loadDash() {
       <span class="tb-emo">✅</span>
       <div class="tb-txt"><b>오늘 (${d.today.slice(5)}, ${dow}) 입력 완료</b>
         <div class="tb-sub">오늘 생산 기록이 등록되어 있습니다</div></div>
-      <button class="btn sm" data-goscr="entry">일일 입력 열기</button></div>`;
+      <button class="btn sm" data-goscr="entprod">생산 입력 열기</button></div>`;
   } else {
     const lastTxt = d.last_day ? `마지막 입력 ${d.last_day.slice(5)} (${dowOf(d.last_day)})` : "아직 입력 기록이 없습니다";
     $("dashTodayBanner").innerHTML = `<div class="today-banner wait">
       <span class="tb-emo">📝</span>
       <div class="tb-txt"><b>오늘 (${d.today.slice(5)}, ${dow}) 아직 입력 전이에요</b>
         <div class="tb-sub">${lastTxt}</div></div>
-      <button class="btn primary sm" data-goscr="entry">＋ 오늘 입력하기</button></div>`;
+      <button class="btn primary sm" data-goscr="entprod">＋ 오늘 입력하기</button></div>`;
   }
 
   // ── KPI 그리드 (2·3) 달성률·불량률·완제품재고 + (4) 금액(admin) + (6) 가동률
@@ -1338,11 +1343,13 @@ $("btnCopyPrev").onclick = () => {
   renderMat(); toast(`${E.prevDate} 자재 ${E.prevMaterials.length}종 불러옴`);
 };
 
-/* 일일 입력 탭: 생산 입력 / 재고 · 입고 — 담당자별 화면·저장 분리 */
+/* 일일 입력 탭: 생산 입력 / 출고 입력 / 재고 · 입고 — 담당자별 화면·저장 분리 (왼쪽 메뉴도 각 그룹에 하나씩) */
 let entryTab = "prod";
+const ENTRY_TAB_LABEL = { prod: "생산 입력", ship: "출고 입력", stock: "재고·입고" };
 const ENTRY_TAB_HINT = {
-  prod: "생산실적 · 완제품 출고 · 자재 사용 · 인원·가동 · 특이사항 — [생산 입력 저장]은 이 항목들만 저장합니다",
-  stock: "원부자재 입고 · 재고 실사 — [재고 · 입고 저장]은 이 항목들만 저장합니다 (생산 입력 데이터와 완전히 독립)",
+  prod: "생산실적 · 자재 사용 · 인원·가동 · 사진 · 체크 · 특이사항 — 💾 저장은 이 항목들만 저장합니다",
+  ship: "완제품 출고(LOT·파렛트) · 운송비 — 💾 저장은 이 항목들만 저장합니다 (생산·재고 입력과 따로)",
+  stock: "원부자재 입고 · 소모품·비품 입고 · 재고 실사 — 💾 저장은 이 항목들만 저장합니다 (생산·출고 입력과 따로)",
 };
 function renderEntryTabs() {
   document.querySelectorAll("#entryTabs button").forEach(b =>
@@ -1352,16 +1359,17 @@ function renderEntryTabs() {
   });
   $("entryTabHint").textContent = ENTRY_TAB_HINT[entryTab];
   const fab = $("entrySaveFab");
-  if (fab) fab.textContent = entryTab === "stock" ? "💾 재고·입고 저장" : "💾 생산 입력 저장";
+  if (fab) fab.textContent = `💾 ${ENTRY_TAB_LABEL[entryTab]} 저장`;
 }
-$("entryTabs").addEventListener("click", e => {
-  const b = e.target.closest("button[data-et]"); if (!b) return;
-  entryTab = b.dataset.et; renderEntryTabs();
+$("entryTabs").addEventListener("click", e => {   // 화면 안 탭 = 왼쪽 메뉴와 같은 이동 (저장 안 한 변경 확인 포함)
+  const b = e.target.closest("button[data-et]"); if (!b || b.dataset.et === entryTab) return;
+  const nb = entryNavBtn(b.dataset.et);
+  if (nb) nb.click(); else { entryTab = b.dataset.et; renderEntryTabs(); }
 });
 renderEntryTabs();
 // 고정 저장 버튼 — 현재 탭의 저장 버튼을 대신 눌러준다 (스크롤 없이 저장)
 $("entrySaveFab").addEventListener("click", () => {
-  $(entryTab === "stock" ? "btnSaveStock" : "btnSaveDay").click();
+  $({ stock: "btnSaveStock", ship: "btnSaveShip" }[entryTab] || "btnSaveDay").click();
 });
 // 전역 저장 FAB — 열린 모달(팝업)의 [저장] 버튼을 우측 하단에서 대신 눌러준다 (스크롤 없이 저장)
 function refreshGlobalSaveFab() {
@@ -3155,7 +3163,9 @@ async function undoMatDispose(did) {
 }
 
 /* ── 자재 현황 화면 — 전체 원부자재 재고·유통기한(FEFO)·부족을 한눈에 + 확정폐기·발주·이력 ── */
-const MATSTAT = { date: "", data: null, filter: "all", q: "", sel: new Map() };  // sel: material_id → {material_id,name,unit,qty}
+const MATSTAT = { date: "", data: null, filter: "stock", kind: "all", q: "", sel: new Map() };   // filter: stock(재고 목록, kind로 구분)·disp(폐기)·expired/soon/low(위 카드)
+const MS_KINDS = [["all", "전체"], ["raw", "원재료"], ["sub", "부재료"], ["cons", "소모품"], ["equip", "비품"], ["semi", "반제품"]];
+function msKindKey(it) { return Number(it.is_semi) ? "semi" : it.kind; }  // sel: material_id → {material_id,name,unit,qty}
 async function loadMatStatus() {
   MATSTAT.sel = new Map();   // 새로 불러올 때 선택 초기화
   MATSTAT.date = todayISO();   // 항상 현재 기준 (만료·임박·부족·폐기 내역을 전체 날짜로 표시)
@@ -3189,10 +3199,16 @@ function renderMatStatus() {
   const chip = (key, label) => `<button type="button" class="btn ghost sm" data-msfilter="${key}"
     style="${MATSTAT.filter === key ? "background:var(--ink); color:var(--bg); border-color:var(--ink);" : ""}">${label}</button>`;
   const disposals = d.disposals || [], lowEvents = d.low_events || [], items = d.items || [];
-  $("msFilters").innerHTML = chip("all", "전체") + chip("expired", "만료") + chip("soon", "임박") + chip("low", "부족")
-    + chip("disp", `폐기 내역${disposals.length ? " " + disposals.length : ""}`) + chip("stock", "재고 목록")
+  const kcnt = {}; items.forEach(it => { const k = msKindKey(it); kcnt[k] = (kcnt[k] || 0) + 1; });
+  const kchip = (k, label) => { const on = MATSTAT.filter === "stock" && MATSTAT.kind === k, n = k === "all" ? items.length : (kcnt[k] || 0);
+    return `<button type="button" class="btn ghost sm" data-mskind="${k}" style="${on ? "background:var(--ink); color:var(--bg); border-color:var(--ink);" : ""}">${label} <span style="opacity:.6; font-weight:500;">${NF(n)}</span></button>`; };
+  $("msFilters").innerHTML = MS_KINDS.filter(([k]) => k === "all" || k === "raw" || k === "sub" || k === "cons" || k === "equip" || kcnt[k])
+      .map(([k, l]) => kchip(k, l)).join("")
+    + `<span style="width:1px; background:var(--line); margin:0 4px;"></span>`
+    + chip("disp", `폐기 내역${disposals.length ? " " + disposals.length : ""}`)
+    + (["expired", "soon", "low"].includes(MATSTAT.filter) ? `<span class="auto" style="align-self:center; font-size:12px; margin-left:4px;">위 카드에서 고른 ${({ expired: "유통기한 만료", soon: "임박", low: "재고 부족" })[MATSTAT.filter]} 목록</span>` : "")
     + (canStock && s.low && MATSTAT.filter === "low" ? `<button type="button" class="btn sm" id="msBulkOrder" style="margin-left:6px;">부족 ${s.low}종 → 발주서</button>` : "")
-    + (canStock && ["all", "low", "stock"].includes(MATSTAT.filter) ? `<button type="button" class="btn ghost sm" id="msSelAll" style="margin-left:6px;">☑ 전체 선택</button>` : "")
+    + (canStock && ["low", "stock"].includes(MATSTAT.filter) ? `<button type="button" class="btn ghost sm" id="msSelAll" style="margin-left:6px;">☑ 전체 선택</button>` : "")
     + (canStock && MATSTAT.sel.size ? `<button type="button" class="btn sm" id="msSelOrder" style="margin-left:6px; background:var(--solid); color:var(--solid-ink);">✅ 선택 ${MATSTAT.sel.size}종 발주서</button><button type="button" class="btn ghost sm" id="msSelClear">선택 해제</button>` : "");
   // 부족 자재 앞에 붙는 일괄 발주 선택 체크박스 — 부족 행마다(발주 버튼이 있는 곳마다) 표시. 같은 자재는 material_id로 1종만 담긴다.
   const selChk = (mid, nm, un, q) => (canStock && q > 0) ? `<input type="checkbox" data-mssel="${mid}" data-q="${q}" data-nm="${esc(nm || "")}" data-un="${esc(un || "")}" ${MATSTAT.sel.has(mid) ? "checked" : ""} title="일괄 발주 선택" style="width:15px; height:15px; margin-right:6px; vertical-align:middle; cursor:pointer;">` : "";
@@ -3220,7 +3236,8 @@ function renderMatStatus() {
   if (MATSTAT.filter === "stock") {
     $("msHead").innerHTML = ["자재명", "구분", "현재고", "유통기한", "안전재고", "최근입고", "처리"].map((h, i) =>
       `<th style="padding:6px 8px; border-bottom:2px solid var(--line); text-align:${i === 0 || i === 3 ? "left" : (i === 2 || i === 4 ? "right" : "center")}; font-size:12px; color:var(--muted);">${h}</th>`).join("");
-    let list = q ? items.filter(x => (x.name || "").toLowerCase().includes(q)) : items.slice();
+    let list = MATSTAT.kind === "all" ? items.slice() : items.filter(x => msKindKey(x) === MATSTAT.kind);
+    if (q) list = list.filter(x => (x.name || "").toLowerCase().includes(q));
     $("msBody").innerHTML = list.length ? list.map(it => {
       const u = esc(it.unit || "");
       let exp = '<span class="auto">—</span>';
@@ -3338,8 +3355,10 @@ $("msDate").addEventListener("change", () => {
   if (/^\d{4}-\d{2}-\d{2}$/.test(v) && v !== MATSTAT.date) { MATSTAT.date = v; loadMatStatus(); }
 });
 $("msSearch").addEventListener("input", () => { MATSTAT.q = $("msSearch").value.trim(); renderMatStatus(); });
-$("msSummary").addEventListener("click", e => { const b = e.target.closest("[data-msfilter]"); if (b) { MATSTAT.filter = b.dataset.msfilter; renderMatStatus(); } });
+$("msSummary").addEventListener("click", e => { const b = e.target.closest("[data-msfilter]"); if (b) { MATSTAT.filter = b.dataset.msfilter; if (MATSTAT.filter === "stock") MATSTAT.kind = "all"; renderMatStatus(); } });
 $("msFilters").addEventListener("click", e => {
+  const k = e.target.closest("[data-mskind]");
+  if (k) { MATSTAT.filter = "stock"; MATSTAT.kind = k.dataset.mskind; renderMatStatus(); return; }
   const b = e.target.closest("[data-msfilter]");
   if (b) { MATSTAT.filter = b.dataset.msfilter; renderMatStatus(); return; }
   if (e.target.closest("#msBulkOrder")) { msOrderItems(MATSTAT.data.items || []); return; }
@@ -3858,7 +3877,7 @@ function negNumIn(rows, fields, label) {
 // 일일 입력 body 섹션 → 필요한 담당 (서버 DUTY_SECTION과 동일)
 const DUTY_SECTION = { production: "production", shipment: "shipment", usage: "usage",
   staffing: "staffing", materials: "stock", mat_in: "stock", freight: "shipment" };
-const PROD_DUTIES = ["production", "shipment", "usage", "staffing"];   // '생산 입력' 탭이 저장하는 섹션들
+const PROD_DUTIES = ["production", "usage", "staffing"];   // '생산 입력' 탭이 저장하는 섹션들 (출고·운송비는 '출고 입력')
 let SAVING = false;   // 내 저장 중에는 '다른 사용자가 저장함' 알림을 띄우지 않는다
 async function saveDayBody(body, label, force) {
   // 오늘이 아닌 날짜에 저장하면 실수 방지 확인 (달력에서 과거·미래 날짜를 눌러둔 채 작성·저장하는 경우)
@@ -3940,17 +3959,13 @@ function _showMatWarnings(list) {
 function buildProdBody() {
   if (!mustDate()) return null;
   const bad = badNumIn(E.prod, ["batches", "plan_qty", "prod_qty", "defect_qty"], "생산실적")
-    || badNumIn(E.ship, ["qty", "pallet_qty"], "완제품 출고")
     || badNumIn(E.usage, ["qty"], "자재 사용")
     || badNumIn(E.staff, ["agency_wage", "target_hours", "work_hours"], "인원·가동")
     || badNumIn(E.staff.flatMap(r => (r.members || []).concat(r.agency || [])), ["h"], "인원 투입시간")
     || badNumIn(E.staff.flatMap(r => r.agency || []), ["w"], "용역 시급")
     || negNumIn(E.staff.flatMap(r => r.agency || []), ["h", "w"], "용역 시간·시급")
     || negNumIn(E.prod, ["batches", "plan_qty", "prod_qty", "defect_qty"], "생산실적")
-    || negNumIn(E.ship, ["qty", "pallet_qty"], "완제품 출고")
-    || negNumIn(E.usage, ["qty"], "자재 사용")
-    || badNumIn(E.freight, ["cost"], "운송비")
-    || negNumIn(E.freight, ["cost"], "운송비");
+    || negNumIn(E.usage, ["qty"], "자재 사용");
   if (bad) { toast("⚠ " + bad + " — 고친 뒤 저장하세요"); return null; }
   // 불량 > 생산 차단 (양품이 음수가 됨)
   for (const r of E.prod) {
@@ -3962,33 +3977,11 @@ function buildProdBody() {
       toast(`⚠ '${p ? p.name : "?"}' 불량 ${NF(defect)}개가 생산 ${NF(prod)}개보다 많습니다`); return null;
     }
   }
-  // 출고 재고 초과 차단
-  const ssum = shipSumByProduct();
-  for (const pid in ssum) {
-    const avail = shipAvail(+pid);
-    if (ssum[pid] - avail > 0.5) {
-      const p = productById(+pid);
-      toast(`⚠ '${p ? p.name : pid}' 출고량 ${NF(ssum[pid])}개가 가용 재고 ${NF(avail)}개를 초과합니다`); return null;
-    }
-  }
   const body = {
     memo: $("eMemo").value,
     production: E.prod.filter(r => r.product_id).map(r => ({ ...r,
       lot_splits: r.lotSplits || [], prod_splits: r.prodSplits || [] })),
-    shipment: E.ship.filter(r => r.product_id && r.qty).map(r => ({ ...r, expiry: r.lotExpiry || "", lot_no: r.lotNo || 0 })),
-    freight: E.freight.map(r => ({ ...r, cost: Number(String(r.cost ?? "").replace(/,/g, "")) || 0 })),
-    staffing: E.staff.filter(r => r.line_id).map(r => ({ ...r,
-      headcount: (r.members || []).length,
-      // 용역 = 개인별 [시간, 시급, 성별, 업체] — 서버가 상세 저장 + 집계(가중평균 시급) 계산
-      agency: (r.agency || []).map(a => ({
-        h: Number(String(a.h ?? "").replace(/,/g, "")) || 0,
-        w: Number(String(a.w ?? "").replace(/,/g, "")) || 0,
-        g: a.g || "", pid: a.pid || null,
-        start: a.start || "", end: a.end || "",
-        brk: Number(String(a.brk ?? "").replace(/,/g, "")) || 0 })),
-      agency_count: (r.agency || []).length,
-      agency_hours: (r.agency || []).reduce((s, a) => s + (Number(a.h) || 0), 0),
-      agency_wage: r.agency_wage || 0 })),
+    staffing: STAFF_BODY(),
     // 자재를 고른 행은 사용량이 비어도 0으로 저장 — 저장 후 다시 열어도 행이 남게 한다.
     // (실측 자동계산은 서버 estimate에서 qty>0만 반영하므로 0 저장이 추정을 왜곡하지 않는다)
     usage: E.usage.filter(u => u.material_id)
@@ -4000,7 +3993,45 @@ function buildProdBody() {
   };
   return body;
 }
+// 출고 입력 탭 — 완제품 출고 + 운송비만 저장
+function buildShipBody() {
+  if (!mustDate()) return null;
+  const bad = badNumIn(E.ship, ["qty", "pallet_qty"], "완제품 출고")
+    || negNumIn(E.ship, ["qty", "pallet_qty"], "완제품 출고")
+    || badNumIn(E.freight, ["cost"], "운송비")
+    || negNumIn(E.freight, ["cost"], "운송비");
+  if (bad) { toast("⚠ " + bad + " — 고친 뒤 저장하세요"); return null; }
+  // 출고 재고 초과 차단
+  const ssum = shipSumByProduct();
+  for (const pid in ssum) {
+    const avail = shipAvail(+pid);
+    if (ssum[pid] - avail > 0.5) {
+      const p = productById(+pid);
+      toast(`⚠ '${p ? p.name : pid}' 출고량 ${NF(ssum[pid])}개가 가용 재고 ${NF(avail)}개를 초과합니다`
+        + (E.prod.some(r => Number(r.product_id) === +pid && Number(r.prod_qty) > 0) ? " — 오늘 생산분이면 생산 입력을 먼저 저장하세요" : "")); return null;
+    }
+  }
+  return {
+    shipment: E.ship.filter(r => r.product_id && r.qty).map(r => ({ ...r, expiry: r.lotExpiry || "", lot_no: r.lotNo || 0 })),
+    freight: E.freight.map(r => ({ ...r, cost: Number(String(r.cost ?? "").replace(/,/g, "")) || 0 })),
+  };
+}
+function STAFF_BODY() {
+  return E.staff.filter(r => r.line_id).map(r => ({ ...r,
+      headcount: (r.members || []).length,
+      // 용역 = 개인별 [시간, 시급, 성별, 업체] — 서버가 상세 저장 + 집계(가중평균 시급) 계산
+      agency: (r.agency || []).map(a => ({
+        h: Number(String(a.h ?? "").replace(/,/g, "")) || 0,
+        w: Number(String(a.w ?? "").replace(/,/g, "")) || 0,
+        g: a.g || "", pid: a.pid || null,
+        start: a.start || "", end: a.end || "",
+        brk: Number(String(a.brk ?? "").replace(/,/g, "")) || 0 })),
+      agency_count: (r.agency || []).length,
+      agency_hours: (r.agency || []).reduce((s, a) => s + (Number(a.h) || 0), 0),
+      agency_wage: r.agency_wage || 0 }));
+}
 $("btnSaveDay").onclick = () => { const body = buildProdBody(); if (body) showSaveSum(body, "생산 입력"); };
+$("btnSaveShip").onclick = () => { const body = buildShipBody(); if (body) showSaveSum(body, "출고 입력"); };
 // 재고·입고 탭 — 검증 통과 시 body 반환 (실재고 빈 실사 행 제외 안내 포함)
 function buildStockBody() {
   if (!mustDate()) return null;
@@ -4241,14 +4272,14 @@ function showSaveSum(body, label) {
   const defNoReason = prod.filter(r => (Number(r.defect_qty) || 0) > 0 && !(r.defect_reason || "").trim()).length;
   const memo = (body.memo || "").trim();
   const rowsHtml = [
-    ["🏭 생산실적", `${prod.length}종 · ${NF(prodQty)}개`],
-    ["🚚 완제품 출고", `${ship.length}건 · ${NF(shipQty)}개`
+    ["production", "🏭 생산실적", `${prod.length}종 · ${NF(prodQty)}개`],
+    ["shipment", "🚚 완제품 출고", `${ship.length}건 · ${NF(shipQty)}개`
       + (ship.some(r => Number(r.pallet_qty) > 0) ? ` · 파렛트 ${NF(ship.reduce((s, r) => s + (Number(r.pallet_qty) || 0), 0))}개` : "")],
-    ["🚛 운송비", (body.freight || []).length ? `${body.freight.length}건 · ${NF(body.freight.reduce((s, r) => s + (Number(r.cost) || 0), 0))}원` : "없음"],
-    ["🧾 자재 사용", `${usage.length}건`],
-    ["👷 인원·가동", `${staff.length}라인`],
-    ["📝 특이사항", memo ? "입력됨" : "없음"],
-  ];
+    ["freight", "🚛 운송비", (body.freight || []).length ? `${body.freight.length}건 · ${NF(body.freight.reduce((s, r) => s + (Number(r.cost) || 0), 0))}원` : "없음"],
+    ["usage", "🧾 자재 사용", `${usage.length}건`],
+    ["staffing", "👷 인원·가동", `${staff.length}라인`],
+    ["memo", "📝 특이사항", memo ? "입력됨" : "없음"],
+  ].filter(r => r[0] in body).map(r => r.slice(1));   // 이 탭이 저장하는 항목만
   let html = rowsHtml.map(([k, v]) => `<div class="ssum-row"><span>${k}</span><span class="sv">${v}</span></div>`).join("");
   if (defNoReason) html += `<div class="ssum-row warn"><span>⚠️ 불량 사유 미입력</span><span class="sv">${defNoReason}건</span></div>`;
   // 자재는 골랐는데 사용량이 비어 있거나 0인 행 — 깜빡하고 안 적은 경우가 많아 제품별로 목록을 보여준다 (저장은 가능)
@@ -7587,7 +7618,7 @@ async function loadLookup(date) {
 }
 window.openUseLk = (mid, date) => openUse(mid, date);
 window.gotoEntry = (date) => {
-  document.querySelector('#nav button[data-scr="entry"]').click();
+  entryNavBtn().click();
   entryCal.ym = date.slice(0, 7); entryCal.sel = date; entryCal.render(); loadDay(date);
 };
 /* 재고 이력 → 일일 입력으로 넘어온 경우 '돌아가기' — 원래 화면(스크롤 위치)으로 가서 이력 창을 다시 연다.
@@ -7628,7 +7659,7 @@ async function gotoEntryMaterial(date, mid) {
     MHBACK = { scr: from, y: window.scrollY, mid, name: (materialById(mid) || {}).name || "자재" };
     try { history.pushState({ mhback: 1 }, ""); } catch (err) { }
   } else if (MHBACK) { MHBACK.mid = mid; MHBACK.name = (materialById(mid) || {}).name || MHBACK.name; }
-  document.querySelector('#nav button[data-scr="entry"]').click();
+  entryNavBtn("stock").click();
   entryCal.ym = date.slice(0, 7); entryCal.sel = date; entryCal.render();
   await loadDay(date);
   entryTab = "stock"; renderEntryTabs();
@@ -7703,7 +7734,7 @@ $("lowPanel").addEventListener("click", e => {
 }, true);
 /** 그 자재의 발주량 입력칸으로 이동 — 없으면 재고 실사에 행을 추가해 준다 */
 async function gotoLowMaterial(mid) {
-  document.querySelector('#nav button[data-scr="entry"]').click();
+  entryNavBtn("stock").click();
   if (!E.date) { entryCal.sel = todayISO(); await loadDay(todayISO()); }
   entryTab = "stock"; renderEntryTabs();
   await new Promise(r => setTimeout(r, 60));
@@ -11404,7 +11435,10 @@ function navMerge(saved) {   // 저장본 + 기본값: 없어진 메뉴는 빼�
     if (n.t !== "menu" || seen.has(n.key)) return;
     let host = null;
     if (parent) navWalk(out, g => { if (g.t === "group" && g.id === parent.id) host = g; });
-    (host ? host.items : out).push({ t: "menu", key: n.key, label: "", hidden: false });
+    const arr = host ? host.items : out, nn = { t: "menu", key: n.key, label: "", hidden: false };
+    const prev = _i > 0 ? _a[_i - 1] : null, pi = prev && prev.t === "menu" ? arr.findIndex(x => x.key === prev.key) : -1;
+    if (pi >= 0) arr.splice(pi + 1, 0, nn); else if (_i === 0 && host) arr.unshift(nn); else arr.push(nn);
+    seen.add(n.key);
   });
   return out;
 }
@@ -12694,11 +12728,14 @@ async function startApp(me) {
   // 담당별 일일 입력: 자기 탭이 기본 + 담당 아닌 탭 저장 버튼 비활성 (서버도 403으로 강제)
   const canProd = ROLE === "admin" || PROD_DUTIES.some(k => MYDUTY.has(k));
   const canStock = ROLE === "admin" || MYDUTY.has("stock");
-  if (!canProd && canStock) { entryTab = "stock"; renderEntryTabs(); }
+  const canShipE = ROLE === "admin" || MYDUTY.has("shipment");
   const noDuty = "담당이 지정되지 않아 일일 입력을 저장할 수 없습니다";
   $("btnSaveDay").disabled = !canProd;
   $("btnSaveDay").title = canProd ? ""
     : (MYDUTY.size === 0 ? noDuty : "생산 입력 담당이 아니어서 저장할 수 없습니다");
+  $("btnSaveShip").disabled = !canShipE;
+  $("btnSaveShip").title = canShipE ? ""
+    : (MYDUTY.size === 0 ? noDuty : "출고 담당이 아니어서 저장할 수 없습니다");
   $("btnSaveStock").disabled = !canStock;
   $("btnSaveStock").title = canStock ? ""
     : (MYDUTY.size === 0 ? noDuty : "재고·입고 담당이 아니어서 저장할 수 없습니다");
