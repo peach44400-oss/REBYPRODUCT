@@ -43,7 +43,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.130.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.131.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -5999,7 +5999,7 @@ def day_get(date: str, request: Request):
             LEFT JOIN partner pa ON pa.id=s.partner_id
             WHERE s.date=? ORDER BY s.id""", (date,)))
         freight = rows(con.execute("SELECT * FROM freight WHERE date=? ORDER BY id", (date,)))
-        fm = con.execute("SELECT COUNT(*) n, COALESCE(SUM(cost),0) c FROM freight WHERE substr(date,1,7)=?",
+        fm = con.execute("SELECT COUNT(*) n, COALESCE(SUM(cost + COALESCE(vat,0)),0) c FROM freight WHERE substr(date,1,7)=?",
                          (date[:7],)).fetchone()
         # 출발지·도착지 입력 도움말 — 최근에 쓴 장소 (자주 쓴 순)
         places = [r["p"] for r in con.execute("""SELECT p FROM (SELECT origin p FROM freight UNION ALL SELECT dest FROM freight)
@@ -6613,12 +6613,16 @@ def day_save(request: Request, date: str, body: dict):
                     raise HTTPException(400, f"운송비 비용이 숫자가 아닙니다: {r.get('cost')}")
                 if cost < 0:
                     raise HTTPException(400, "운송비 비용에 음수는 저장할 수 없습니다")
+                try:
+                    vat = max(0.0, float(str(r.get("vat") or 0).replace(",", "")))
+                except ValueError:
+                    vat = 0.0
                 if not (txt["origin"] or txt["dest"] or r.get("carrier_id") or txt["courier"] or cost or txt["waybill"]):
                     continue   # 빈 행
                 con.execute("""INSERT INTO freight(date, kind, origin, dest, dest_partner_id, carrier_id, courier, vehicle,
-                    waybill, cost, pay, note, created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    waybill, cost, vat, pay, note, created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (date, txt["kind"], txt["origin"], txt["dest"], r.get("dest_partner_id") or None,
-                     r.get("carrier_id") or None, txt["courier"], txt["vehicle"], txt["waybill"], cost,
+                     r.get("carrier_id") or None, txt["courier"], txt["vehicle"], txt["waybill"], cost, vat,
                      txt["pay"], txt["note"], user.get("username", "")))
         affected_pids = set()   # 저장 후 재고 음수 검증 대상 (생산·출고 변경 제품)
         if "production" in body:
@@ -8595,7 +8599,7 @@ AI_HINTS = """업무 용어 → 테이블 안내 (SQLite):
 - 출고(판매) = shipment (date, product_id, partner_id → partner, qty, unit_price, expiry 소비기한). 매출액 = qty * (unit_price, 0이면 product.unit_price).
 - 거래처 = partner (type 에 '판매처'·'자재 공급처'·'운송사'·'물류창고' 등이 쉼표로 들어감).
 - 운송비 = freight (date, kind 화물/용차/택배/퀵/직배송, origin 출발지, dest 도착지, carrier_id → partner(운송사),
-  courier 택배사 코드(cj 등, carrier_id 대신), vehicle 차량, waybill 운송장, cost 비용(원), pay 결제방식).
+  courier 택배사 코드(cj 등, carrier_id 대신), vehicle 차량, waybill 운송장, cost 비용(원, 공급가), vat 부가세(원), pay 결제방식).
 - 인원 = staffing (날짜·라인별 headcount, work_hours), staffing_member (직원별 hours → staff), staffing_agency (용역: hours, wage, cost=확정 금액, gender).
 - 발주 = purchase_order (date 발주일, due 납기, partner_id/partner_name, closed_at 잔량종결). 품목은 JSON 배열 items
   [{material_id,name,spec,unit,qty,price,recv}] → json_each(purchase_order.items) 와 json_extract(value,'$.qty') 로 펼친다.

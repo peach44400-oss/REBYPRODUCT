@@ -1438,7 +1438,7 @@ async function loadDay(date) {
   E.shipLots = {};   // 날짜별 출고 가능 LOT 캐시 (제품 선택 시 lazy 로드)
   E.freight = (d.freight || []).map(r => ({ kind: r.kind || "", origin: r.origin || "", dest: r.dest || "",
     dest_partner_id: r.dest_partner_id || null, carrier_id: r.carrier_id || null, courier: r.courier || "",
-    vehicle: r.vehicle || "", waybill: r.waybill || "", cost: r.cost || "", pay: r.pay || "", note: r.note || "" }));
+    vehicle: r.vehicle || "", waybill: r.waybill || "", cost: r.cost || "", vat_on: Number(r.vat) > 0, pay: r.pay || "", note: r.note || "" }));
   E.freightMonth = d.freight_month || { n: 0, cost: 0 }; E.freightPlaces = d.freight_places || [];
   E.mat = d.materials.filter(r => r.src !== "auto")
     .map(r => ({ material_id: r.material_id, prev_qty: r.prev_qty, in_qty: r.in_qty || "", real_qty: r.real_qty, order_date: r.order_date || "", order_qty: r.order_qty || "" }));
@@ -2663,11 +2663,14 @@ function newFreightRow() {
   let last = {}; try { last = JSON.parse(localStorage.getItem("freightLast") || "{}") || {}; } catch (e) { }
   return { kind: last.kind || "", origin: last.origin || "", dest: "", dest_partner_id: null,
     carrier_id: last.carrier_id || null, courier: last.courier || "", vehicle: last.vehicle || "",
-    waybill: "", cost: "", pay: last.pay || "", note: "" };
+    waybill: "", cost: "", vat_on: !!last.vat_on, pay: last.pay || "", note: "" };
 }
+// 운송비 부가세 — '부가세 10%' 체크 시 공급가(비용)×10% (원 단위 반올림)
+const frNum = v => Number(String(v ?? "").replace(/,/g, "")) || 0;
+const frVat = r => r.vat_on ? Math.round(frNum(r.cost) * 0.1) : 0;
 function rememberFreight(r) {
   try { localStorage.setItem("freightLast", JSON.stringify({ kind: r.kind, origin: r.origin, carrier_id: r.carrier_id,
-    courier: r.courier, vehicle: r.vehicle, pay: r.pay })); } catch (e) { }
+    courier: r.courier, vehicle: r.vehicle, pay: r.pay, vat_on: !!r.vat_on })); } catch (e) { }
 }
 function freightCarrierSel(r) {
   const cur = r.carrier_id ? "p:" + r.carrier_id : (r.courier ? "c:" + r.courier : "");
@@ -2693,10 +2696,13 @@ function renderFreight() {
     <td style="white-space:nowrap;">${inp(r, "waybill", 100, "운송장 번호", ' inputmode="numeric"')}
       <button class="btn ghost sm" data-ftrack ${url ? "" : "disabled"} title="택배사 공식 배송조회 페이지를 새 창으로 엽니다 (운송회사를 택배사로 고르고 운송장 번호를 넣으면 켜짐)">🔍</button></td>
     <td class="r"><input class="mini-input num" data-ff="cost" value="${r.cost || ""}" placeholder="원" style="width:80px;" inputmode="decimal"></td>
+    <td style="white-space:nowrap;"><label style="display:inline-flex; align-items:center; gap:3px; font-size:12px; cursor:pointer;" title="체크하면 비용(공급가)의 10%를 부가세로 더합니다">
+      <input type="checkbox" data-ff="vat_on"${r.vat_on ? " checked" : ""} style="width:14px; height:14px;">10%</label>
+      <div class="auto num" data-fvat style="font-size:11px; line-height:1.2;">${frVatTxt(r)}</div></td>
     <td><select class="mini-sel" data-ff="pay" style="width:72px;">${opt(FREIGHT_PAYS, r.pay)}</select></td>
     <td>${inp(r, "note", 92, "")}</td>
     <td><button class="btn ghost sm" data-fdel>삭제</button></td></tr>`;
-  }).join("") || `<tr><td colspan="10" class="auto">+ 운송 행 추가 또는 📥 오늘 출고에서 불러오기</td></tr>`;
+  }).join("") || `<tr><td colspan="11" class="auto">+ 운송 행 추가 또는 📥 오늘 출고에서 불러오기</td></tr>`;
   // 출발지·도착지 목록 = 예전에 쓴 장소 + 물류창고 + 출고 거래처 (거래처는 유형을 옆에 표시)
   const ps = (M.partner || []).filter(p => p.status !== "중지");
   const wh = ps.filter(p => pTypes(p).includes("물류창고")), sel = ps.filter(isSeller);
@@ -2706,11 +2712,11 @@ function renderFreight() {
     .map(p => `<option value="${esc(p)}"${lbl[p] ? ` label="${lbl[p]}"` : ""}>`).join("");
   renderFreightSum();
 }
+function frVatTxt(r) { const v = frVat(r); return v ? `+${NF(v)}<br>= ${NF(frNum(r.cost) + v)}` : ""; }
 function renderFreightSum() {
-  const num = v => Number(String(v ?? "").replace(/,/g, "")) || 0;
-  const day = E.freight.reduce((s, r) => s + num(r.cost), 0);
+  const sup = E.freight.reduce((s, r) => s + frNum(r.cost), 0), vat = E.freight.reduce((s, r) => s + frVat(r), 0);
   const fm = E.freightMonth || { n: 0, cost: 0 };
-  $("freightSum").innerHTML = `오늘 ${E.freight.length}건 · <b>${NF(day)}원</b> &nbsp;·&nbsp; `
+  $("freightSum").innerHTML = `오늘 ${E.freight.length}건 · <b>${NF(sup + vat)}원</b>${vat ? ` <span class="auto">(공급가 ${NF(sup)} + 부가세 ${NF(vat)})</span>` : ""} &nbsp;·&nbsp; `
     + `<span class="auto">${(E.date || "").slice(0, 7)} 누계(저장된 것) ${NF(fm.n)}건 · ${NF(fm.cost)}원</span>`;
 }
 $("eFreight").addEventListener("input", e => {
@@ -2730,13 +2736,18 @@ $("eFreight").addEventListener("input", e => {
     if (r.courier && !r.kind) r.kind = "택배";
     rememberFreight(r); renderFreight(); return;
   }
+  if (f === "vat_on") {
+    r.vat_on = e.target.checked; E.dirty = true; rememberFreight(r);
+    const v = tr.querySelector("[data-fvat]"); if (v) v.innerHTML = frVatTxt(r);
+    renderFreightSum(); return;
+  }
   r[f] = e.target.value;
   if (f === "dest") {   // 도착지가 거래처 이름과 같으면 그 거래처로 연결 (거래처별 운송비 집계용)
     const p = (M.partner || []).find(x => x.name === r.dest.trim()); r.dest_partner_id = p ? p.id : null;
   }
   if (f === "kind" || f === "pay" || f === "origin" || f === "vehicle") rememberFreight(r);
   if (f === "waybill") { const b = tr.querySelector("[data-ftrack]"); if (b) b.disabled = !freightTrackUrl(r); }
-  if (f === "cost") renderFreightSum();
+  if (f === "cost") { const v = tr.querySelector("[data-fvat]"); if (v) v.innerHTML = frVatTxt(r); renderFreightSum(); }
 });
 $("eFreight").addEventListener("click", e => {
   const tr = e.target.closest("tr[data-i]"); if (!tr) return;
@@ -3252,8 +3263,9 @@ function renderMatStatus() {
         <td style="padding:6px 8px;">${exp}</td>
         <td style="padding:6px 8px; text-align:right;">${saf}</td>
         <td style="padding:6px 8px; text-align:center; font-size:11.5px; color:var(--muted);">${esc(it.last_in || "—")}</td>
-        <td style="padding:6px 8px; text-align:center; white-space:nowrap;">${canStock && it.low && !it.ordered ? `${selChk(it.id, it.name, it.unit, Math.ceil((it.shortage || 0) * 100) / 100)}<button class="btn ghost sm" data-msorder="${it.id}" data-q="${Math.ceil((it.shortage || 0) * 100) / 100}" data-nm="${esc(it.name || "")}" data-un="${esc(it.unit || "")}" style="padding:1px 8px;">발주</button>` : ""}${canStock && it.onhand > 0 && !Number(it.is_semi) && ["raw", "sub", "cons", "equip"].includes(it.kind)
-          ? ` <button class="btn ghost sm" data-msuse="${it.id}" style="padding:1px 8px;" title="다 썼거나 일부 쓴 수량을 기록 — 오늘 날짜 재고 실사로 반영">사용 처리</button>` : ""}${!(canStock && ((it.low && !it.ordered) || (it.onhand > 0 && ["raw", "sub", "cons", "equip"].includes(it.kind) && !Number(it.is_semi)))) ? "—" : ""}</td></tr>`;
+        <td style="padding:6px 8px; text-align:center; white-space:nowrap;">${canStock && it.low && !it.ordered ? `${selChk(it.id, it.name, it.unit, Math.ceil((it.shortage || 0) * 100) / 100)}<button class="btn ghost sm" data-msorder="${it.id}" data-q="${Math.ceil((it.shortage || 0) * 100) / 100}" data-nm="${esc(it.name || "")}" data-un="${esc(it.unit || "")}" style="padding:1px 8px;">발주</button>` : ""}${canStock && it.onhand > 0 && !Number(it.is_semi) && ["cons", "equip"].includes(it.kind)
+          ? ` <button class="btn ghost sm" data-msuse="${it.id}" style="padding:1px 8px;" title="다 썼거나 일부 쓴 수량을 기록 — 오늘 날짜 재고 실사로 반영">사용 처리</button>` : ""}${canStock && it.onhand > 0 && !Number(it.is_semi) && ["raw", "sub"].includes(it.kind)
+          ? ` <button class="btn ghost sm" data-msdrop="${it.id}" style="padding:1px 8px; color:#c0392b; border-color:#c0392b;" title="${it.expired > 0 ? "유통기한 만료분 확정 폐기" : "파손·변질 등으로 버린 수량을 폐기로 기록 — 재고에서 차감되고 '폐기 내역'에 남습니다"}">폐기</button>` : ""}${!(canStock && ((it.low && !it.ordered) || (it.onhand > 0 && ["raw", "sub", "cons", "equip"].includes(it.kind) && !Number(it.is_semi)))) ? "—" : ""}</td></tr>`;
     }).join("") : `<tr><td colspan="7" class="auto" style="padding:16px; text-align:center;">해당하는 자재가 없습니다</td></tr>`;
     return;
   }
@@ -3330,6 +3342,13 @@ function msDispose(mid) {
   openDisposeModal({ mid, name: it.name, unit: it.unit || "", expired: it.expired,
     expiry: exps[0] || "", onReload: () => loadMatStatus() });
 }
+// 원재료·부재료 폐기 — 만료분이 있으면 만료 폐기 창, 없으면 일반 폐기(파손·변질 등, 기본값 = 현재고 전체 · 수량 수정 가능)
+function msDrop(mid) {
+  const it = (MATSTAT.data.items || []).find(x => x.id === mid); if (!it) return;
+  if (it.expired > 0) return msDispose(mid);
+  openDisposeModal({ mid, name: it.name, unit: it.unit || "", expired: it.onhand, expiry: "", generic: true,
+    onReload: () => loadMatStatus() });
+}
 function msOrderItems(list) {
   const items = list.filter(x => x.low && !x.ordered).map(x => ({ material_id: x.id, name: x.name, unit: x.unit, qty: Math.ceil((x.shortage || 0) * 100) / 100 }));
   if (!items.length) return toast("발주할 부족 자재가 없습니다");
@@ -3378,6 +3397,7 @@ $("msBody").addEventListener("click", async e => {
   if (e.target.closest("[data-mssel]")) return;   // 체크박스 클릭은 change 핸들러가 처리
   const dz = e.target.closest("[data-msdispose]"); if (dz) { msDispose(+dz.dataset.msdispose); return; }
   const us = e.target.closest("[data-msuse]"); if (us) { openUseDone(+us.dataset.msuse); return; }
+  const dr = e.target.closest("[data-msdrop]"); if (dr) { msDrop(+dr.dataset.msdrop); return; }
   const od = e.target.closest("[data-msorder]"); if (od) {
     const q = Number(od.dataset.q) || 0;
     if (q > 0) poBulkFromItems([{ material_id: +od.dataset.msorder, name: od.dataset.nm || "", unit: od.dataset.un || "", qty: q }]);
@@ -4013,7 +4033,7 @@ function buildShipBody() {
   }
   return {
     shipment: E.ship.filter(r => r.product_id && r.qty).map(r => ({ ...r, expiry: r.lotExpiry || "", lot_no: r.lotNo || 0 })),
-    freight: E.freight.map(r => ({ ...r, cost: Number(String(r.cost ?? "").replace(/,/g, "")) || 0 })),
+    freight: E.freight.map(r => ({ ...r, cost: frNum(r.cost), vat: frVat(r) })),
   };
 }
 function STAFF_BODY() {
@@ -4275,7 +4295,7 @@ function showSaveSum(body, label) {
     ["production", "🏭 생산실적", `${prod.length}종 · ${NF(prodQty)}개`],
     ["shipment", "🚚 완제품 출고", `${ship.length}건 · ${NF(shipQty)}개`
       + (ship.some(r => Number(r.pallet_qty) > 0) ? ` · 파렛트 ${NF(ship.reduce((s, r) => s + (Number(r.pallet_qty) || 0), 0))}개` : "")],
-    ["freight", "🚛 운송비", (body.freight || []).length ? `${body.freight.length}건 · ${NF(body.freight.reduce((s, r) => s + (Number(r.cost) || 0), 0))}원` : "없음"],
+    ["freight", "🚛 운송비", (body.freight || []).length ? `${body.freight.length}건 · ${NF(body.freight.reduce((s, r) => s + (Number(r.cost) || 0) + (Number(r.vat) || 0), 0))}원` : "없음"],
     ["usage", "🧾 자재 사용", `${usage.length}건`],
     ["staffing", "👷 인원·가동", `${staff.length}라인`],
     ["memo", "📝 특이사항", memo ? "입력됨" : "없음"],
@@ -4920,14 +4940,14 @@ function renderFreightRep() {
   $("frDestDl").innerHTML = [...new Set(d.rows.map(dests))].sort((a, b) => a.localeCompare(b, "ko")).map(x => `<option value="${esc(x)}">`).join("");
   const cq = $("frCarrier").value.trim(), dq = $("frDest").value.trim();
   const list = d.rows.filter(r => (!cq || frCarrierName(r).includes(cq)) && (!dq || dests(r).includes(dq)));
-  const cost = r => Number(r.cost) || 0;
-  const sum = list.reduce((a, r) => a + cost(r), 0);
+  const cost = r => (Number(r.cost) || 0) + (Number(r.vat) || 0);   // 부가세 포함 금액
+  const sum = list.reduce((a, r) => a + cost(r), 0), vsum = list.reduce((a, r) => a + (Number(r.vat) || 0), 0);
   const days = new Set(list.map(r => r.date)).size;
   const filt = [cq && `운송회사 '${esc(cq)}'`, dq && `도착지 '${esc(dq)}'`].filter(Boolean).join(" · ");
-  $("frSummary").innerHTML = `기간 ${esc(d.from)} ~ ${esc(d.to)}${filt ? " · " + filt : ""} · 운송 <span style="color:#1f5fd6">${NF(list.length)}회</span> (${NF(days)}일) · 비용 합계 <b>₩${NF(sum)}</b>${list.length ? ` · 회당 평균 ₩${NF(Math.round(sum / list.length))}` : ""}`;
+  $("frSummary").innerHTML = `기간 ${esc(d.from)} ~ ${esc(d.to)}${filt ? " · " + filt : ""} · 운송 <span style="color:#1f5fd6">${NF(list.length)}회</span> (${NF(days)}일) · 비용 합계 <b>₩${NF(sum)}</b>${vsum ? ` <span class="auto">(부가세 ${NF(vsum)} 포함)</span>` : ""}${list.length ? ` · 회당 평균 ₩${NF(Math.round(sum / list.length))}` : ""}`;
   const empty = n => `<tr><td colspan="${n}" class="auto" style="padding:16px; text-align:center;">조건에 맞는 운송 기록이 없습니다 — 일일 입력 › 운송비에서 입력합니다</td></tr>`;
   if (FREP.tab === "detail") {
-    $("frHead").innerHTML = `<tr><th>일자</th><th>구분</th><th>출발지</th><th>도착지</th><th>운송회사</th><th>차량·톤수</th><th>운송장</th><th class="r">비용(원)</th><th>결제</th><th>비고</th></tr>`;
+    $("frHead").innerHTML = `<tr><th>일자</th><th>구분</th><th>출발지</th><th>도착지</th><th>운송회사</th><th>차량·톤수</th><th>운송장</th><th class="r">공급가</th><th class="r">부가세</th><th class="r">합계(원)</th><th>결제</th><th>비고</th></tr>`;
     let prev = "";
     $("frBody").innerHTML = list.map(r => {
       const first = r.date !== prev; prev = r.date;
@@ -4936,8 +4956,9 @@ function renderFreightRep() {
         <td style="white-space:nowrap;"><button class="uselink num" data-frday="${esc(r.date)}" title="클릭하면 이 날짜의 일일 입력으로 이동합니다"${first ? "" : ' style="color:var(--faint);"'}>${esc(r.date)}</button></td>
         <td>${esc(r.kind || "—")}</td><td>${esc(r.origin || "—")}</td><td><b>${esc(r.dest || "—")}</b></td><td>${esc(frCarrierName(r))}</td><td>${esc(r.vehicle || "—")}</td>
         <td style="white-space:nowrap;">${esc(r.waybill || "—")}${url ? ` <a href="${esc(url)}" target="_blank" rel="noopener" title="배송조회" style="text-decoration:none;">🔍</a>` : ""}</td>
+        <td class="r">${Number(r.cost) ? NF(r.cost) : "—"}</td><td class="r auto">${Number(r.vat) ? NF(r.vat) : "—"}</td>
         <td class="r" style="font-weight:700;">${cost(r) ? NF(cost(r)) : "—"}</td><td>${esc(r.pay || "—")}</td><td class="auto">${esc(r.note || "")}</td></tr>`; }).join("")
-      + (list.length ? `<tr style="background:var(--bg); font-weight:800;"><td colspan="7">합계 ${NF(list.length)}회</td><td class="r">${NF(sum)}</td><td colspan="2"></td></tr>` : empty(10));
+      + (list.length ? `<tr style="background:var(--bg); font-weight:800;"><td colspan="7">합계 ${NF(list.length)}회</td><td class="r">${NF(sum - vsum)}</td><td class="r">${NF(vsum)}</td><td class="r">${NF(sum)}</td><td colspan="2"></td></tr>` : empty(12));
     return;
   }
   // 묶음 탭 — 운송회사별·도착지별·월별 (횟수·비용·회당 평균·비중)
@@ -4948,7 +4969,7 @@ function renderFreightRep() {
     const x = g.get(k); x.n++; x.cost += cost(r); x.days.add(r.date); if (r.date > x.last) x.last = r.date; if (r.pay === "월정산") x.monthly += cost(r); });
   const arr = [...g.values()].sort(FREP.tab === "month" ? (a, b) => a.k.localeCompare(b.k) : (a, b) => b.n - a.n || b.cost - a.cost);
   const canPick = FREP.tab !== "month";
-  $("frHead").innerHTML = `<tr><th>${label}</th><th class="r">횟수</th><th class="r">운송 일수</th><th class="r">비용(원)</th><th class="r">회당 평균</th><th class="r">월정산 금액</th><th class="r">비중</th><th>마지막 운송일</th></tr>`;
+  $("frHead").innerHTML = `<tr><th>${label}</th><th class="r">횟수</th><th class="r">운송 일수</th><th class="r">비용(원·부가세 포함)</th><th class="r">회당 평균</th><th class="r">월정산 금액</th><th class="r">비중</th><th>마지막 운송일</th></tr>`;
   $("frBody").innerHTML = arr.map(x => `<tr>
       <td>${canPick ? `<button class="uselink" data-frpick="${esc(x.k)}" title="클릭하면 이 ${label}의 일자별 내역을 봅니다" style="font-weight:700;">${esc(x.k)}</button>` : `<b>${esc(x.k)}</b>`}</td>
       <td class="r" style="font-weight:800;">${NF(x.n)}회</td><td class="r">${NF(x.days.size)}일</td><td class="r" style="font-weight:700;">${NF(x.cost)}</td>
