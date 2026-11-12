@@ -25,7 +25,8 @@ from fastapi.staticfiles import StaticFiles
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from db import (connect, init_db, chat_connect, init_chat_db, purge_old_chat,
-                CHAT_RETENTION_DAYS, BASE as DATA_BASE, next_item_code)
+                CHAT_RETENTION_DAYS, BASE as DATA_BASE, next_item_code, ITEM_CODE)
+ITEM_CODE_PREFIX = {k: v[2] for k, v in ITEM_CODE.items() if k in ("raw", "sub", "cons", "equip")}   # 자재 구분 → 코드 접두
 
 # 정적 파일: exe로 묶이면 임시 해제 폴더(_MEIPASS)에서 서빙
 if getattr(sys, "frozen", False):
@@ -42,7 +43,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.127.3"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.128.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -1647,10 +1648,11 @@ def master_bulkset(request: Request, mtype: str, body: dict):
                "raw": {"unit_price", "safety_stock", "pack_count", "shelf_days"},
                "sub": {"unit_price", "safety_stock", "pack_count", "shelf_days"},
                "cons": {"unit_price", "safety_stock"},
+               "equip": {"unit_price", "safety_stock"},
                "staff": {"wage"}}
     if mtype not in allowed:
         raise HTTPException(400, "이 탭은 일괄 가져오기를 지원하지 않습니다")
-    table = "material" if mtype in ("raw", "sub", "cons", "semi") else mtype
+    table = "material" if mtype in ("raw", "sub", "cons", "equip", "semi") else mtype
     fields = allowed[mtype]
     con = connect()
     try:
@@ -2920,7 +2922,7 @@ def matstatus(request: Request, date: str = ""):
         for m in con.execute("""SELECT id, name, unit, kind, COALESCE(is_semi,0) is_semi,
                 COALESCE(safety_stock,0) safety_stock, COALESCE(shelf_days,0) shelf_days,
                 COALESCE(unit_price,0) unit_price, partner_id
-                FROM material WHERE kind IN ('raw','sub','cons')
+                FROM material WHERE kind IN ('raw','sub','cons','equip')
                   AND COALESCE(status,'') NOT IN ('단종','중지') ORDER BY is_semi, kind, sort, name"""):
             oh = onhand.get(m["id"], 0.0)
             _, expired, batches = material_stock_expiry(con, m["id"], date, m["shelf_days"])
@@ -2963,7 +2965,7 @@ def matstatus(request: Request, date: str = ""):
         # 부족 '시작' 이벤트 — 재고가 안전재고 아래로 떨어진 날(전체 기간). 회복 후 다시 떨어지면 또 1건.
         low_events = []
         for m in con.execute("""SELECT id, name, unit, kind, COALESCE(safety_stock,0) sf
-                FROM material WHERE kind IN ('raw','sub','cons') AND COALESCE(status,'') NOT IN ('단종','중지')
+                FROM material WHERE kind IN ('raw','sub','cons','equip') AND COALESCE(status,'') NOT IN ('단종','중지')
                   AND COALESCE(safety_stock,0)>0"""):
             sf, prev_below = float(m["sf"]), None
             for r in con.execute("SELECT date, real_qty FROM material_daily WHERE material_id=? ORDER BY date", (m["id"],)):
@@ -4115,7 +4117,7 @@ def partners_import(request: Request, body: dict):
 def masters_reorder(request: Request, mtype: str, body: dict):
     """빠른 편집에서 드래그/이동한 순서를 sort 컬럼에 저장 — 목록·검색이 이 순서를 따른다.
     (미들웨어가 guest의 POST를 이미 차단)"""
-    table = "material" if mtype in ("raw", "sub", "cons", "semi") else mtype
+    table = "material" if mtype in ("raw", "sub", "cons", "equip", "semi") else mtype
     if table not in ("product", "material", "partner", "staff", "line"):
         raise HTTPException(400, "순서 변경을 지원하지 않는 항목입니다")
     ids = [int(x) for x in (body.get("ids") or [])]
@@ -4781,7 +4783,7 @@ def masters(mtype: str, request: Request):
                        ON dp.product_id=p.id
                 WHERE COALESCE(p.is_semi,0)=0
                 ORDER BY p.sort, p.id"""))
-        elif mtype in ("raw", "sub", "cons", "semi"):
+        elif mtype in ("raw", "sub", "cons", "equip", "semi"):
             # raw/sub=원·부재료(반제품 제외) · semi=반제품(직접 생산하는 자재, is_semi=1)
             where = "COALESCE(m.is_semi,0)=1" if mtype == "semi" else "m.kind=? AND COALESCE(m.is_semi,0)=0"
             params = () if mtype == "semi" else (mtype,)
@@ -4812,7 +4814,7 @@ def masters(mtype: str, request: Request):
         if mtype == "product" and not mcan(request, "prod_price"):
             for r in data:
                 r["unit_price"] = None
-        if mtype in ("raw", "sub", "cons") and not mcan(request, "mat_price"):
+        if mtype in ("raw", "sub", "cons", "equip") and not mcan(request, "mat_price"):
             for r in data:
                 r["unit_price"] = None
         return data
@@ -4835,11 +4837,11 @@ def _check_line_parent(con, parent_id, self_id=None):
 
 @app.post("/api/masters/{mtype}")
 def master_create(mtype: str, body: dict):
-    key = "material" if mtype in ("raw", "sub", "cons", "semi") else mtype
+    key = "material" if mtype in ("raw", "sub", "cons", "equip", "semi") else mtype
     if key not in MASTER_TABLES:
         raise HTTPException(404, "unknown master type")
     table, cols = MASTER_TABLES[key]
-    if mtype in ("raw", "sub", "cons"):
+    if mtype in ("raw", "sub", "cons", "equip"):
         body["kind"] = mtype
     if mtype == "semi":
         body["kind"] = body.get("kind") or "raw"   # 반제품 = 자재(kind raw) + is_semi=1
@@ -4882,14 +4884,14 @@ def master_create(mtype: str, body: dict):
                 con.commit()
                 return {"id": exist["id"], "converted": True}
         # 품목코드 자동 부여 (미입력 시) — 유형별 시리즈(FG/SF/RM/SM)
-        if mtype in ("product", "raw", "sub", "cons", "semi") and not str(vals.get("code") or "").strip():
+        if mtype in ("product", "raw", "sub", "cons", "equip", "semi") and not str(vals.get("code") or "").strip():
             vals["code"] = next_item_code(con, mtype)
         ks = ",".join(vals)
         qs = ",".join("?" * len(vals))
         cur = con.execute(f"INSERT INTO {table}({ks}) VALUES({qs})", list(vals.values()))
         new_id = cur.lastrowid
         # 자재 신규 등록 시 등록일 기록 + 초기 단가를 단가 이력에 남긴다 (적용 시작일=등록일)
-        if mtype in ("raw", "sub", "cons", "semi"):
+        if mtype in ("raw", "sub", "cons", "equip", "semi"):
             con.execute("UPDATE material SET created_at=date('now','localtime') WHERE id=?", (new_id,))
             try:
                 ip = float(vals.get("unit_price") or 0)
@@ -4917,7 +4919,7 @@ def master_create(mtype: str, body: dict):
 
 @app.put("/api/masters/{mtype}/{mid}")
 def master_update(mtype: str, mid: int, body: dict):
-    key = "material" if mtype in ("raw", "sub", "cons", "semi") else mtype
+    key = "material" if mtype in ("raw", "sub", "cons", "equip", "semi") else mtype
     if key not in MASTER_TABLES:
         raise HTTPException(404, "unknown master type")
     table, cols = MASTER_TABLES[key]
@@ -4930,7 +4932,7 @@ def master_update(mtype: str, mid: int, body: dict):
     con = connect()
     try:
         old_price = None   # 자재 단가 변경 이력 기록용 (변경 전 값)
-        if mtype in ("raw", "sub", "cons", "semi") and "unit_price" in vals:
+        if mtype in ("raw", "sub", "cons", "equip", "semi") and "unit_price" in vals:
             _op = con.execute("SELECT unit_price FROM material WHERE id=?", (mid,)).fetchone()
             old_price = _op["unit_price"] if _op else None
         if mtype == "line" and "parent_id" in vals:
@@ -4941,6 +4943,12 @@ def master_update(mtype: str, mid: int, body: dict):
                 if ch:
                     raise HTTPException(400, f"이 라인에 소속된 공정이 {ch}개 있습니다 — 먼저 그 공정들의 소속을 옮기세요")
         if vals:
+            # 자재 구분이 바뀌면(예: 소모품 → 비품) 품목코드도 새 구분 시리즈로 (CS0003 → EQ0001)
+            if key == "material" and vals.get("kind") in ITEM_CODE_PREFIX:
+                cur_m = con.execute("SELECT kind, COALESCE(code,'') code, COALESCE(is_semi,0) s FROM material WHERE id=?",
+                                    (mid,)).fetchone()
+                if cur_m and not cur_m["s"] and cur_m["kind"] != vals["kind"]                         and str(vals.get("code", cur_m["code"]) or "").startswith(ITEM_CODE_PREFIX.get(cur_m["kind"], "?")):
+                    vals["code"] = next_item_code(con, vals["kind"])
             sets = ",".join(f"{c}=?" for c in vals)
             try:
                 con.execute(f"UPDATE {table} SET {sets} WHERE id=?", list(vals.values()) + [mid])
@@ -4949,7 +4957,7 @@ def master_update(mtype: str, mid: int, body: dict):
                 raise HTTPException(400, "같은 이름의 자재가 대상 구분(원재료/부재료)에 이미 있습니다 — "
                                     "기존 항목을 사용하거나 이름을 구분해 주세요")
         # 자재 단가가 바뀌었거나 '적용 시작일'을 지정했으면 단가 이력에 한 줄 기록 (그 날짜부터 계산에 반영)
-        if mtype in ("raw", "sub", "cons", "semi") and "unit_price" in vals:
+        if mtype in ("raw", "sub", "cons", "equip", "semi") and "unit_price" in vals:
             try:
                 newp = float(vals.get("unit_price") or 0)
             except (TypeError, ValueError):
@@ -4993,7 +5001,7 @@ def master_update(mtype: str, mid: int, body: dict):
         # 자재 현재고 수정: 기준일의 실재고 기록으로 반영 (사용량 = 전일 + 입고 − 실재고 재계산)
         # ⚠ 반드시 src='manual'(실사)로 저장 — auto 행을 덮어쓰기만 하면 다음 저장의
         #    자동차감 재계산이 이 보정을 지워버림 (하얀설탕 -525 재발 사고의 원인)
-        if mtype in ("raw", "sub", "cons") and stock_set is not None:
+        if mtype in ("raw", "sub", "cons", "equip") and stock_set is not None:
             sd = body.get("stock_date") or dt.date.today().isoformat()
             ex = con.execute(
                 "SELECT * FROM material_daily WHERE material_id=? AND date=?",
@@ -5040,7 +5048,7 @@ REF_CHECKS = {
 
 @app.delete("/api/masters/{mtype}/{mid}")
 def master_delete(mtype: str, mid: int):
-    key = "material" if mtype in ("raw", "sub", "cons", "semi") else mtype
+    key = "material" if mtype in ("raw", "sub", "cons", "equip", "semi") else mtype
     if key not in MASTER_TABLES:
         raise HTTPException(404, "unknown master type")
     table = MASTER_TABLES[key][0]
@@ -8529,7 +8537,7 @@ AI_EXAMPLES = ["이번 주 제품별 생산량", "이번 달 거래처별 매입
                "지난주 날짜별 출고량", "이번 달 거래처별 출고 수량", "현재 재고가 안전재고보다 적은 자재"]
 AI_HINTS = """업무 용어 → 테이블 안내 (SQLite):
 - 날짜 컬럼은 모두 'YYYY-MM-DD' 문자열. 주는 월요일 시작. 이번 주 = date(오늘, 'weekday 0', '-6 days') ~ 그 +6일.
-- 원부자재(자재) = material (kind 'raw'=원재료, 'sub'=부재료, 'cons'=소모품(청소·위생 등, category=용도), is_semi=1 반제품). 품목코드 = code.
+- 원부자재(자재) = material (kind 'raw'=원재료, 'sub'=부재료, 'cons'=소모품(장갑·A4·세제 등, category=용도), 'equip'=비품(스크래퍼·저울 등), is_semi=1 반제품). 품목코드 = code.
 - 자재 재고 = material_daily: 날짜·자재별 prev_qty(전일재고), in_qty(입고), used_qty(사용), real_qty(그날 마감 실재고).
   자재의 현재 재고 = 그 자재의 가장 최근 date 행의 real_qty. 안전재고 = material.safety_stock.
 - 자재 입고 상세 = material_in (date 입고일, qty, price 단가, partner 거래처 이름(문자열), expiry 소비기한, note '발주 #번호'면 발주 입고).

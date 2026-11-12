@@ -842,7 +842,8 @@ ITEM_CODE = {
     "semi":    ("material", "COALESCE(is_semi,0)=1", "SF"),
     "raw":     ("material", "kind='raw' AND COALESCE(is_semi,0)=0", "RM"),
     "sub":     ("material", "kind='sub' AND COALESCE(is_semi,0)=0", "SM"),
-    "cons":    ("material", "kind='cons' AND COALESCE(is_semi,0)=0", "CS"),   # 소모품 (보루·스크래퍼·세제 등)
+    "cons":    ("material", "kind='cons' AND COALESCE(is_semi,0)=0", "CS"),   # 소모품 (장갑·A4·세제 등 — 쓰면 없어지는 것)
+    "equip":   ("material", "kind='equip' AND COALESCE(is_semi,0)=0", "EQ"),  # 비품 (스크래퍼·저울·바구니 등 — 계속 쓰는 것)
 }
 
 

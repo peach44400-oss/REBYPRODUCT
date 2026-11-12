@@ -382,6 +382,7 @@
   .kchip-raw{background:#E7F5EC; color:#0A7D3C; border-color:#BBE3C9;}
   .kchip-sub{background:#FDECD8; color:#B45309; border-color:#F6D3A6;}
   .qper .btn.on{background:var(--ink); color:#fff; border-color:var(--ink);}
+  .kchip-equip{background:#EEF6EC; color:#2F6B2A; border-color:#C9E2C4;}
   .kchip-cons{background:#E8F0FB; color:#1D4ED8; border-color:#BFD3F2;}
   .cp-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:4px 10px; margin:4px 0 12px;}
   .cp-grid label{display:flex; align-items:center; gap:6px; font-size:13px; cursor:pointer; padding:3px 0;}
@@ -1623,6 +1624,16 @@
             <datalist id="miPaDl"></datalist>
           </div>
           <div class="card" data-esec="stock">
+            <h2>소모품·비품 입고 <span class="sub">장갑·A4·세제(소모품), 스크래퍼·저울(비품) 등 생산 원료가 아닌 것 — 재고에 반영되고, 다 쓰면 자재 현황 › 재고 목록의 [사용 처리]</span></h2>
+            <div class="tbl-wrap"><table>
+              <thead><tr><th>품목</th><th>단위</th><th class="r">입고량</th><th>거래처</th><th class="r">단가(원)</th><th>비고</th><th></th></tr></thead>
+              <tbody class="num" id="eSupIn"></tbody>
+            </table></div>
+            <div class="draft-foot"><button class="btn sm" id="addSupIn">+ 입고 행 추가</button>
+              <input class="mini-input" id="qaSupIn" list="qaSupStock" placeholder="🔍 소모품·비품 검색 후 Enter = 행 추가" style="text-align:left; width:240px;">
+              <datalist id="qaSupStock"></datalist></div>
+          </div>
+          <div class="card" data-esec="stock">
             <h2>원부자재 재고 실사 <span class="sub">실제 세어본 재고를 입력 — 사용량(총량) = 전일재고 + 입고 − 실재고 · 입고는 위 '원부자재 입고' 카드에서 · 사용량 클릭 = 사용처 분석</span></h2>
             <div class="tbl-wrap"><table>
               <thead><tr><th>자재명</th><th>단위</th><th class="r">전일재고</th><th class="r">입고</th><th class="r">실재고</th><th class="r">사용량</th><th class="r">발주량</th><th>발주일</th><th></th></tr></thead>
@@ -1695,7 +1706,8 @@
           <button data-mt="semi">반제품</button>
           <button data-mt="raw">원재료</button>
           <button data-mt="sub">부재료</button>
-          <button data-mt="cons" title="보루·스크래퍼·세제·장갑 등 소모품 — 발주·입고·재고 실사·발주 필요 알림은 원부자재와 같이 쓰고, 원료수불부·배합비·원가에는 들어가지 않습니다">소모품</button>
+          <button data-mt="cons" title="장갑·A4·세제처럼 쓰면 없어지는 소모품 — 입고는 일일 입력 > 소모품·비품 입고, 원료수불부·배합비·원가에는 들어가지 않습니다">소모품</button>
+          <button data-mt="equip" title="스크래퍼·저울·바구니처럼 계속 쓰는 비품 — 입고는 일일 입력 > 소모품·비품 입고, 원료수불부·배합비·원가에는 들어가지 않습니다">비품</button>
           <button data-mt="bom">배합비</button>
           <button data-mt="partner">거래처</button>
           <button data-mt="staff">인원</button>
@@ -1720,7 +1732,7 @@
                   title="ERP 거래처등록(ESA001M) 엑셀 또는 이 화면의 [엑셀(CSV)] 내보내기 파일을 그대로 업로드 — 추가 전에 몇 건인지 확인창이 뜨고, 이름·사업자번호가 같으면 중복 없이 빈 항목만 채웁니다">📥 엑셀 받기</button>
           <input type="file" id="mErpFile" accept=".xlsx,.csv" style="display:none;">
           <button class="btn sm" id="mConsPreset" style="display:none"
-                  title="제빵 공장에서 자주 쓰는 소모품 목록에서 골라 한 번에 등록합니다">📋 자주 쓰는 소모품</button>
+                  title="제빵 공장에서 자주 쓰는 목록에서 골라 한 번에 등록합니다">📋 자주 쓰는 소모품</button>
           <button class="btn sm" id="mPackSet" style="display:none"
                   title="여러 부재료(트레이·슬리브·BOX 등)를 하나의 포장 세트로 묶습니다 — 포장 선택 시 한 세트로 표시·함께 소모">📦 포장 세트</button>
           <button class="btn sm" id="mCsv" title="현재 탭 목록을 CSV(엑셀)로 저장">📄 엑셀(CSV)</button>
@@ -1768,6 +1780,7 @@
           <thead id="mHead"></thead>
           <tbody class="num" id="mBody"></tbody>
         </table></div>
+        <div id="mPager" style="display:flex; align-items:center; justify-content:center; gap:10px; flex-wrap:wrap; margin:10px 0 2px;"></div>
         <div class="draft-foot">
           <span class="sum" id="mHint"></span>
           <span class="spacer"></span>
