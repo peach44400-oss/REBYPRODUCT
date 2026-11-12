@@ -6242,13 +6242,17 @@ async function loadBom(pid) {
   renderBomRows();
   await loadBomMeta(pid);
 }
-/* ── 배합비 버전 이력 ── 저장할 때마다 서버가 그때 배합(+버전 이름·제조 공정)을 버전으로 보관 */
+/* ── 배합비 버전 이력 ── 저장할 때마다 서버가 그때 배합(+버전 이름·제조 공정·관리 기준)을 버전으로 보관 */
+const BOM_SPEC = [["aw", "수분활성도"], ["prod_temp", "제품온도"], ["bake_temp", "굽기 온도"], ["bake_time", "굽기 시간"]];
+function bomSpecSet(sp) { sp = sp || {}; document.querySelectorAll("[data-bomspec]").forEach(i => { i.value = sp[i.dataset.bomspec] || ""; }); }
+function bomSpecGet() { const o = {}; document.querySelectorAll("[data-bomspec]").forEach(i => { const v = i.value.trim(); if (v) o[i.dataset.bomspec] = v; }); return o; }
+const bomSpecKey = sp => BOM_SPEC.map(([k]) => (sp || {})[k] || "").join("|");
 async function loadBomMeta(pid) {
-  let d = { label: "", process: "", versions: [] };
+  let d = { label: "", process: "", spec: {}, versions: [] };
   try { d = await api(`/api/bom/${pid}/versions`); } catch (e) { }
   if (BOM.pid !== pid) return;
   BOM.vers = d.versions || [];
-  $("bomLabel").value = d.label || ""; $("bomProcess").value = d.process || ""; $("bomVerNote").value = "";
+  $("bomLabel").value = d.label || ""; $("bomProcess").value = d.process || ""; $("bomVerNote").value = ""; bomSpecSet(d.spec);
   const v = BOM.vers[0];
   $("bomVerInfo").innerHTML = v ? `현재 <b>v${v.ver}</b> · ${esc(v.saved_at)}${v.saved_by ? " · " + esc(v.saved_by) : ""} · 이력 ${BOM.vers.length}개`
     : "아직 저장 이력이 없습니다 — 저장하면 v1로 보관됩니다";
@@ -6289,7 +6293,7 @@ function renderBomHist() {
     const prev = BH.vers[i + 1];
     const df = bvDiff(prev ? prev.rows : null, v.rows);
     const sum = !prev ? `${v.rows.length}종` : [df.n.add && `+${df.n.add}`, df.n.del && `−${df.n.del}`, df.n.chg && `변경 ${df.n.chg}`,
-      prev.process !== v.process && "공정", prev.label !== v.label && "이름"].filter(Boolean).join(" · ") || "변경 없음";
+      prev.process !== v.process && "공정", bomSpecKey(prev.spec) !== bomSpecKey(v.spec) && "관리 기준", prev.label !== v.label && "이름"].filter(Boolean).join(" · ") || "변경 없음";
     return `<button class="bh-item ${v.id === BH.sel ? "on" : ""}" data-bhv="${v.id}">
       <div style="display:flex; align-items:center; gap:6px;"><b class="num">v${v.ver}</b>${i === 0 ? '<span class="chip cat" style="background:#e3f4e8; color:#1d7a3e;">현재</span>' : ""}
         ${BH_KIND[v.kind] ? `<span class="chip cat">${BH_KIND[v.kind]}</span>` : ""}<b style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(v.label || "")}</b></div>
@@ -6340,6 +6344,11 @@ function renderBomHist() {
         <div style="white-space:pre-wrap; font-size:12.5px; line-height:1.6; border:1px solid var(--line); border-radius:8px; padding:8px 10px; min-height:60px;">${v.process ? esc(v.process) : '<span class="auto">입력된 제조 공정이 없습니다</span>'}</div>
         ${procChanged && prev.process ? `<details style="margin-top:6px; font-size:12px;"><summary class="auto" style="cursor:pointer;">v${prev.ver} 제조 공정 보기</summary>
           <div style="white-space:pre-wrap; line-height:1.6; color:var(--muted); padding:6px 2px;">${esc(prev.process)}</div></details>` : ""}
+        ${(() => { const sp = v.spec || {}, ps = prev ? (prev.spec || {}) : null;
+          if (!BOM_SPEC.some(([k]) => sp[k] || (ps && ps[k]))) return "";
+          return `<div style="font-weight:700; font-size:12.5px; margin:10px 0 4px;">관리 기준</div>
+          <table style="font-size:12.5px;"><tbody>${BOM_SPEC.map(([k, lb]) => { const ch = ps && (ps[k] || "") !== (sp[k] || "");
+            return `<tr><td class="auto" style="white-space:nowrap;">${lb}</td><td class="${ch ? "bh-chg" : ""}">${sp[k] ? esc(sp[k]) : '<span class="auto">—</span>'}${ch ? ` <span class="auto" style="font-size:11.5px;">(v${prev.ver}: ${esc(ps[k] || "없음")})</span>` : ""}</td></tr>`; }).join("")}</tbody></table>`; })()}
       </div>
     </div>`;
 }
@@ -6358,7 +6367,7 @@ $("bhDetail").addEventListener("click", e => {
     qty_per_unit: r.qty_per_unit, unit: r.unit || "g", block: r.block || "", batch_qty: r.batch_qty || 0,
     block_yield: r.block_yield || 0, partner_ids: r.partner_ids || "", partner_id: null, note: r.note || "" }));
   BOM.w = {};
-  $("bomLabel").value = v.label || ""; $("bomProcess").value = v.process || "";
+  $("bomLabel").value = v.label || ""; $("bomProcess").value = v.process || ""; bomSpecSet(v.spec);
   $("bomVerNote").value = `v${v.ver}로 되돌림`;
   renderBomRows();
   closeBomHist();
@@ -6469,6 +6478,8 @@ $("biApply").onclick = async () => {
   BOM.w = {};
   $("bomLabel").value = $("biLabel").value.trim();
   if ($("biProc").checked && s.process) $("bomProcess").value = s.process;
+  const _sp = s.spec || {};
+  if ($("biProc").checked && Object.keys(_sp).length) bomSpecSet({ ...bomSpecGet(), ..._sp });   // 엑셀에 있는 관리 기준만 덮어씀
   $("bomVerNote").value = `엑셀 불러오기: ${BI.file}${BI.sheets.length > 1 ? " [" + s.sheet + "]" : ""}`;
   closeBomImp();
   await renderBomTab();
@@ -6789,7 +6800,7 @@ $("bomSave").onclick = async () => {
     body: JSON.stringify({ rows: BOM.rows.filter(r => r.material_id).map(r => ({ ...r,
         qty_per_unit: num(r.qty_per_unit), batch_qty: num(r.batch_qty), block_yield: num(r.block_yield) })),
       batch_yield: dough ? Number(dough.block_yield) : null,
-      label: $("bomLabel").value, process: $("bomProcess").value, ver_note: $("bomVerNote").value }) })
+      label: $("bomLabel").value, process: $("bomProcess").value, spec: bomSpecGet(), ver_note: $("bomVerNote").value }) })
     .then(r => toast(r.ver ? `배합비 저장 완료 — v${r.ver}로 이력에 보관됨` : "배합비 저장 완료 (바뀐 내용 없음)"));
   BOMALL = null;          // 일일 입력 '배합비 자동'이 새 배합을 쓰도록 캐시 무효화
   COSTS = null;           // 원가 분석도 새 배합 기준으로
@@ -14813,7 +14824,7 @@ function buildScheduleDoc(d, week) {
   const empty = groups.length ? "" : `<div style="text-align:center; color:#bbb; padding:40px; font-size:${S(15)}px;">제품군을 추가하면 여기에 표가 나타납니다</div>`;
   return `<div class="sched-doc" style="color:${ink}; font-family:${fam}; display:flex; flex-direction:column;">
     <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:2px;">
-      <div style="width:210px; font-size:${S(12)}px; color:#555;">${week} ~ ${_schedAddDays(week, 5)}<br>작성자 : <b>${esc(d.author || "—")}</b></div>
+      <div style="width:210px; font-size:${S(12)}px; color:#555;">${week} ~ ${_schedAddDays(week, 5)}<br>작성자 : <b>${esc(d.author || "—")}</b><br>출력 : ${_schedNowStr()}</div>
       <h1 style="text-align:center; letter-spacing:8px; font-size:${titleFs}px; margin:0; flex:1 1 0; min-width:0; word-break:keep-all;">${esc(_schedDocTitle(d))}</h1>
       <div style="width:230px; font-size:${S(12)}px; text-align:right; white-space:pre-wrap; color:#333;">${esc(d.legend || "")}</div>
     </div>
@@ -14833,6 +14844,9 @@ function buildScheduleDoc(d, week) {
     ${d.refNote ? `<div style="margin-top:10px; border:1px solid #999; border-radius:6px; padding:9px 11px; font-size:${S(12)}px; white-space:pre-wrap; color:#333; flex:0 0 auto;">${esc(d.refNote)}</div>` : ""}
   </div>`;
 }
+// 인쇄본에 찍는 출력 시각 (미리보기/인쇄 시점에 다시 그리므로 인쇄 순간의 시각)
+function _schedNowStr() { const n = new Date(), p = x => String(x).padStart(2, "0");
+  return `${n.getFullYear()}-${p(n.getMonth() + 1)}-${p(n.getDate())} ${p(n.getHours())}:${p(n.getMinutes())}`; }
 // 편집형 미리보기 — buildScheduleDoc와 '같은 레이아웃'이되 셀 값이 입력칸(sched-ei)이다. 편집=미리보기 한 화면.
 // data-* 속성은 카드 편집과 동일 → _schedFieldUpdate/_schedClick/_schedPaste를 그대로 재사용한다. 인쇄는 데이터에서 다시 그리므로 영향 없음.
 function buildScheduleDocEdit(d, week) {

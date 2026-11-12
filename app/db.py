@@ -985,9 +985,11 @@ def init_db() -> None:
     pcols = [r[1] for r in con.execute("PRAGMA table_info(product)")]
     if "image" not in pcols:
         con.execute("ALTER TABLE product ADD COLUMN image TEXT DEFAULT ''")
-    for col in ("recipe_label", "recipe_process"):   # 현재 배합비의 버전 이름·제조 공정
+    for col in ("recipe_label", "recipe_process", "recipe_spec"):   # 현재 배합비의 버전 이름·제조 공정·관리 기준(JSON)
         if col not in pcols:
             con.execute(f"ALTER TABLE product ADD COLUMN {col} TEXT DEFAULT ''")
+    if "spec" not in [r[1] for r in con.execute("PRAGMA table_info(bom_version)")]:   # 버전별 관리 기준(수분활성도·온도·굽기)
+        con.execute("ALTER TABLE bom_version ADD COLUMN spec TEXT DEFAULT ''")
     # 완제품 수불부 거래처 분리 표시 (0=미분리/기본, 1=이 제품은 거래처별 '거래처명 제품명' 행으로 분리)
     if "fin_split" not in pcols:
         con.execute("ALTER TABLE product ADD COLUMN fin_split INTEGER DEFAULT 0")

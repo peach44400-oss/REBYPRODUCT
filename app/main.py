@@ -43,7 +43,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.129.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.130.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -7746,24 +7746,39 @@ def _bom_key(rows):   # 변경 여부 판단용 (자재명 스냅샷·비고 순
                              for r in rows))
 
 
+# 배합비 관리 기준 — 자유 입력 글자(예: 0.85 이하, 상170/하160℃, 12분)
+BOM_SPEC_KEYS = [("aw", "수분활성도"), ("prod_temp", "제품온도"), ("bake_temp", "굽기 온도"), ("bake_time", "굽기 시간")]
+
+
+def _bom_spec_norm(v):
+    """dict/JSON → 저장용 JSON 문자열 (빈 칸은 빼고, 모두 비면 '')."""
+    if isinstance(v, str):
+        v = _jl(v, {})
+    if not isinstance(v, dict):
+        return ""
+    d = {k: str(v.get(k) or "").strip()[:60] for k, _ in BOM_SPEC_KEYS}
+    d = {k: x for k, x in d.items() if x}
+    return json.dumps(d, ensure_ascii=False, sort_keys=True) if d else ""
+
+
 def record_bom_version(con, pid, by="", note="", kind="save"):
-    """현재 배합(+버전 이름·제조 공정)을 새 버전으로 보관 — 직전 버전과 같으면 건너뜀."""
+    """현재 배합(+버전 이름·제조 공정·관리 기준)을 새 버전으로 보관 — 직전 버전과 같으면 건너뜀."""
     rows_ = _bom_snapshot(con, pid)
-    p = con.execute("SELECT COALESCE(recipe_label,'') l, COALESCE(recipe_process,'') pr, COALESCE(batch_yield,0) y "
-                    "FROM product WHERE id=?", (pid,)).fetchone()
+    p = con.execute("SELECT COALESCE(recipe_label,'') l, COALESCE(recipe_process,'') pr, COALESCE(batch_yield,0) y, "
+                    "COALESCE(recipe_spec,'') sp FROM product WHERE id=?", (pid,)).fetchone()
     if not p:
         return None
     last = con.execute("SELECT * FROM bom_version WHERE product_id=? ORDER BY ver DESC LIMIT 1", (pid,)).fetchone()
     if last and kind != "base" and _bom_key(_jl(last["rows"], [])) == _bom_key(rows_) \
-            and last["label"] == p["l"] and last["process"] == p["pr"]:
+            and last["label"] == p["l"] and last["process"] == p["pr"] and (last["spec"] or "") == p["sp"]:
         return None
     if kind == "base" and (last or not rows_):
         return None   # 기록 시작 전 배합은 이력이 하나도 없고 배합이 있을 때만
     ver = (last["ver"] if last else 0) + 1
-    con.execute("""INSERT INTO bom_version(product_id, ver, label, process, rows, batch_yield, note, kind, saved_at, saved_by)
-        VALUES(?,?,?,?,?,?,?,?,?,?)""",
+    con.execute("""INSERT INTO bom_version(product_id, ver, label, process, rows, batch_yield, note, kind, saved_at, saved_by, spec)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
                 (pid, ver, p["l"], p["pr"], json.dumps(rows_, ensure_ascii=False), p["y"], note, kind,
-                 dt.datetime.now().strftime("%Y-%m-%d %H:%M"), by))
+                 dt.datetime.now().strftime("%Y-%m-%d %H:%M"), by, p["sp"]))
     return ver
 
 
@@ -7772,21 +7787,23 @@ def bom_versions(product_id: int):
     """배합비 버전 목록 (최신 순) + 현재 버전 이름·제조 공정."""
     con = connect()
     try:
-        p = con.execute("SELECT COALESCE(recipe_label,'') l, COALESCE(recipe_process,'') pr FROM product WHERE id=?",
-                        (product_id,)).fetchone()
+        p = con.execute("SELECT COALESCE(recipe_label,'') l, COALESCE(recipe_process,'') pr, COALESCE(recipe_spec,'') sp "
+                        "FROM product WHERE id=?", (product_id,)).fetchone()
         if p and record_bom_version(con, product_id, "", "이력 기록 시작 전 배합", "base"):
             con.commit()   # 이력이 하나도 없으면 지금 배합을 v1로 보관해 두고 시작
         vs = []
         for r in con.execute("SELECT * FROM bom_version WHERE product_id=? ORDER BY ver DESC", (product_id,)):
             d = dict(r)
             d["rows"] = _jl(d["rows"], [])
+            d["spec"] = _jl(d.get("spec") or "", {})
             vs.append(d)
-        return {"label": p["l"] if p else "", "process": p["pr"] if p else "", "versions": vs}
+        return {"label": p["l"] if p else "", "process": p["pr"] if p else "",
+                "spec": _jl(p["sp"], {}) if p else {}, "versions": vs}
     finally:
         con.close()
 
 
-def _bom_sheet(wb, title, label, rows_, process, info, by_yield):
+def _bom_sheet(wb, title, label, rows_, process, info, by_yield, spec=None):
     """배합비 1개 → 시트 (제조공정 양식: NO.·원료명·1배 투입량(g)·배합비(%) + 오른쪽 제조 공정)."""
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     ws = wb.create_sheet(re.sub(r'[\\/*?:\[\]]', "_", title)[:31] or "배합비")
@@ -7885,6 +7902,24 @@ def _bom_sheet(wb, title, label, rows_, process, info, by_yield):
         box(first, 2, r - 1, 5, bottom=med)
     if info:
         ws.cell(r + 1, 2, info).font = Font(name="맑은 고딕", size=9, color="666666")
+    spec = _jl(spec, {}) if isinstance(spec, str) else (spec or {})
+    sp_rows = [(lb, str(spec.get(k) or "").strip()) for k, lb in BOM_SPEC_KEYS if str(spec.get(k) or "").strip()]
+    if sp_rows:   # 관리 기준 — 라벨(B:C) · 값(D:E, 글자로 저장 → 불러올 때 원료로 읽히지 않음)
+        sr = r + 3
+        ws.merge_cells(start_row=sr, start_column=2, end_row=sr, end_column=5)
+        ws.cell(sr, 2, "관리 기준").font, ws.cell(sr, 2).alignment, ws.cell(sr, 2).fill = F(11, True), C, gray
+        box(sr, 2, sr, 5, top=med)
+        ws.row_dimensions[sr].height = 22
+        for i, (lb, val) in enumerate(sp_rows):
+            rr = sr + 1 + i
+            ws.merge_cells(start_row=rr, start_column=2, end_row=rr, end_column=3)
+            ws.merge_cells(start_row=rr, start_column=4, end_row=rr, end_column=5)
+            ws.cell(rr, 2, lb).font, ws.cell(rr, 2).alignment, ws.cell(rr, 2).fill = F(10, True), C, light
+            c = ws.cell(rr, 4, str(val))
+            c.font, c.alignment, c.number_format = F(10), C, "@"
+            ws.row_dimensions[rr].height = 22
+        box(sr + 1, 2, sr + len(sp_rows), 5, bottom=med)
+        r = sr + len(sp_rows)
     # 오른쪽 제조 공정 — 한 줄 = 한 칸 (G:Q 병합)
     ws.merge_cells("G2:Q4")
     ws["G2"] = "제조 공정"
@@ -7957,19 +7992,19 @@ def bom_xlsx(product_id: int, ver_id: int = 0):
             v = con.execute("SELECT * FROM bom_version WHERE id=? AND product_id=?", (ver_id, product_id)).fetchone()
             if not v:
                 raise HTTPException(404, "배합비 버전을 찾을 수 없습니다")
-            rows_, label, process = _jl(v["rows"], []), v["label"], v["process"]
+            rows_, label, process, spec = _jl(v["rows"], []), v["label"], v["process"], v["spec"] or ""
             info = f"v{v['ver']} · {v['saved_at']} 저장{(' · ' + v['saved_by']) if v['saved_by'] else ''}{(' · ' + v['note']) if v['note'] else ''}"
             tag = f"v{v['ver']}"
         else:
             rows_ = _bom_snapshot(con, product_id)
-            label, process = p["recipe_label"] or "", p["recipe_process"] or ""
+            label, process, spec = p["recipe_label"] or "", p["recipe_process"] or "", p["recipe_spec"] or ""
             info = f"현재 배합 · {dt.date.today().isoformat()} 출력"
             tag = "현재"
         if not rows_:
             raise HTTPException(400, "배합비가 없습니다")
         wb = openpyxl.Workbook()
         wb.remove(wb.active)
-        _bom_sheet(wb, p["name"], label, _bom_excel_rows(con, rows_), process, info, _bom_yields(rows_))
+        _bom_sheet(wb, p["name"], label, _bom_excel_rows(con, rows_), process, info, _bom_yields(rows_), spec)
         return _xlsx_response(wb, f"배합비_{p['name']}_{tag}.xlsx")
     finally:
         con.close()
@@ -8050,7 +8085,17 @@ def _parse_bom_sheet(ws):
                 break
         if process:
             break
-    return {"sheet": ws.title, "title": title, "name": name, "label": label, "rows": rows_, "process": "\n".join(process)}
+    spec = {}
+    lbmap = {lb.replace(" ", ""): k for k, lb in BOM_SPEC_KEYS}
+    for r in grid:
+        for j, v in enumerate(r):
+            k = lbmap.get(txt(v).replace(" ", ""))
+            if k and k not in spec:
+                val = next((txt(x) for x in r[j + 1:] if txt(x)), "")
+                if val:
+                    spec[k] = val
+    return {"sheet": ws.title, "title": title, "name": name, "label": label, "rows": rows_, "process": "\n".join(process),
+            "spec": spec}
 
 
 @app.post("/api/bom/parse_xlsx")
@@ -8133,7 +8178,7 @@ def bom_xlsx_all():
                 k += 1
             used.add(nm[:31])
             ws = _bom_sheet(wb, nm, p["recipe_label"] or "", _bom_excel_rows(con, rows_), p["recipe_process"] or "",
-                            f"현재 배합 · {dt.date.today().isoformat()} 출력", _bom_yields(rows_))
+                            f"현재 배합 · {dt.date.today().isoformat()} 출력", _bom_yields(rows_), p["recipe_spec"] or "")
             ws["B2"] = (p["name"] + (" " + p["recipe_label"] if p["recipe_label"] else "")).strip()
         return _xlsx_response(wb, f"배합비_전체_{dt.date.today().isoformat()}.xlsx")
     finally:
@@ -8149,6 +8194,8 @@ def bom_save(product_id: int, body: dict, request: Request):
         if "label" in body or "process" in body:   # 버전 이름·제조 공정 (현재 배합에 붙는 정보)
             con.execute("UPDATE product SET recipe_label=?, recipe_process=? WHERE id=?",
                         (str(body.get("label") or "").strip(), str(body.get("process") or "").rstrip(), product_id))
+        if "spec" in body:   # 관리 기준 (수분활성도·제품온도·굽기 온도·굽기 시간)
+            con.execute("UPDATE product SET recipe_spec=? WHERE id=?", (_bom_spec_norm(body.get("spec")), product_id))
         con.execute("DELETE FROM bom WHERE product_id=?", (product_id,))
         for r in body.get("rows", []):
             mid = r.get("material_id")
