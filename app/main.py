@@ -43,7 +43,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.131.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.132.0"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -7803,6 +7803,36 @@ def bom_versions(product_id: int):
             vs.append(d)
         return {"label": p["l"] if p else "", "process": p["pr"] if p else "",
                 "spec": _jl(p["sp"], {}) if p else {}, "versions": vs}
+    finally:
+        con.close()
+
+
+@app.delete("/api/bom/{product_id}/versions/{ver_id}")
+def bom_version_delete(product_id: int, ver_id: int, request: Request):
+    """배합비 이력 1개 삭제 (관리자) — 현재(최신) 버전은 지금 배합과 같으므로 지울 수 없다.
+    ver_id=0 이면 현재 버전만 남기고 이전 이력 전부 삭제."""
+    require_admin(request)
+    con = connect()
+    try:
+        last = con.execute("SELECT id, ver FROM bom_version WHERE product_id=? ORDER BY ver DESC LIMIT 1",
+                           (product_id,)).fetchone()
+        if not last:
+            raise HTTPException(404, "이력이 없습니다")
+        pname = (con.execute("SELECT name FROM product WHERE id=?", (product_id,)).fetchone() or {"name": ""})["name"]
+        if ver_id == 0:
+            n = con.execute("DELETE FROM bom_version WHERE product_id=? AND id!=?", (product_id, last["id"])).rowcount
+            audit(con, "bom_version_delete", f"{pname} 이전 이력 {n}개 삭제 (v{last['ver']}만 남김)")
+        else:
+            v = con.execute("SELECT id, ver FROM bom_version WHERE id=? AND product_id=?", (ver_id, product_id)).fetchone()
+            if not v:
+                raise HTTPException(404, "해당 버전을 찾을 수 없습니다")
+            if v["id"] == last["id"]:
+                raise HTTPException(400, "현재 버전은 삭제할 수 없습니다 (지금 배합비와 같은 내용)")
+            con.execute("DELETE FROM bom_version WHERE id=?", (ver_id,))
+            n = 1
+            audit(con, "bom_version_delete", f"{pname} v{v['ver']} 삭제")
+        con.commit()
+        return {"ok": True, "deleted": n}
     finally:
         con.close()
 

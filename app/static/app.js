@@ -6297,6 +6297,14 @@ function bvDiff(prev, cur) {   // 직전 버전 대비 — 같은 배합(반죽/
   return { st, removed, n, pm, key };
 }
 const BH = { vers: [], sel: null };
+// 직전 대비 증감 — "+6,930g (×100)" / "+10.8g (+44%)" / "−3g (−12%)"
+function bhDelta(a, b) {
+  const d = Math.round((b - a) * 1000) / 1000; if (!d) return "";
+  const r = a > 0 ? b / a : 0;
+  const pc = a > 0 ? Math.abs(d / a * 100) : 0, pcs = pc >= 10 ? String(Math.round(pc)) : pc >= 0.1 ? pc.toFixed(1) : "";
+  const rel = !(a > 0) ? "" : r >= 2 ? `×${r >= 10 ? Math.round(r) : r.toFixed(1)}` : pcs ? `${d > 0 ? "+" : "−"}${pcs}%` : "";
+  return `<div style="font-size:11px; font-weight:700; color:${d > 0 ? "#c0392b" : "#1f5fd6"};">${d > 0 ? "▲ +" : "▼ −"}${NF(Math.abs(d))}g${rel ? ` (${rel})` : ""}</div>`;
+}
 async function openBomHist() {
   if (!BOM.pid) return toast("제품을 먼저 선택하세요");
   const d = await api(`/api/bom/${BOM.pid}/versions`);
@@ -6320,7 +6328,8 @@ function renderBomHist() {
         ${BH_KIND[v.kind] ? `<span class="chip cat">${BH_KIND[v.kind]}</span>` : ""}<b style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(v.label || "")}</b></div>
       <div class="auto num" style="font-size:11.5px; margin-top:2px;">${esc(v.saved_at)}${v.saved_by ? " · " + esc(v.saved_by) : ""} · ${esc(sum)}</div>
       ${v.note ? `<div style="font-size:11.5px; margin-top:2px; color:var(--muted);">${esc(v.note)}</div>` : ""}</button>`;
-  }).join("");
+  }).join("") + (ROLE === "admin" && BH.vers.length > 1
+    ? `<div style="padding:10px; text-align:center;"><button class="btn ghost sm" data-bhdelold style="color:var(--crit); border-color:var(--crit);" title="현재 버전 v${BH.vers[0].ver}만 남기고 이전 이력을 모두 지웁니다">🗑 이전 이력 모두 삭제 (${BH.vers.length - 1}개)</button></div>` : "");
   const i = BH.vers.findIndex(v => v.id === BH.sel), v = BH.vers[i], prev = BH.vers[i + 1];
   if (!v) { $("bhDetail").innerHTML = ""; return; }
   const df = bvDiff(prev ? prev.rows : null, v.rows);
@@ -6332,12 +6341,18 @@ function renderBomHist() {
     const gone = df.removed.filter(r => (r.block || "") === b && !bvCount(r));
     if (!items.length && !gone.length) return;
     const tot = items.reduce((s, r) => s + bvG(r), 0);
+    const ptot = prev ? prev.rows.filter(r => !bvCount(r) && (r.block || "") === b).reduce((s, r) => s + bvG(r), 0) : 0;
+    const pctCell = (r, p) => { const cp = tot ? bvG(r) / tot * 100 : null;
+      if (cp == null) return "—";
+      if (!p || !ptot) return cp.toFixed(1);
+      const pp = bvG(p) / ptot * 100, dd = Math.round((cp - pp) * 10) / 10;
+      return cp.toFixed(1) + (Math.abs(dd) >= 0.1 ? `<div style="font-size:11px; color:${dd > 0 ? "#c0392b" : "#1f5fd6"};">${pp.toFixed(1)} → ${dd > 0 ? "▲ +" : "▼ −"}${Math.abs(dd).toFixed(1)}%p</div>` : ""); };
     const y = Number((items.find(r => Number(r.block_yield) > 0) || {}).block_yield) || 0;
     html += `<tr><td colspan="5" style="background:var(--bg); font-weight:700; font-size:12.5px;">${SEC[b]}${y ? ` <span class="auto num" style="font-weight:400">· 1배합 ≈ ${NF(Math.round(y))}개</span>` : ""}</td></tr>`
       + items.map((r, k) => { const s = df.st[df.key(r)], p = df.pm.get(df.key(r));
         return `<tr><td class="num auto">${k + 1}</td><td class="${s === "add" ? "bh-add" : ""}">${esc(r.name)}</td>
-          <td class="r num ${s === "chg" ? "bh-chg" : ""}">${NF(bvG(r))}</td><td class="r num">${tot ? (bvG(r) / tot * 100).toFixed(1) : "—"}</td>
-          <td class="auto" style="font-size:11.5px;">${s === "add" ? '<span class="bh-add">추가</span>' : s === "chg" ? `<span class="bh-chg">${NF(bvG(p))} → ${NF(bvG(r))}</span>` : ""}</td></tr>`; }).join("")
+          <td class="r num ${s === "chg" ? "bh-chg" : ""}">${NF(bvG(r))}</td><td class="r num">${pctCell(r, s === "chg" ? p : null)}</td>
+          <td class="auto" style="font-size:11.5px; white-space:nowrap;">${s === "add" ? '<span class="bh-add">추가</span>' : s === "chg" ? `<span class="bh-chg">${NF(bvG(p))} → ${NF(bvG(r))}</span>${bhDelta(bvG(p), bvG(r))}` : ""}</td></tr>`; }).join("")
       + gone.map(r => `<tr><td></td><td class="bh-del">${esc(r.name)}</td><td class="r num bh-del">${NF(bvG(r))}</td><td></td><td style="font-size:11.5px;"><span class="bh-del" style="text-decoration:none;">삭제</span></td></tr>`).join("")
       + `<tr><td></td><td style="font-weight:700;">${b && weigh.some(r => (r.block || "") !== b) ? "소계" : "합계"}</td><td class="r num" style="font-weight:700;">${NF(Math.round(tot * 10) / 10)}</td><td class="r num">100.0</td><td></td></tr>`;
   });
@@ -6353,6 +6368,7 @@ function renderBomHist() {
       <span class="auto num" style="font-size:12px;">${esc(v.saved_at)}${v.saved_by ? " · " + esc(v.saved_by) : ""}${prev ? ` · v${prev.ver} 대비 변경 표시` : ""}</span>
       <span class="spacer"></span>
       <button class="btn sm" data-bhxlsx="${v.id}">📥 이 버전 엑셀</button>
+      ${ROLE === "admin" && BH.vers[0].id !== v.id ? `<button class="btn sm" data-bhdel="${v.id}" style="color:var(--crit); border-color:var(--crit);" title="이 버전 이력을 지웁니다 (지금 배합비에는 영향 없음)">🗑 이 버전 삭제</button>` : ""}
       ${v.rows.length && BH.vers[0].id !== v.id ? `<button class="btn sm" data-bhrestore="${v.id}" title="이 버전 내용을 편집기에 불러옵니다 — [배합비 저장]을 눌러야 새 버전으로 확정됩니다">↩ 편집기로 불러오기</button>` : ""}
     </div>
     ${v.note ? `<div style="font-size:12.5px; margin-bottom:8px;">📝 ${esc(v.note)}</div>` : ""}
@@ -6373,13 +6389,28 @@ function renderBomHist() {
       </div>
     </div>`;
 }
+async function bhDelete(vid) {
+  const all = vid === 0, v = BH.vers.find(z => z.id === vid);
+  const msg = all ? `현재 버전 v${BH.vers[0].ver}만 남기고 이전 이력 ${BH.vers.length - 1}개를 모두 삭제할까요?\n\n삭제한 이력은 되돌릴 수 없습니다. (지금 배합비 내용은 그대로입니다)`
+    : `v${v.ver}${v.label ? " · " + v.label : ""} (${v.saved_at}) 이력을 삭제할까요?\n\n삭제한 이력은 되돌릴 수 없습니다. (지금 배합비 내용은 그대로입니다)`;
+  if (!confirm(msg)) return;
+  try { await api(`/api/bom/${BOM.pid}/versions/${vid}`, { method: "DELETE" }); } catch (e) { return; }
+  const d = await api(`/api/bom/${BOM.pid}/versions`);
+  BH.vers = d.versions || [];
+  if (!BH.vers.some(z => z.id === BH.sel)) BH.sel = BH.vers[0] && BH.vers[0].id;
+  renderBomHist();
+  loadBomMeta(BOM.pid);   // 편집기 아래 '현재 vN · 이력 N개' 갱신
+  toast(all ? "이전 이력을 삭제했습니다" : `v${v.ver} 이력을 삭제했습니다`);
+}
 $("bhList").addEventListener("click", e => {
+  if (e.target.closest("[data-bhdelold]")) { bhDelete(0); return; }
   const b = e.target.closest("[data-bhv]"); if (!b) return;
   BH.sel = +b.dataset.bhv; renderBomHist();
 });
 $("bhDetail").addEventListener("click", e => {
   const x = e.target.closest("[data-bhxlsx]");
   if (x) { downloadFile(`/api/bom/${BOM.pid}/xlsx?ver_id=${x.dataset.bhxlsx}`); return; }
+  const dl = e.target.closest("[data-bhdel]"); if (dl) { bhDelete(+dl.dataset.bhdel); return; }
   const rs = e.target.closest("[data-bhrestore]");
   if (!rs) return;
   const v = BH.vers.find(z => z.id === +rs.dataset.bhrestore); if (!v) return;
@@ -6436,6 +6467,8 @@ function biMatOptions(sel, cands) {
 }
 function renderBomImp() {
   const s = BI.sheets[BI.i]; if (!s) return;
+  $("biMatDl").innerHTML = (M.semi || []).concat(M.raw, M.sub).filter(m => m.status !== "중단")
+    .map(m => `<option value="${esc(m.name)}">`).join("");
   $("biSheets").style.display = BI.sheets.length > 1 ? "flex" : "none";
   $("biSheets").innerHTML = BI.sheets.map((x, k) => `<button data-bis="${k}" class="${k === BI.i ? "on" : ""}">${esc(x.name || x.sheet)}${x.labelIn ? " " + esc(x.labelIn) : ""}</button>`).join("");
   const prods = M.product.filter(p => p.status !== "단종").slice().sort((a, b) => a.name.localeCompare(b.name, "ko"));
@@ -6452,7 +6485,8 @@ function renderBomImp() {
     return `<tr><td class="num auto">${k + 1}</td>
       <td>${esc(r.name)}${r.block ? ` <span class="chip cat">${esc(r.block)}</span>` : ""}${r.count ? ' <span class="chip cat">포장</span>' : ""}</td>
       <td class="r num">${r.count ? "—" : NF(r.g)}</td>
-      <td><select class="mini-sel" data-bipick="${k}" style="max-width:300px;">${biMatOptions(pk, r.cands)}</select></td>
+      <td style="white-space:nowrap;"><select class="mini-sel" data-bipick="${k}" style="max-width:300px;">${biMatOptions(pk, r.cands)}</select>
+        <input class="mini-input" data-bisearch="${k}" list="biMatDl" placeholder="🔍 검색" title="자재 이름 일부를 입력하고 목록에서 고르면 왼쪽 칸에 들어갑니다" style="width:110px; text-align:left;"></td>
       <td style="white-space:nowrap; font-size:12px;">${st}</td></tr>`;
   }).join("");
   $("biProcView").innerHTML = s.process ? esc(s.process) : '<span class="auto">제조 공정 없음</span>';
@@ -6463,6 +6497,24 @@ function renderBomImp() {
 $("biSheets").addEventListener("click", e => {
   const b = e.target.closest("[data-bis]"); if (!b) return;
   BI.i = +b.dataset.bis; renderBomImp();
+});
+// 검색칸: 목록에서 고르면(=이름이 정확히 일치) 그 자재로 지정
+function biSearchPick(inp) {
+  const v = inp.value.trim(); if (!v) return false;
+  const all = (M.semi || []).concat(M.raw, M.sub).filter(m => m.status !== "중단");
+  const m = all.find(x => x.name === v); if (!m) return false;
+  BI.sheets[BI.i].pick[+inp.dataset.bisearch] = m.id;
+  renderBomImp(); return true;
+}
+$("biRows").addEventListener("input", e => { const s = e.target.closest("[data-bisearch]"); if (s) biSearchPick(s); });
+$("biRows").addEventListener("keydown", e => {
+  const s = e.target.closest("[data-bisearch]"); if (!s || e.key !== "Enter") return;
+  e.preventDefault();
+  if (biSearchPick(s)) return;
+  const q = s.value.trim().toLowerCase(); if (!q) return;   // Enter: 이름에 검색어가 들어간 자재가 하나뿐이면 그것으로
+  const hits = (M.semi || []).concat(M.raw, M.sub).filter(m => m.status !== "중단" && (m.name || "").toLowerCase().includes(q));
+  if (hits.length === 1) { s.value = hits[0].name; biSearchPick(s); }
+  else toast(hits.length ? `'${s.value.trim()}'이(가) 들어간 자재가 ${hits.length}개입니다 — 목록에서 골라 주세요` : `'${s.value.trim()}'이(가) 들어간 자재가 없습니다`);
 });
 $("biRows").addEventListener("change", e => {
   const sel = e.target.closest("[data-bipick]"); if (!sel) return;
