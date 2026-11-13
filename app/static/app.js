@@ -981,11 +981,15 @@ async function loadMemos(page) {
   const list = $("memoList"), pager = $("memoPager");
   if (!list) return;
   const dow = s => ["일", "월", "화", "수", "목", "금", "토"][new Date(s + "T00:00").getDay()];
+  MEMOS.full = [];
   list.innerHTML = (d.items || []).length
     ? `<div class="auto" style="font-size:12px; margin-bottom:8px;">전체 ${NF(d.total)}건 · ${MEMOS.page}페이지</div>`
-      + d.items.map(m => `<div style="display:flex; gap:12px; padding:9px 4px; border-bottom:1px solid var(--line-soft); align-items:flex-start;">
-          <span class="num" style="flex:none; min-width:112px; font-weight:700; font-size:12.5px;">${esc(m.date)} <span class="auto" style="font-weight:400;">(${dow(m.date)})</span></span>
-          <span style="flex:1; white-space:pre-wrap; word-break:break-word; font-size:13px; line-height:1.55;">${(() => {
+      + d.items.map((m, mi) => {
+        // 목록 = 한 단락 요약(최대 2줄, 넘치면 …) · 마우스 올리면 전체 내용 팝업 · 누르면 그 자리에서 펼치기
+        const segs = (m.memo || "").split(/[;\n]/).map(s => s.trim()).filter(Boolean);
+        const chk = m.checks || [], open = chk.filter(c => !c.done).length;
+        const brief = esc(segs.join(" · ")) + (chk.length ? `${segs.length ? " &nbsp;" : ""}<span class="auto" style="font-size:11.5px; font-weight:700;">✅ 체크 ${chk.length}건${open ? ` · <span style="color:var(--crit);">미완료 ${open}</span>` : " · 모두 완료"}</span>` : "");
+        const body = (() => {
             const segs = (m.memo || "").split(";").map(s => s.trim()).filter(Boolean);
             const memoHtml = m.memo ? (segs.length > 1 ? segs.map(s => `<div style="padding:1px 0;">• ${esc(s)}</div>`).join("") : esc(m.memo)) : "";
             const chk = (m.checks || []);
@@ -993,12 +997,50 @@ async function loadMemos(page) {
               <span class="auto" style="font-size:11px; font-weight:700;">✅ 체크사항</span>
               ${chk.map(c => `<div style="font-size:12.5px; padding:1px 0; ${c.done ? "color:var(--muted);" : ""}">${c.done ? "✔" : "☐"} <span style="${c.done ? "text-decoration:line-through;" : ""}">${esc(c.text)}</span> <span class="auto" style="font-size:11px;">${c.done && c.done_date ? "(" + esc(c.done_date.slice(5)) + " 완료)" : "(미완료)"}</span></div>`).join("")}
             </div>` : "";
-            return memoHtml + chkHtml || '<span class="auto">—</span>';
-          })()}</span>
-        </div>`).join("")
+            return (memoHtml + chkHtml).replace(/>\s*\n\s*</g, "><") || '<span class="auto">—</span>';   // 템플릿 들여쓰기가 pre-wrap에서 빈 줄로 보이지 않게
+          })();
+        MEMOS.full[mi] = `<div class="num" style="font-weight:800; font-size:12.5px; margin-bottom:6px;">${esc(m.date)} (${dow(m.date)})</div>` + body;
+        return `<div class="memo-row" data-mi="${mi}" style="display:flex; gap:12px; padding:9px 4px; border-bottom:1px solid var(--line-soft); align-items:flex-start; cursor:pointer;">
+          <span class="num" style="flex:none; min-width:112px; font-weight:700; font-size:12.5px;">${esc(m.date)} <span class="auto" style="font-weight:400;">(${dow(m.date)})</span></span>
+          <span class="memo-clip" style="flex:1; min-width:0; word-break:break-word; font-size:13px; line-height:1.55; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">${brief || '<span class="auto">—</span>'}</span>
+          <span class="memo-full" style="flex:1; min-width:0; white-space:pre-wrap; word-break:break-word; font-size:13px; line-height:1.55; display:none;">${body}</span>
+        </div>`; }).join("")
     : '<div class="auto" style="padding:20px; text-align:center;">특이사항으로 적은 메모가 없습니다 — 일일 입력의 특이사항 칸에 적으면 여기 모입니다</div>';
   if (pager) pager.innerHTML = pagerHtml(d.total, MEMOS.page, MEMOS.per);
 }
+// 특이사항 전체 내용 팝업 — 줄에 마우스를 올리면 옆에 띄우고, 팝업 안으로 옮겨가도 유지(긴 글은 스크롤)
+const memoPop = (() => { const p = document.createElement("div"); p.id = "memoPop";
+  p.style.cssText = "position:fixed; z-index:9000; display:none; max-width:min(620px, 92vw); max-height:60vh; overflow:auto; background:var(--surface, #fff); color:var(--ink); border:1px solid var(--line); border-radius:10px; box-shadow:0 8px 28px rgba(0,0,0,.18); padding:12px 14px; font-size:13px; line-height:1.6; white-space:pre-wrap; word-break:break-word;";
+  document.body.appendChild(p); return p; })();
+let memoPopRow = null, memoPopT = null;
+function memoPopShow(row) {
+  clearTimeout(memoPopT);
+  if (memoPopRow === row) return;
+  memoPopRow = row;
+  if (row.classList.contains("open")) { memoPop.style.display = "none"; return; }   // 이미 펼친 줄은 팝업 불필요
+  memoPop.innerHTML = MEMOS.full[+row.dataset.mi] || "";
+  memoPop.style.display = "block";
+  const r = row.getBoundingClientRect(), ph = memoPop.offsetHeight, pw = memoPop.offsetWidth;
+  let top = r.bottom + 4; if (top + ph > window.innerHeight - 8) top = Math.max(8, r.top - ph - 4);
+  memoPop.style.top = top + "px";
+  memoPop.style.left = Math.max(8, Math.min(r.left + 120, window.innerWidth - pw - 12)) + "px";
+}
+function memoPopHide() { memoPopT = setTimeout(() => { memoPop.style.display = "none"; memoPopRow = null; }, 160); }
+$("memoList").addEventListener("mouseover", e => { const row = e.target.closest(".memo-row"); if (row) memoPopShow(row); });
+$("memoList").addEventListener("mouseout", e => { const row = e.target.closest(".memo-row");
+  if (row && !row.contains(e.relatedTarget)) memoPopHide(); });
+memoPop.addEventListener("mouseenter", () => clearTimeout(memoPopT));
+memoPop.addEventListener("mouseleave", () => memoPopHide());
+window.addEventListener("scroll", () => { memoPop.style.display = "none"; memoPopRow = null; }, true);
+// 누르면 그 줄을 펼치기/접기 (터치 화면·복사용)
+$("memoList").addEventListener("click", e => {
+  if (getSelection && String(getSelection())) return;   // 글자 드래그 선택 중엔 무시
+  const row = e.target.closest(".memo-row"); if (!row) return;
+  const open = row.classList.toggle("open");
+  row.querySelector(".memo-clip").style.display = open ? "none" : "-webkit-box";
+  row.querySelector(".memo-full").style.display = open ? "block" : "none";
+  memoPop.style.display = "none"; memoPopRow = open ? row : null;
+});
 $("memoPager").addEventListener("click", e => {
   const b = e.target.closest("[data-pg]"); if (!b || b.disabled) return;
   loadMemos(+b.dataset.pg);
