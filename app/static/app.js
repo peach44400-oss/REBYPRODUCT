@@ -14750,11 +14750,19 @@ function _schedClick(e) {
   if (gm) {
     const [gi, dir] = gm.dataset.schedgmove.split(":").map(Number);
     const a = SCHED.data.groups, j = gi + dir;
-    if (j >= 0 && j < a.length) { const t = a[gi]; a[gi] = a[j]; a[j] = t; renderSchedDoc(); }
+    if (j >= 0 && j < a.length) {
+      const la = !!a[gi].lane, lb = !!a[j].lane;   // 라인 여부는 '자리'에 붙어 있다 — 같은 요일 1·2라인끼리 바꿔도 앞 열이 1라인으로 남게
+      const t = a[gi]; a[gi] = a[j]; a[j] = t;
+      if (SCHED.kind === "prod" && a[Math.max(gi, j)] && (gi > j ? la : lb)) { a[gi].lane = la; a[j].lane = lb; }
+      renderSchedDoc(); }
     return;
   }
   const gd = e.target.closest("[data-schedgdel]");
-  if (gd) { const gi = +gd.dataset.schedgdel; if (confirm("이 제품군을 삭제할까요?")) { SCHED.data.groups.splice(gi, 1); renderSchedDoc(); } return; }
+  if (gd) { const gi = +gd.dataset.schedgdel; if (confirm("이 제품군을 삭제할까요?")) {
+    const gs = SCHED.data.groups, del = gs[gi], nx = gs[gi + 1];
+    // 생산: 요일의 첫 라인(1라인)을 지우면 바로 뒤 추가 라인(2라인)이 그 요일의 첫 열이 된다 — 앞 요일로 밀려가지 않게
+    if (SCHED.kind === "prod" && del && !del.lane && nx && nx.lane) nx.lane = false;
+    gs.splice(gi, 1); renderSchedDoc(); } return; }
   const iclr = e.target.closest("[data-schedicolorclr]");
   if (iclr) {   // 이 제품 글자색을 전체(표시 설정) 색으로 되돌림
     const [gi, ii] = iclr.dataset.schedicolorclr.split(":").map(Number);
