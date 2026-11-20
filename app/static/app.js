@@ -13817,16 +13817,77 @@ async function _schedRefreshFromShip() {
   const list = [...weeks].filter(Boolean).slice(0, 6);
   const keep = { keys: SPICK.keys, cardMeta: SPICK.cardMeta };
   let changed = 0;
+  SCHED.shipCards = [];   // 출고 카드(키·제품·출고 수량) — 생산에 담긴 수량이 출고 수량보다 많은지 검사용
   for (const w of list) {
     let d = null; try { const r = await api("/api/schedule?week=" + w); d = r && r.data; } catch (e) { d = null; }
     if (!d || !Array.isArray(d.groups)) continue;
     const cm = {}; const keyOf = _schedShipKeys(d.groups, w, cm);
     SPICK.keys = [...keyOf.values()]; SPICK.cardMeta = cm;
     changed += _schedRelinkPlaced(w);
+    d.groups.forEach(g => (g.items || []).forEach(it => { const k = keyOf.get(it);
+      if (k && (it.label || "").trim()) SCHED.shipCards.push({ key: k, label: it.label, shipQ: _schedQtyNum(it.qty), shipDate: it.shipDate || g.shipDate || "" }); }));
   }
   SPICK.keys = keep.keys; SPICK.cardMeta = keep.cardMeta;
   return changed;
 }
+// 이 주 생산 표에 이 출처(카드)로 담긴 수량 (다른 주 생산분 제외)
+function _schedPlacedHere(key) {
+  let sum = 0;
+  ((SCHED.data && SCHED.data.groups) || []).forEach(g => (g.items || []).forEach(x => {
+    if (!x || x.spacer || !(x.label || "").trim()) return;
+    const m = _schedItemSrcs(x); if (m) Object.keys(m).forEach(k => { if (_schedKeyEq(k, key)) sum += _schedQtyNum(m[k]); });
+  }));
+  return sum;
+}
+// 출고 스케줄에서 수량이 줄어 생산 표에 출고보다 많이 담긴 제품 목록
+function _schedOverList() {
+  if (SCHED.kind !== "prod") return [];
+  return (SCHED.shipCards || []).map(c => ({ ...c, placed: _schedPlacedHere(c.key) }))
+    .filter(c => c.shipQ > 0 && c.placed - c.shipQ > 1e-9);
+}
+function _schedWarnRender() {
+  const el = $("schedQtyWarn"); if (!el) return;
+  const over = _schedOverList();
+  if (!over.length) { el.style.display = "none"; el.innerHTML = ""; return; }
+  el.style.display = "";
+  el.innerHTML = `<b>⚠ 출고 스케줄 수량이 바뀌었습니다 — 생산 표에 출고보다 많이 담긴 제품 ${over.length}개</b>`
+    + over.map(c => `<div style="margin-top:3px;">· <b>${esc(c.label)}</b>${c.shipDate ? ` <span style="opacity:.75;">(${esc(_schedMD(c.shipDate))} 출고)</span>` : ""} — 출고 <b>${NF(c.shipQ)}</b>개인데 생산 표에 <b>${NF(c.placed)}</b>개 (<b>${NF(c.placed - c.shipQ)}</b>개 초과)
+        <button class="btn ghost sm" data-schedtrim="${esc(c.key)}" style="margin-left:6px; padding:0 8px; color:#8a1f11; border-color:#e5b4b4; background:#fff;" title="생산 표의 이 제품 수량을 출고 수량(${NF(c.shipQ)}개)으로 줄입니다 — 저장해야 확정">출고 수량으로 맞추기</button></div>`).join("")
+    + `<div style="margin-top:4px; font-size:11.5px; opacity:.8;">이미 생산했다면 그대로 두셔도 됩니다 · 맞추기는 생산 표 수량만 줄이고 [💾 저장]을 눌러야 확정됩니다</div>`;
+}
+// 초과분만큼 이 출처로 담긴 칸 수량을 줄인다 (뒤쪽 칸부터) — 0이 되면 칸 비움
+function _schedTrimToShip(key) {
+  const c = (SCHED.shipCards || []).find(x => x.key === key); if (!c) return;
+  let excess = _schedPlacedHere(key) - c.shipQ; if (!(excess > 0)) return;
+  const cells = [];
+  (SCHED.data.groups || []).forEach(g => (g.items || []).forEach((x, i, arr) => {
+    if (!x || x.spacer || !(x.label || "").trim()) return;
+    const m = _schedItemSrcs(x); if (!m) return;
+    const hit = Object.keys(m).filter(k => _schedKeyEq(k, key)); if (hit.length) cells.push({ x, i, arr, hit });
+  }));
+  const cut0 = excess;
+  for (let n = cells.length - 1; n >= 0 && excess > 0; n--) {
+    const { x, i, arr, hit } = cells[n]; const m = Object.assign({}, _schedItemSrcs(x));
+    for (const k of hit) {
+      if (excess <= 0) break;
+      const v = _schedQtyNum(m[k]), cut = Math.min(v, excess);
+      m[k] = v - cut; excess -= cut; x.qty = String(Math.max(0, _schedQtyNum(x.qty) - cut));
+      if (m[k] <= 0) { delete m[k]; if (x.srcMeta) delete x.srcMeta[k]; }
+    }
+    const keys = Object.keys(m);
+    if (_schedQtyNum(x.qty) <= 0) { arr[i] = _schedBlankItem(); continue; }
+    if (!keys.length) { x.src = ""; delete x.srcs; }
+    else if (keys.length === 1 && _schedQtyNum(m[keys[0]]) === _schedQtyNum(x.qty)) { x.src = keys[0]; delete x.srcs; }
+    else { x.srcs = m; x.src = keys[0]; }
+    if (x.boxesAuto !== false) x.boxes = _schedBoxesFor(x, x.qty, x.pack);
+  }
+  SCHED.dirty = true; renderSchedule(); _schedPickRefresh();
+  toast(`'${c.label}' 생산 수량을 ${NF(cut0 - excess)}개 줄여 출고 수량 ${NF(c.shipQ)}개에 맞췄습니다 — 저장해야 확정됩니다`);
+}
+document.addEventListener("click", e => {
+  const t = e.target.closest("[data-schedtrim]"); if (!t) return;
+  e.preventDefault(); e.stopPropagation(); _schedTrimToShip(t.dataset.schedtrim);
+});
 function _schedPlacedQty(key) {
   const lbl = key.split("|")[0]; let sum = 0;
   ((SCHED.data && SCHED.data.groups) || []).forEach(g => (g.items || []).forEach(x => {
@@ -13868,15 +13929,17 @@ function _schedPickRender() {
     const cards = (g.items || []).filter(it => (it.label || "").trim()).map(it => {
       const key = keyOf.get(it), shipQ = _schedQtyNum(it.qty), used = _schedPlacedQty(key);
       const rem = shipQ - used, budget = shipQ > 0;
+      const over = budget && rem < -1e-9;   // 출고 수량이 줄어 담긴 수량이 더 많음
       const full = budget ? rem <= 0 : false, partial = budget && used > 0 && rem > 0, anyPlaced = used > 0;
       const payload = esc(JSON.stringify({ label: it.label, qty: partial ? String(rem) : it.qty, shipQty: shipQ, src: key, meta: cm[key] || null, pack: it.pack, partner: it.partner || g.partner || "", expiry: it.expiry, expiry2: it.expiry2 }));
-      const badge = full ? `<span class="chip ok" style="font-size:9.5px;">담김 완료</span>`
+      const badge = over ? `<span class="chip" style="font-size:9.5px; background:#fdecea; color:#c0392b; font-weight:800;" title="출고 스케줄 수량이 ${NF(shipQ)}개로 바뀌었는데 생산 표에는 ${NF(used)}개가 담겨 있습니다 — 초과분을 빼거나 [맞추기]를 누르세요">초과 ${NF(-rem)}</span>${_schedPlacedHere(key) - shipQ > 1e-9 ? ` <span data-schedtrim="${esc(key)}" title="생산 표 수량을 출고 수량(${NF(shipQ)}개)으로 줄입니다" style="font-size:10px; color:#c0392b; cursor:pointer; border:1px solid #e5b4b4; border-radius:5px; padding:0 5px; background:#fff;">맞추기</span>` : ""}`
+        : full ? `<span class="chip ok" style="font-size:9.5px;">담김 완료</span>`
         : partial ? `<span class="chip" style="font-size:9.5px; background:#fff3e0; color:#b45f06;">남음 ${NF(rem)}</span>`
         : (anyPlaced ? `<span class="chip ok" style="font-size:9.5px;">담김</span>` : "");
       const undo = anyPlaced ? ` <span class="sched-pick-undo" data-undo="${esc(key)}" title="이 카드로 담은 ${NF(used)}개를 생산 표에서 다시 빼냅니다 (합쳐진 칸이면 이 몫만 차감)" style="float:right; font-size:10px; color:#b33; cursor:pointer; border:1px solid #e5b4b4; border-radius:5px; padding:0 5px; background:#fff; line-height:16px;">↩ 빼기</span>` : "";
       return `<button type="button" class="sched-pick-card" draggable="${full ? "false" : "true"}" data-pick="${payload}" ${full ? 'aria-disabled="true" title="출고 수량을 모두 담았습니다 — [↩ 빼기]로 되돌리거나 생산 표에서 수량을 줄이면 다시 담을 수 있어요"' : (partial ? `title="남은 ${NF(rem)}개를 끌어다 놓으면 담깁니다"` : "")}
-        style="display:block; width:100%; text-align:left; border:1px solid var(--line); border-left:3px solid ${full ? "#37a24a" : (partial ? "#e08a1e" : "var(--accent,#2f6df0)")}; border-radius:8px; padding:5px 8px; margin-bottom:5px; background:#fff; cursor:${full ? "default" : "grab"}; font-size:12px;">
-        ${undo}<span style="${full ? "opacity:.45;" : ""}"><b>${esc(it.label)}</b> <span class="num">${esc(numFmtText(it.qty))}</span>${it.pack ? ` <span class="auto" style="font-size:10.5px">${esc(numFmtText(it.pack))}</span>` : ""}</span> ${badge}</button>`;
+        style="display:block; width:100%; text-align:left; border:1px solid var(--line); border-left:3px solid ${over ? "#c0392b" : full ? "#37a24a" : (partial ? "#e08a1e" : "var(--accent,#2f6df0)")}${over ? "; background:#fff6f5" : ""}; border-radius:8px; padding:5px 8px; margin-bottom:5px; background:#fff; cursor:${full ? "default" : "grab"}; font-size:12px;">
+        ${undo}<span style="${full && !over ? "opacity:.45;" : ""}"><b>${esc(it.label)}</b> <span class="num">${esc(numFmtText(it.qty))}</span>${it.pack ? ` <span class="auto" style="font-size:10.5px">${esc(numFmtText(it.pack))}</span>` : ""}</span> ${badge}</button>`;
     }).join("") || `<div class="auto" style="font-size:11.5px; padding:6px;">제품 없음</div>`;
     return `<div style="flex:0 0 165px; border:1px solid var(--line); border-radius:8px; padding:6px; background:#fff;">
       <div style="font-weight:800; font-size:12.5px; text-align:center; padding-bottom:4px; border-bottom:1px solid var(--line-soft); margin-bottom:6px;">${esc(g.name || "—")}${g.partner ? `<div class="auto" style="font-weight:500; font-size:10.5px;">${esc(g.partner)}</div>` : ""}${g.shipDate ? `<div class="auto" style="font-weight:500; font-size:10px;">${esc(_schedMD(g.shipDate))}</div>` : ""}</div>
@@ -15203,6 +15266,7 @@ function _schedEqualizeRows(doc) {
 }
 function renderSchedDoc() {
   const host = $("schedDoc"); if (!host || !SCHED.data) return;
+  _schedWarnRender();   // 출고 수량 감소로 생산 초과된 제품 경고
   const SH = SCHED_A4_SHEET;
   const avail = Math.max(320, host.clientWidth - 22);
   // 제품명·거래처 자동완성 목록(편집칸에서 사용) — 스케일 밖에 둔다
