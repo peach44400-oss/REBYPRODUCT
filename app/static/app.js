@@ -14259,7 +14259,7 @@ function _schedNorm(d, week) {
   d.author = d.author || ""; d.legend = d.legend || ""; d.refNote = d.refNote || "";
   if (!(d.fontScale > 0)) d.fontScale = 1; d.fontFamily = d.fontFamily || ""; d.textColor = d.textColor || "";
   if (!d.elem || typeof d.elem !== "object") d.elem = {};
-  for (const k of ["label", "qty", "sub", "date"]) { d.elem[k] = d.elem[k] || {}; if (!(d.elem[k].s > 0)) d.elem[k].s = 100; d.elem[k].c = d.elem[k].c || ""; }
+  for (const k of ["label", "qty", "sub", "date", "exp"]) { d.elem[k] = d.elem[k] || {}; if (!(d.elem[k].s > 0)) d.elem[k].s = 100; d.elem[k].c = d.elem[k].c || ""; }
   if (!Array.isArray(d.shipDates) || !d.shipDates.length) { d.shipDates = []; for (let i = 0; i < 6; i++) d.shipDates.push(_schedAddDays(week, i)); }
   if (!Array.isArray(d.rowW)) d.rowW = [];   // 행(줄) 높이 가중치 배열(기본 비어있음 → 1)
   d.rowsEqual = !!d.rowsEqual;   // 행 높이 균일 맞춤 여부
@@ -14492,7 +14492,7 @@ function _applySchedStyle(d, st) {
   if (st.fontFamily != null) d.fontFamily = st.fontFamily;
   if (st.textColor != null) d.textColor = st.textColor;
   if (st.elem && typeof st.elem === "object") {
-    for (const k of ["label", "qty", "sub", "date"]) {
+    for (const k of ["label", "qty", "sub", "date", "exp"]) {
       if (st.elem[k]) { d.elem[k] = d.elem[k] || {};
         if (st.elem[k].s > 0) d.elem[k].s = st.elem[k].s;
         if (st.elem[k].c != null) d.elem[k].c = st.elem[k].c; }
@@ -14544,7 +14544,7 @@ function renderSchedStyle() {
       <input type="color" id="schedColor" value="${esc(d.textColor || "#111111")}" style="width:36px; height:26px; padding:0; border:1px solid var(--line); border-radius:5px; cursor:pointer;">
       <button class="btn ghost sm" id="schedColorReset" style="padding:0 9px;">기본색</button></span>
     <span style="font-size:12px; font-weight:800; margin-left:6px;">요소별</span>
-    ${[["label", "제품명"], ["qty", "수량"], ["sub", "개입/박스"], ["date", "날짜"]].map(([k, nm]) => {
+    ${[["label", "제품명"], ["qty", "수량"], ["sub", "개입/박스"], ["date", "날짜"], ...(SCHED.kind === "prod" ? [["exp", "소비기한"]] : [])].map(([k, nm]) => {
       const s = (d.elem[k] && d.elem[k].s) || 100, c = (d.elem[k] && d.elem[k].c) || "";
       return `<span style="display:flex; align-items:center; gap:4px; font-size:12px; border:1px solid var(--line); border-radius:6px; padding:2px 7px;">${nm}
         <input type="number" data-elsz="${k}" value="${s}" min="40" max="300" step="5" style="width:52px; font-size:12px; padding:2px 4px; border:1px solid var(--line); border-radius:5px; text-align:right;">%
@@ -14568,6 +14568,10 @@ async function saveSchedStyleDefault() {
   const d = SCHED.data; if (!d) return;
   const style = { fontScale: d.fontScale, fontFamily: d.fontFamily, textColor: d.textColor,
     elem: JSON.parse(JSON.stringify(d.elem || {})) };
+  if (SCHED.kind !== "prod") {   // '소비기한'은 생산 스케줄 전용 — 출고에서 기본값을 저장해도 생산 쪽 설정을 덮지 않는다
+    const pe = SCHED.styleDefault && SCHED.styleDefault.elem && SCHED.styleDefault.elem.exp;
+    if (pe) style.elem.exp = pe; else delete style.elem.exp;
+  }
   const prodTimes = (SCHED.kind === "prod" && Array.isArray(d.times) && d.times.length) ? d.times.slice() : null;
   const keepTimes = SCHED.styleDefault && Array.isArray(SCHED.styleDefault.times) ? SCHED.styleDefault.times.slice() : null;
   if (prodTimes || keepTimes) style.times = prodTimes || keepTimes;   // 생산 시간 목록도 기본값에 포함
@@ -14906,10 +14910,10 @@ function _schedPackBoxParts(it, withExp) {
 }
 function _schedPackBoxLines(it, withExp) { return _schedPackBoxParts(it, withExp).map(p => p.main + (p.partner ? " · " + p.partner : "") + (p.exp ? (p.main ? " · " : "") + p.exp : "")); }
 // 줄 HTML — 개입/박스는 강조색, 소비기한은 회색·작은 글씨
-function _schedPackBoxHtml(it, withExp, subSize, subColor) {
-  const expFs = Math.max(8, Math.round(subSize * 0.82));
+function _schedPackBoxHtml(it, withExp, subSize, subColor, expSize, expColor) {
+  const expFs = expSize || Math.max(8, Math.round(subSize * 0.82)), expCol = expColor || "#8a8a8a";
   // 소비기한은 개입/박스 '아래 줄'에 회색·작은 글씨. '소비 …'와 '(예정 …)'는 각각 한 덩어리로(중간에서 안 끊김).
-  const expHtml = p => { const m = /^(소비 \S+)\s*(\(예정 [^)]*\))?$/.exec(p.exp || ""); const chunks = m ? [m[1], m[2]].filter(Boolean) : [p.exp]; return `<div style="color:#8a8a8a; font-weight:500; font-size:${expFs}px; line-height:1.2;">${chunks.map(c => `<span style="white-space:nowrap;">${esc(c)}</span>`).join(" ")}</div>`; };
+  const expHtml = p => { const m = /^(소비 \S+)\s*(\(예정 [^)]*\))?$/.exec(p.exp || ""); const chunks = m ? [m[1], m[2]].filter(Boolean) : [p.exp]; return `<div style="color:${expCol}; font-weight:500; font-size:${expFs}px; line-height:1.2;">${chunks.map(c => `<span style="display:inline-block; max-width:100%; word-break:keep-all; overflow-wrap:anywhere;">${esc(c)}</span>`).join(" ")}</div>`; };   // 덩어리 유지 — 칸보다 길면(글자 확대) 그때만 줄바꿈
   return _schedPackBoxParts(it, withExp).map(p => (p.main ? `<div style="color:${subColor}; font-weight:700;">${esc(p.main)}${p.partner ? `<span style="color:#2f3fa0; font-weight:700;"> · ${esc(p.partner)}</span>` : ""}</div>` : "") + (p.exp ? expHtml(p) : "")).join("");
 }
 // 수량 q를 한 박스 per개로 나눈 표기 — "5박스+45" (남는 낱개가 있으면 +로 표시). per가 수동 비율(소수)이면 반올림 오차는 무시.
@@ -14951,7 +14955,7 @@ function buildScheduleDoc(d, week) {
   const EL = d.elem || {};
   const em = (k, base) => Math.max(8, Math.round(base * ((EL[k] && EL[k].s > 0 ? EL[k].s : 100) / 100)));
   const ec = (k, def) => (EL[k] && EL[k].c) ? EL[k].c : def;
-  const labelSize = em("label", fs), qtySize = em("qty", qtyFs), subSize = em("sub", S(baseFs - 1)), dateSize = em("date", fs);
+  const labelSize = em("label", fs), qtySize = em("qty", qtyFs), subSize = em("sub", S(baseFs - 1)), dateSize = em("date", fs), expSize = em("exp", subSize * 0.82), expColor = ec("exp", "#8a8a8a");
   // white-space:normal 로 앱 전역 td{white-space:nowrap} 를 눌러 줄바꿈 허용 → 오른쪽 잘림 방지
   const TD = `border:1px solid #333; padding:7px 8px; vertical-align:top; font-size:${fs}px; line-height:1.4; white-space:normal; word-break:break-word; overflow-wrap:anywhere;`;
   const LB = `border:1px solid #333; padding:8px 4px; background:#f2f1ec; font-weight:800; text-align:center; font-size:${labelFs}px; word-break:keep-all; line-height:1.15; color:#111;`;
@@ -14992,7 +14996,7 @@ function buildScheduleDoc(d, week) {
     return `<td style="${TDI} ${P}${_prod ? " vertical-align:middle; text-align:center;" : ""}"${RS}>
       <div style="font-weight:700; font-size:${labelSize}px; color:${icol || ec("label", "inherit")};">${esc(it.label || "") || "&nbsp;"}</div>
       <div style="font-size:${qtySize}px; font-weight:900; line-height:1.05; margin:1px 0; color:${icol || ec("qty", "inherit")};">${NFq(it.qty) ? NFq(it.qty) + '<span style="font-size:' + Math.round(qtySize * 0.6) + 'px; font-weight:700;">개</span>' : "&nbsp;"}</div>
-      ${(pb || ovp) ? `<div style="font-size:${subSize}px;">${_schedPackBoxHtml(it, _prod, subSize, ec("sub", "#c26a1f"))}${ovp ? ` <span style="color:#2f3fa0;">· ${esc(ovp)}</span>` : ""}</div>` : ""}
+      ${(pb || ovp) ? `<div style="font-size:${subSize}px;">${_schedPackBoxHtml(it, _prod, subSize, ec("sub", "#c26a1f"), expSize, expColor)}${ovp ? ` <span style="color:#2f3fa0;">· ${esc(ovp)}</span>` : ""}</div>` : ""}
       ${it.memo ? `<div style="color:#888; font-size:${subSize}px;">${esc(it.memo)}</div>` : ""}</td>`;
   };
   const orderRows = Array.from({ length: maxItems }, (_, k) =>
@@ -15047,7 +15051,7 @@ function buildScheduleDocEdit(d, week) {
   const EL = d.elem || {};
   const em = (k, base) => Math.max(8, Math.round(base * ((EL[k] && EL[k].s > 0 ? EL[k].s : 100) / 100)));
   const ec = (k, def) => (EL[k] && EL[k].c) ? EL[k].c : def;
-  const labelSize = em("label", fs), qtySize = em("qty", qtyFs), subSize = em("sub", S(baseFs - 1)), dateSize = em("date", fs);
+  const labelSize = em("label", fs), qtySize = em("qty", qtyFs), subSize = em("sub", S(baseFs - 1)), dateSize = em("date", fs), expSize = em("exp", subSize * 0.82), expColor = ec("exp", "#8a8a8a");
   const TD = `border:1px solid #333; padding:6px 7px; vertical-align:top; font-size:${fs}px; line-height:1.4; white-space:normal; word-break:break-word; overflow-wrap:anywhere;`;
   const LB = `border:1px solid #333; padding:8px 4px; background:#f2f1ec; font-weight:800; text-align:center; font-size:${labelFs}px; word-break:keep-all; line-height:1.15; color:#111;`;
   // 발주량 칸(제품) 전용 — 제품끼리는 가로 점선으로 구분(좌우는 실선).
@@ -15110,7 +15114,7 @@ function buildScheduleDocEdit(d, week) {
       <div style="display:flex; align-items:center; gap:1px; font-size:${subSize}px; flex-wrap:wrap;">
         ${it_(gi, ii, "pack", it.pack, "", ` inputmode="numeric" placeholder="개입" style="width:40px; text-align:right; color:${ec("sub", "#c26a1f")}; font-weight:700;"`)}<span style="color:${ec("sub", "#c26a1f")};">개입/</span>
         ${it_(gi, ii, "boxes", it.boxes, "", ` inputmode="numeric" placeholder="자동" style="width:40px; text-align:right; color:${ec("sub", "#c26a1f")}; font-weight:700;"`)}<span style="color:${ec("sub", "#c26a1f")};">박스</span>${(() => { if (it.boxesAuto === false) return ""; const q = _schedQtyNum(it.qty), per = _schedPerBoxOfSrc(it, it.src) || _schedQtyNum(it.pack); if (!(q > 0 && per > 0)) return ""; const rem = Math.round(q - Math.floor(q / per + 1e-3) * per); return rem > 0 ? `<span style="color:${ec("sub", "#c26a1f")}; font-weight:700;" title="박스로 나누고 남는 낱개">+${rem}</span>` : ""; })()}</div>
-      ${(() => { if (!_prod) return ""; const PP = _schedPackBoxParts(it, true); if (PP.length >= 2) return `<div style="font-size:${subSize}px; line-height:1.25;" title="출처를 합친 칸 — 개입·소비기한별 박스">${_schedPackBoxHtml(it, true, subSize, ec("sub", "#c26a1f"))}</div>`; const ex = _schedExpText({ expiry: (it.expiry || "").trim(), expiry2: (it.expiry2 || "").trim() }); return ex ? `<div style="font-size:${Math.max(8, Math.round(subSize * 0.82))}px; color:#8a8a8a; line-height:1.25;">${esc(ex)}</div>` : ""; })()}
+      ${(() => { if (!_prod) return ""; const PP = _schedPackBoxParts(it, true); if (PP.length >= 2) return `<div style="font-size:${subSize}px; line-height:1.25;" title="출처를 합친 칸 — 개입·소비기한별 박스">${_schedPackBoxHtml(it, true, subSize, ec("sub", "#c26a1f"), expSize, expColor)}</div>`; const ex = _schedExpText({ expiry: (it.expiry || "").trim(), expiry2: (it.expiry2 || "").trim() }); return ex ? `<div style="font-size:${expSize}px; color:${expColor}; line-height:1.25;">${esc(ex)}</div>` : ""; })()}
       <div style="display:flex; gap:2px; font-size:${subSize}px;">
         ${it_(gi, ii, "partner", it.partner, "", ` list="schedPartnerDl" placeholder="거래처(개별·비우면 열 공통)" title="비우면 위 '거래처' 줄(열 공통)을 씁니다. 이 항목만 다르면 여기 입력하세요." style="flex:1 1 0; color:#2f3fa0;"`)}
         ${it_(gi, ii, "memo", it.memo, "", ` placeholder="비고" style="flex:1 1 0; color:#888;"`)}</div>
