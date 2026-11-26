@@ -43,7 +43,7 @@ CHAT_DIR.mkdir(exist_ok=True)
 BACKUP_DIR = DATA_BASE / "백업"          # DB 자동/수동 백업
 
 # ── 앱 버전 & 자동 업데이트 ────────────────────────────
-APP_VERSION = "1.135.2"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
+APP_VERSION = "1.135.3"   # 새 버전 배포 시 이 값을 올리고 version.json의 version과 맞춘다
 # 업데이트 진행 상태 — 관리자가 업데이트를 시작하면 True. 접속자 폴링(presence)이 이 값을 받아 화면에 안내한다.
 _UPDATE_STATE = {"updating": False, "version": ""}
 # 새 버전 정보(version.json)를 읽어올 주소.
@@ -7242,16 +7242,20 @@ def ledger(request: Request, date: str = ""):
                 WHERE mi.date<=?""", (date, date)):
             base_date[r["material_id"]] = r["made_date"] or r["date"]
             last_in[r["material_id"]] = (r["date"], r["made_date"] or "")
-        # 최근 입고 비고 (carry-forward, 수불부 비고 열 표시용)
-        #  단, 자동 생성된 '발주 #…' 비고는 이월하지 않고 그 입고 '당일'에만 표시한다.
-        #  (예전 테스트 발주 비고가 이후 모든 날짜에 계속 남는 문제 방지 — 사용자가 직접 적은 비고만 이월)
+        # 수불부 비고 = 그날 입고에 사용자가 직접 적은 메모만 (v1.135.3~)
+        #  - 이월(carry-forward)하지 않는다: 예전 입고 메모(예: 단가 '1통당 5000원')가 이후 날짜에 계속 남던 문제.
+        #  - 자동 생성 비고('발주 #…' 발주 입고, '[반제품생산]')는 표시하지 않는다.
         note_cf = {}
-        for r in con.execute("SELECT material_id, date, note FROM material_in"
-                             " WHERE date<=? AND COALESCE(note,'')!='' ORDER BY date", (date,)):
-            n = r["note"]
-            if n.startswith("발주 #") and r["date"] != date:
+        for r in con.execute("SELECT material_id, note FROM material_in"
+                             " WHERE date=? AND COALESCE(note,'')!='' ORDER BY id", (date,)):
+            n = (r["note"] or "").strip()
+            if not n or n.startswith("발주 #") or n == "[반제품생산]":
                 continue
-            note_cf[r["material_id"]] = n   # date 오름차순 → 최신 비고가 최종적으로 남음
+            cur = note_cf.get(r["material_id"])
+            if cur is None:
+                note_cf[r["material_id"]] = n
+            elif n not in cur.split(" / "):
+                note_cf[r["material_id"]] = cur + " / " + n   # 같은 날 입고가 여러 건이면 이어서
         # 입고 없는 재고에 수동 입력한 제조일자 (carry-forward) — 입고 제조일이 없을 때 폴백
         man_made_cf = {}
         for r in con.execute("SELECT material_id, date, made FROM material_expiry"
